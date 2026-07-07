@@ -151,6 +151,150 @@ function makeProps(scene) {
   g.strokeRect(1, 1, 38, 48);
   g.generateTexture('carpet', 40, 50);
   g.destroy();
+
+  // small town props
+  g = scene.add.graphics();
+  g.fillStyle(0x7a4a24);
+  g.fillEllipse(12, 7, 20, 8);
+  g.fillRect(2, 7, 20, 18);
+  g.fillEllipse(12, 25, 20, 8);
+  g.lineStyle(2, 0x3f2612);
+  g.strokeEllipse(12, 7, 20, 8);
+  g.strokeEllipse(12, 25, 20, 8);
+  g.lineStyle(2, 0xc08a3c);
+  g.lineBetween(4, 12, 20, 12);
+  g.lineBetween(4, 21, 20, 21);
+  g.generateTexture('barrel', 24, 32);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x9b6a3a);
+  g.fillRect(2, 4, 24, 22);
+  g.lineStyle(2, 0x4e2e16);
+  g.strokeRect(2, 4, 24, 22);
+  g.lineBetween(4, 6, 24, 24);
+  g.lineBetween(24, 6, 4, 24);
+  g.generateTexture('crate', 28, 30);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x8a5a2b);
+  for (const px of [4, 24, 44]) {
+    g.fillRect(px, 5, 6, 20);
+    g.fillTriangle(px - 2, 5, px + 8, 5, px + 3, 0);
+  }
+  g.fillRect(0, 11, 50, 5);
+  g.fillRect(0, 19, 50, 5);
+  g.generateTexture('fence_h', 52, 28);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x6b4a2b);
+  g.fillRect(14, 12, 5, 28);
+  g.fillStyle(0xb88746);
+  g.fillRect(3, 7, 26, 14);
+  g.lineStyle(2, 0x3f2612);
+  g.strokeRect(3, 7, 26, 14);
+  g.fillStyle(0xf6c945);
+  g.fillTriangle(22, 12, 27, 9, 27, 15);
+  g.generateTexture('signpost', 34, 42);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0xffd75e, 0.22);
+  g.fillCircle(10, 16, 15);
+  g.fillStyle(0x2c2a2a);
+  g.fillRect(8, 18, 4, 30);
+  g.fillStyle(0xf6c945);
+  g.fillRect(5, 8, 10, 12);
+  g.fillStyle(0xfff1a8);
+  g.fillRect(8, 10, 4, 6);
+  g.generateTexture('lamp', 22, 52);
+  g.destroy();
+
+  // special locations
+  g = scene.add.graphics();
+  g.fillStyle(0x1d2430);
+  g.fillRect(16, 0, 80, 18);
+  g.fillStyle(0xf6c945);
+  g.fillRect(20, 3, 72, 3);
+  g.fillRect(20, 10, 72, 3);
+  for (const px of [12, 100]) {
+    g.fillStyle(0xd99a1f);
+    g.fillRect(px - 4, 16, 8, 24);
+    g.fillStyle(0xf6c945);
+    g.fillCircle(px, 14, 5);
+  }
+  for (let i = 0; i <= 20; i += 1) {
+    const t = i / 20;
+    const x = 16 + 80 * t;
+    const y = 20 + 14 * 4 * t * (1 - t);
+    g.fillStyle(i % 4 === 0 ? 0xe74c3c : 0xc0392b);
+    g.fillCircle(x, y, 3);
+  }
+  g.generateTexture('vip_rope_entrance', 112, 44);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x7a4a24);
+  g.fillEllipse(19, 9, 30, 10);
+  g.fillRect(4, 9, 30, 28);
+  g.fillEllipse(19, 37, 30, 10);
+  g.fillStyle(0xf2ead8);
+  g.fillRect(10, 12, 17, 12);
+  g.lineStyle(2, 0x3f2612);
+  g.strokeEllipse(19, 9, 30, 10);
+  g.strokeEllipse(19, 37, 30, 10);
+  g.generateTexture('complaint_barrel', 38, 46);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x3f2f2f);
+  g.fillRect(5, 18, 68, 42);
+  g.fillStyle(0x613f2c);
+  g.fillTriangle(0, 20, 78, 20, 39, 2);
+  g.fillStyle(0xf2ead8);
+  g.fillRect(17, 28, 44, 18);
+  g.lineStyle(2, 0x1d1414);
+  g.strokeRect(5, 18, 68, 42);
+  g.strokeRect(17, 28, 44, 18);
+  g.fillStyle(0xc0392b);
+  g.fillRect(25, 33, 28, 3);
+  g.generateTexture('debt_collector_booth', 78, 66);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x6b4a2b);
+  g.fillRect(7, 8, 44, 34);
+  g.lineStyle(2, 0x3f2612);
+  g.strokeRect(7, 8, 44, 34);
+  g.fillStyle(0xf2ead8);
+  g.fillRect(12, 13, 12, 10);
+  g.fillRect(29, 14, 14, 8);
+  g.fillRect(16, 27, 22, 8);
+  g.fillStyle(0x6b4a2b);
+  g.fillRect(15, 42, 6, 16);
+  g.fillRect(37, 42, 6, 16);
+  g.generateTexture('notice_board', 58, 60);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x8a8f98);
+  g.fillEllipse(46, 34, 84, 28);
+  g.fillStyle(0x4d90d0);
+  g.fillEllipse(46, 33, 64, 18);
+  g.fillStyle(0xd99a1f);
+  g.fillCircle(46, 20, 12);
+  g.fillStyle(0xf6c945);
+  g.fillCircle(46, 20, 9);
+  g.fillStyle(0x8fc6ee);
+  g.fillRect(44, 7, 4, 15);
+  g.fillRect(37, 4, 3, 8);
+  g.fillRect(53, 4, 3, 8);
+  g.fillStyle(0x3a2a1a);
+  g.fillRect(28, 43, 36, 5);
+  g.generateTexture('ethics_fountain', 92, 56);
+  g.destroy();
 }
 
 // --- icon placeholders -------------------------------------------------------
@@ -165,6 +309,21 @@ export function makeIconPlaceholders(scene) {
   g.fillStyle(0xffe08a);
   g.fillRect(3, 3, 2, 2);
   g.generateTexture('ph-icon_coin', 10, 10);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x4d90d0);
+  g.fillEllipse(15, 10, 24, 12);
+  g.fillTriangle(26, 10, 36, 3, 36, 17);
+  g.fillStyle(0xfff1c4);
+  g.fillRect(9, 12, 9, 2);
+  g.fillStyle(0x14101c);
+  g.fillRect(8, 8, 2, 2);
+  g.fillStyle(0x8fc6ee);
+  g.fillRect(16, 1, 2, 7);
+  g.fillRect(12, 0, 2, 4);
+  g.fillRect(20, 0, 2, 4);
+  g.generateTexture('ph-icon_whale', 38, 20);
   g.destroy();
 
   // remaining HUD icons have no asset slot yet — future icon set replaces them

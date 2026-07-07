@@ -7,8 +7,9 @@
 // prefers   -> building id the hero gravitates toward while wandering.
 // stats     -> simple satire stats; the sim nudges power/spent over time.
 import { makeHeroPlaceholder } from '../textures.js';
+import { NPCS } from './npcs.js';
 
-export const HEROES = [
+const LEGACY_HEROES = [
   {
     id: 'hero-mira', name: 'Mira', personality: 'Honest Grinder',
     assetKey: 'hero_honest_grinder',
@@ -74,3 +75,5 @@ export const HEROES = [
     stats: { power: 1, gold: 88888, spent: 0 },
   },
 ];
+
+export const HEROES = NPCS;

@@ -2,6 +2,7 @@
 // Each entry: text(name) -> ticker line, bubble -> short speech-bubble line,
 // building -> where the hero walks to act it out, d -> resource deltas.
 // Deltas: gold (unbounded), trust/corruption/morale/threat (clamped 0-100).
+import { rollNpcEvent, WHALE_STATION_EVENTS } from './eventPools.js';
 
 const TABLES = {
   'Honest Grinder': [
@@ -44,9 +45,7 @@ const TABLES = {
 
 // Pick a random daily event for a hero definition.
 export function rollHeroEvent(hero) {
-  const table = TABLES[hero.personality];
-  const entry = table[Math.floor(Math.random() * table.length)];
-  return { text: entry.text(hero.name), bubble: entry.bubble, building: entry.building, d: entry.d };
+  return rollNpcEvent(hero);
 }
 
 // Short ambient one-liners heroes mutter while idling around town.
@@ -60,12 +59,14 @@ export const IDLE_QUIPS = {
 };
 
 // Occasional flavor events from the Golden Whale Milking Station itself.
-export const WHALE_FLAVOR = [
+const LEGACY_WHALE_FLAVOR = [
   { text: 'The Milking Station installed a second, golder door.', d: { corruption: 1 } },
   { text: 'A bard was hired to sing about "surprise mechanics."', d: { corruption: 1, morale: -1 } },
   { text: 'The VIP rope was polished. Twice. It gleams with menace.', d: {} },
   { text: 'The whale statue received a smaller whale statue. Synergy.', d: { corruption: 1 } },
 ];
+
+export const WHALE_FLAVOR = WHALE_STATION_EVENTS;
 
 // What the doorman says when a non-whale gets bounced off the VIP rope.
 export const DENIED_LINES = ['DENIED.', 'VIPs only.', 'Rope says no.', 'Insufficient wallet.'];

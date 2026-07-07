@@ -45,22 +45,24 @@ export default class UIScene extends Phaser.Scene {
   // --- top resource bar ------------------------------------------------
 
   buildTopBar() {
-    this.add.rectangle(WIDTH / 2, 20, WIDTH, 40, 0x141a24, 0.86);
+    this.add.rectangle(WIDTH / 2, 22, WIDTH, 44, 0x141a24, 0.9);
 
     this.resourceTexts = {};
     let x = 16;
     for (const meta of RESOURCE_META) {
       const iconKey = meta.asset && this.textures.exists(meta.asset) ? meta.asset : meta.icon;
-      this.add.image(x + 6, 20, iconKey).setScale(1.4);
-      const text = this.add.text(x + 18, 20, `${meta.label} 0`, {
-        fontFamily: FONT, fontSize: '14px', fontStyle: 'bold', color: meta.color,
+      this.add.image(x + 6, 22, iconKey).setScale(1.4);
+      const text = this.add.text(x + 18, 22, `${meta.label} 0`, {
+        fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: meta.color,
+        stroke: '#0c1118', strokeThickness: 2,
       }).setOrigin(0, 0.5);
       this.resourceTexts[meta.key] = { text, meta };
       x += 30 + text.width + 120; // generous fixed spacing; text length varies little
     }
 
-    this.dayText = this.add.text(WIDTH - 16, 20, 'Day 1', {
-      fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: '#fff6dc',
+    this.dayText = this.add.text(WIDTH - 16, 22, 'Day 1', {
+      fontFamily: FONT, fontSize: '16px', fontStyle: 'bold', color: '#fff6dc',
+      stroke: '#0c1118', strokeThickness: 2,
     }).setOrigin(1, 0.5);
   }
 
@@ -84,9 +86,16 @@ export default class UIScene extends Phaser.Scene {
   // --- bottom event ticker ----------------------------------------------
 
   buildTicker() {
-    this.add.rectangle(WIDTH / 2, HEIGHT - 18, WIDTH, 36, 0x141a24, 0.86);
-    this.tickerText = this.add.text(16, HEIGHT - 18, '', {
-      fontFamily: FONT, fontSize: '13px', color: '#e8dfc8',
+    this.add.rectangle(WIDTH / 2, HEIGHT - 22, WIDTH, 44, 0x0f1521, 0.92);
+    this.tickerText = this.add.text(16, HEIGHT - 22, '', {
+      fontFamily: FONT,
+      fontSize: '15px',
+      fontStyle: 'bold',
+      color: '#fff6dc',
+      stroke: '#0c1118',
+      strokeThickness: 2,
+      wordWrap: { width: WIDTH - 205 },
+      lineSpacing: 3,
     }).setOrigin(0, 0.5);
 
     this.eventQueue = [];
@@ -105,9 +114,9 @@ export default class UIScene extends Phaser.Scene {
       return;
     }
     this.tickerBusy = true;
-    this.tickerText.setText(`» ${next}`).setAlpha(0);
+    this.tickerText.setText(`> ${next}`).setAlpha(0);
     this.tweens.add({ targets: this.tickerText, alpha: 1, duration: 180 });
-    this.time.delayedCall(2100, () => this.showNextEvent());
+    this.time.delayedCall(2700, () => this.showNextEvent());
   }
 
   // --- cycle button ---------------------------------------------------------
@@ -138,7 +147,7 @@ export default class UIScene extends Phaser.Scene {
         else this.cycleBg.setFillStyle(0x8a5a2b);
       };
     }
-    this.cycleLabel = this.add.text(x, y, 'Open Gates ▸', {
+    this.cycleLabel = this.add.text(x, y, 'Open Gates >', {
       fontFamily: FONT, fontSize: '14px', fontStyle: 'bold', color: '#fff6dc',
     }).setOrigin(0.5);
 
@@ -155,7 +164,7 @@ export default class UIScene extends Phaser.Scene {
       // locked until TownScene reports the cycle playback has finished
       this.cycleBg.disableInteractive();
       this.styleButton('locked');
-      this.cycleLabel.setText('The town stirs…').setAlpha(0.8);
+      this.cycleLabel.setText('The town stirs...').setAlpha(0.8);
       this.game.events.emit('gwg-end-day');
     });
   }
@@ -163,11 +172,11 @@ export default class UIScene extends Phaser.Scene {
   enableCycleButton() {
     this.cycleBg.setInteractive({ useHandCursor: true });
     this.styleButton('normal');
-    this.cycleLabel.setText('Open Gates ▸').setAlpha(1);
+    this.cycleLabel.setText('Open Gates >').setAlpha(1);
   }
 
   flashDayBanner(day) {
-    const banner = this.add.text(WIDTH / 2, 200, `☀ Day ${day}`, {
+    const banner = this.add.text(WIDTH / 2, 200, `Day ${day}`, {
       fontFamily: FONT, fontSize: '34px', fontStyle: 'bold',
       color: '#fff6dc', stroke: '#141a24', strokeThickness: 6,
     }).setOrigin(0.5).setAlpha(0);
