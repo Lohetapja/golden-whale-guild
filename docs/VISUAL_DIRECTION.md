@@ -1,0 +1,59 @@
+# Golden Whale Guild — Visual Direction
+
+## Status: placeholder graphics are temporary
+
+Everything currently on screen is **runtime-generated debug art** drawn with
+Phaser Graphics (see `src/textures.js`, all keys prefixed `ph-`). It exists so
+the game is playable and the layout is readable — it is not the art direction.
+Do not polish the generated shapes further; effort goes into systems and
+asset-readiness instead.
+
+## Final target
+
+A **cozy, colorful top-down / 2.5D pixel fantasy town**:
+
+- warm palette, readable silhouettes, chunky pixel proportions
+- map-first: the town *is* the interface; minimal UI floats on top
+- small-scale charm (Stardew-adjacent), not gritty or realistic
+- satire tone carried by animation and signage, not UI text walls
+
+## Asset-replaceable architecture
+
+All important game objects resolve their texture at runtime through
+`src/assets.js` + `src/data/assetManifest.js`:
+
+1. Drop a PNG at the manifest `path` under `public/assets/**`.
+2. Reload. The game uses it automatically. No code changes.
+3. If the file is missing, the generated placeholder is used and a console
+   line lists which keys are still fake: `[GWG assets] placeholder art in use for: …`
+
+Folder layout (all under `public/assets/`):
+
+| Folder        | Contents                                          |
+| ------------- | ------------------------------------------------- |
+| `tiles/`      | ground/terrain tilesets (grass, paths, water)     |
+| `characters/` | hero sprites — later spritesheets with walk/idle  |
+| `buildings/`  | one sprite per building, ground-anchored          |
+| `ui/`         | panel, button, frame nine-patches                 |
+| `icons/`      | resource + misc icons (coin, whale, …)            |
+| `particles/`  | particle textures (coin sparkle, glow, dust)      |
+| `maps/`       | Tiled/LDtk map exports when the town gets a map   |
+
+When character spritesheets arrive, change the manifest entry `type` to
+`'spritesheet'` and add a `frameConfig` — the loader already supports it.
+
+## Rules for Claude (and other tooling)
+
+- **Integrate assets, do not invent final art.** When real sprites are
+  provided, wire them in via the manifest; never spend cycles hand-crafting
+  elaborate Graphics art beyond quick readable placeholders.
+- Keep every new visible game object behind an asset key + fallback, following
+  the existing pattern in `src/data/buildings.js` / `src/data/heroes.js`.
+- Mark any new generated art clearly as temporary (`ph-` key prefix + comment).
+
+## The Golden Whale Milking Station rule
+
+The station must remain **the strongest visual identity in the scene**, in
+placeholder and final art alike: gold/glowing, whale signage, coin particles,
+red carpet + VIP rope, suspiciously premium. If a visual pass makes another
+building compete with it for attention, the pass is wrong.
