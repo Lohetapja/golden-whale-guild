@@ -23,12 +23,18 @@ npm.cmd run dev
 ```
 
 - Click buildings for tooltips.
-- Click the compact **Upgrade** action in a tooltip to spend fictional gold on
-  a building improvement. Upgrades change both effects and placeholder visuals.
+- Click buildings or special locations to open the fixed inspector panel.
+- Use the compact **Upgrade** action in the inspector to spend fictional gold
+  on a building improvement. Upgrades change both effects and placeholder
+  visuals.
 - Tap/click NPC heroes to inspect power, morale, debt, loyalty, whale access,
-  current action, and their latest suspicious thought.
-- Click small quest notices near the Guild Hall / Notice Board to post bounty
-  quests. Posted quests resolve during the next town cycle.
+  resentment, fame, current action, recent history, and their latest suspicious
+  thought.
+- Click the small quest marker near the Guild Hall / Notice Board to review and
+  post bounty quests in the inspector. Posted quests resolve during the next
+  town cycle.
+- Open **Town Ledger** to compare all upgradeable buildings and special
+  locations in one in-game planning board.
 - Press **Open Gates** (bottom right) to run the daily simulation - watch the
   resource bar (Gold / Trust / Corruption / Morale / Threat) and the event
   ticker at the bottom.
@@ -43,6 +49,10 @@ Earn fictional gold, choose between fair infrastructure upgrades and faster
 Golden Whale profits, post safe or risky quests, then open the gates and watch
 heroes react. Trust, Corruption, Morale, and Threat now affect hero behaviour,
 quest results, protests, debt events, and town attacks.
+
+NPC heroes now keep short personal histories and can drift into new statuses
+such as Protest Leader, Debt Spiral, Whale Champion, Mentor, Contract Victim,
+or Left Town based on what the economy does to them.
 
 The canvas uses Phaser Scale Manager `FIT` mode against a stable 1280x720
 logical game size, with mobile-safe page CSS to prevent accidental scrolling
@@ -77,8 +87,8 @@ GitHub Pages.
 ## Tech
 
 Phaser 3 + Vite, plain JavaScript, 1280x720 canvas. The game is map-first with
-minimal UI: top resources, compact goal hints, bottom ticker, compact
-tooltips, and no dashboard.
+minimal UI: top resources, compact goal hints, fixed inspector panel, Town
+Ledger, bottom ticker, and no dashboard.
 
 All current art is runtime-generated placeholder/debug pixel graphics - drop
 real sprites into `public/assets/**` at the paths listed in

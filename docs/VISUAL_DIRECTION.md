@@ -32,7 +32,12 @@ Current prototype priorities:
   game, support drag panning, and keep touch targets readable without adding
   dashboard UI
 - NPC hero detail belongs in compact tooltips anchored to the map, not in a
-  roster screen
+  roster screen; current implementation uses one fixed inspector panel so
+  detailed stats do not clutter the roads
+- Town Ledger is an in-world guild planning board, not an admin dashboard:
+  compact rows, upgrade trade-offs, and immediate map feedback
+- NPC status changes should remain readable with tiny placeholder markers
+  above sprites until real character/status assets exist
 
 ## Asset-replaceable architecture
 

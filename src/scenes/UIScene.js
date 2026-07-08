@@ -31,6 +31,8 @@ export default class UIScene extends Phaser.Scene {
     this.buildTicker();
     this.buildEndDayButton();
     this.buildUtilityButtons();
+    this.buildTownLedgerButton();
+    this.buildHtmlPanels();
 
     this.registry.events.on('changedata-resources', (_p, value) => this.updateResources(value));
     this.registry.events.on('changedata-objectives', (_p, value) => this.updateObjectives(value));
@@ -41,9 +43,17 @@ export default class UIScene extends Phaser.Scene {
     });
     this.game.events.on('gwg-event', this.queueEvent, this);
     this.game.events.on('gwg-cycle-done', this.enableCycleButton, this);
+    this.game.events.on('gwg-inspector-open', this.showInspectorPanel, this);
+    this.game.events.on('gwg-ledger-open', this.showLedgerPanel, this);
+    this.game.events.on('gwg-inspector-close', this.closeHtmlPanel, this);
+    this.input.keyboard?.on('keydown-ESC', this.closeHtmlPanel, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off('gwg-event', this.queueEvent, this);
       this.game.events.off('gwg-cycle-done', this.enableCycleButton, this);
+      this.game.events.off('gwg-inspector-open', this.showInspectorPanel, this);
+      this.game.events.off('gwg-ledger-open', this.showLedgerPanel, this);
+      this.game.events.off('gwg-inspector-close', this.closeHtmlPanel, this);
+      this.input.keyboard?.off('keydown-ESC', this.closeHtmlPanel, this);
     });
 
     this.updateResources(this.registry.get('resources'));
@@ -272,8 +282,12 @@ export default class UIScene extends Phaser.Scene {
     this.makeUtilityButton(WIDTH - 275, HEIGHT - 62, 'Reset', 'gwg-reset');
   }
 
-  makeUtilityButton(x, y, label, eventName) {
-    const bg = this.add.rectangle(x, y, 64, 32, 0x273244, 0.94)
+  buildTownLedgerButton() {
+    this.makeUtilityButton(WIDTH - 374, HEIGHT - 62, 'Town Ledger', 'gwg-open-ledger', 122);
+  }
+
+  makeUtilityButton(x, y, label, eventName, width = 64) {
+    const bg = this.add.rectangle(x, y, width, 32, 0x273244, 0.94)
       .setStrokeStyle(1, 0xf6c945)
       .setInteractive({ useHandCursor: true });
     const text = this.add.text(x, y, label, {
@@ -300,6 +314,120 @@ export default class UIScene extends Phaser.Scene {
       }
       this.game.events.emit(eventName);
     });
+  }
+
+  buildHtmlPanels() {
+    document.getElementById('gwg-inspector')?.remove();
+
+    this.panelEl = document.createElement('div');
+    this.panelEl.id = 'gwg-inspector';
+    this.panelEl.className = 'gwg-panel gwg-hidden';
+    this.panelEl.innerHTML = `
+      <div class="gwg-panel-head">
+        <div class="gwg-panel-title">
+          <h2></h2>
+          <p></p>
+        </div>
+        <button class="gwg-panel-close" type="button" aria-label="Close inspector">X</button>
+      </div>
+      <div class="gwg-panel-body"></div>
+    `;
+    document.body.appendChild(this.panelEl);
+    this.panelTitleEl = this.panelEl.querySelector('h2');
+    this.panelSubtitleEl = this.panelEl.querySelector('.gwg-panel-title p');
+    this.panelBodyEl = this.panelEl.querySelector('.gwg-panel-body');
+
+    this.panelEl.addEventListener('pointerdown', (event) => event.stopPropagation());
+    this.panelEl.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const close = event.target.closest('.gwg-panel-close');
+      if (close) {
+        this.closeHtmlPanel();
+        return;
+      }
+
+      const action = event.target.closest('[data-gwg-event]');
+      if (!action || action.disabled) return;
+      const eventName = action.dataset.gwgEvent;
+      const id = action.dataset.gwgId || '';
+      this.game.events.emit(eventName, id);
+    });
+  }
+
+  escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  renderLine(line) {
+    if (typeof line === 'string') return `<p>${this.escapeHtml(line)}</p>`;
+    const cls = line.className ? ` class="${this.escapeHtml(line.className)}"` : '';
+    return `<p${cls}>${this.escapeHtml(line.text)}</p>`;
+  }
+
+  renderAction(action) {
+    const disabled = action.disabled ? ' disabled' : '';
+    const className = action.className ? ` ${this.escapeHtml(action.className)}` : '';
+    return `
+      <button
+        class="gwg-action${className}"
+        type="button"
+        data-gwg-event="${this.escapeHtml(action.event)}"
+        data-gwg-id="${this.escapeHtml(action.id || '')}"${disabled}
+      >${this.escapeHtml(action.label)}</button>
+    `;
+  }
+
+  renderPanelPayload(payload = {}) {
+    const sections = (payload.sections || []).map((section) => `
+      <section class="gwg-section">
+        ${section.title ? `<h3>${this.escapeHtml(section.title)}</h3>` : ''}
+        ${(section.lines || []).map((line) => this.renderLine(line)).join('')}
+      </section>
+    `).join('');
+
+    const rows = (payload.rows || []).map((row) => `
+      <div class="gwg-row ${this.escapeHtml(row.kind || '')}">
+        <div class="gwg-row-title">
+          <span>${this.escapeHtml(row.title)}</span>
+          <span>${this.escapeHtml(row.meta || '')}</span>
+        </div>
+        ${(row.lines || []).map((line) => this.renderLine(line)).join('')}
+        ${row.actions?.length ? `<div class="gwg-actions">${row.actions.map((action) => this.renderAction(action)).join('')}</div>` : ''}
+      </div>
+    `).join('');
+
+    const actions = payload.actions?.length
+      ? `<div class="gwg-actions">${payload.actions.map((action) => this.renderAction(action)).join('')}</div>`
+      : '';
+    return `${sections}${rows}${actions}`;
+  }
+
+  showInspectorPanel(payload) {
+    this.showHtmlPanel(payload, false);
+  }
+
+  showLedgerPanel(payload) {
+    this.showHtmlPanel(payload, true);
+  }
+
+  showHtmlPanel(payload = {}, ledger = false) {
+    if (!this.panelEl) return;
+    this.panelEl.className = `gwg-panel${ledger ? ' gwg-ledger' : ''}`;
+    this.panelTitleEl.textContent = payload.title || 'Inspector';
+    this.panelSubtitleEl.textContent = payload.subtitle || '';
+    this.panelBodyEl.innerHTML = this.renderPanelPayload(payload);
+    this.panelBodyEl.scrollTop = 0;
+  }
+
+  closeHtmlPanel() {
+    if (!this.panelEl) return;
+    this.panelEl.classList.add('gwg-hidden');
+    this.game.events.emit('gwg-selection-clear');
   }
 
   enableCycleButton() {
