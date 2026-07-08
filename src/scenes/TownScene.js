@@ -3,11 +3,21 @@
 // real sprites can replace placeholder art without touching this file.
 import Phaser from 'phaser';
 import { BUILDINGS } from '../data/buildings.js';
-import { DECORATIONS, PATH_NODES } from '../data/decorations.js';
+import { DECORATIONS } from '../data/decorations.js';
 import { HEROES } from '../data/heroes.js';
 import { rollHeroEvent, WHALE_FLAVOR } from '../data/events.js';
 import { OBJECTIVES } from '../data/objectives.js';
 import { rollQuestNotices } from '../data/quests.js';
+import {
+  applyTownLayout,
+  BUILDING_LAYOUT,
+  DECORATION_LAYOUT,
+  DISTRICTS,
+  LAYOUT_CONSTANTS,
+  TOWN_PATH_LINKS,
+  TOWN_PATH_NODES,
+  TOWN_WORLD,
+} from '../data/townLayout.js';
 import {
   DENIED_LINES,
   IDLE_QUIPS,
@@ -25,9 +35,13 @@ import { loadAssets, ensureFallbacks, resolveTexture, buildingTexture, heroTextu
 
 const WIDTH = 1280;
 const HEIGHT = 720;
-const WORLD_WIDTH = 1480;
-const WORLD_HEIGHT = 860;
-const PLAZA = { x: 610, y: 410 };
+const WORLD_WIDTH = TOWN_WORLD.width;
+const WORLD_HEIGHT = TOWN_WORLD.height;
+const PLAZA = TOWN_WORLD.plaza;
+const ROAD_WIDTH = LAYOUT_CONSTANTS.ROAD_WIDTH;
+const NPC_SCALE = LAYOUT_CONSTANTS.NPC_SCALE;
+const LABEL_FONT_SIZE = LAYOUT_CONSTANTS.LABEL_FONT_SIZE;
+const SMALL_LABEL_FONT_SIZE = LAYOUT_CONSTANTS.SMALL_LABEL_FONT_SIZE;
 const STEP_MS = 950; // pacing of the day-cycle playback
 const MAX_IDLE_BUBBLES = 2;
 const MAX_IMPORTANT_BUBBLES = 4;
@@ -58,12 +72,6 @@ const BALANCE = {
   goldenWhaleCorruptionGain: [3, 6],
   policyInterval: 3,
 };
-
-const QUEST_NOTICE_SPOTS = [
-  { x: 318, y: 182 },
-  { x: 532, y: 182 },
-  { x: 426, y: 296 },
-];
 
 const HERO_GROUPS = {
   honest: ['Honest Grinder', 'Broke Optimist', 'Free Trial Paladin', 'Disillusioned Blacksmith'],
@@ -425,6 +433,12 @@ export default class TownScene extends Phaser.Scene {
     this.cycleRunning = false;
     this.lastUpgradeAt = 0;
 
+    this.buildings = applyTownLayout(BUILDINGS, BUILDING_LAYOUT);
+    this.decorations = applyTownLayout(DECORATIONS, DECORATION_LAYOUT);
+    this.pathNodes = TOWN_PATH_NODES;
+    this.pathLinks = TOWN_PATH_LINKS;
+    this.pathNodeById = Object.fromEntries(this.pathNodes.map((node) => [node.id, node]));
+
     this.buildTerrain();
     this.buildBuildings();
     this.buildDecorations();
@@ -520,7 +534,10 @@ export default class TownScene extends Phaser.Scene {
   setupCameraControls() {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-    cam.setScroll(0, 0);
+    cam.setScroll(
+      Phaser.Math.Clamp(TOWN_WORLD.cameraStart.x, 0, Math.max(0, WORLD_WIDTH - WIDTH)),
+      Phaser.Math.Clamp(TOWN_WORLD.cameraStart.y, 0, Math.max(0, WORLD_HEIGHT - HEIGHT)),
+    );
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D');
@@ -541,8 +558,8 @@ export default class TownScene extends Phaser.Scene {
       const total = Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.x, pointer.y);
       if (total > TAP_MOVE_THRESHOLD) this.cameraDrag.moved = true;
       if (this.cameraDrag.moved) {
-        cam.scrollX = Phaser.Math.Clamp(cam.scrollX - dx, 0, WORLD_WIDTH - WIDTH);
-        cam.scrollY = Phaser.Math.Clamp(cam.scrollY - dy, 0, WORLD_HEIGHT - HEIGHT);
+        cam.scrollX = Phaser.Math.Clamp(cam.scrollX - dx, 0, Math.max(0, WORLD_WIDTH - WIDTH));
+        cam.scrollY = Phaser.Math.Clamp(cam.scrollY - dy, 0, Math.max(0, WORLD_HEIGHT - HEIGHT));
       }
       this.cameraDrag.lastX = pointer.x;
       this.cameraDrag.lastY = pointer.y;
@@ -1352,44 +1369,123 @@ export default class TownScene extends Phaser.Scene {
   buildTerrain() {
     this.add.tileSprite(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, WORLD_WIDTH, WORLD_HEIGHT, 'grass');
 
-    const path = this.add.graphics();
-    path.fillStyle(0xd9bc85);
-    path.fillCircle(PLAZA.x, PLAZA.y, 76);
-
-    const pathTargets = [
-      ...BUILDINGS.map((b) => ({ x: b.x, y: b.y + 8 })),
-      ...DECORATIONS.filter((d) => d.path).map((d) => ({ x: d.x, y: d.y })),
-      ...PATH_NODES,
-    ];
-    for (const target of pathTargets) {
-      this.stampPath(path, PLAZA.x, PLAZA.y, target.x, target.y);
+    const districts = this.add.graphics();
+    for (const district of DISTRICTS) {
+      districts.fillStyle(district.color, district.alpha);
+      districts.fillRoundedRect(
+        district.x - district.w / 2,
+        district.y - district.h / 2,
+        district.w,
+        district.h,
+        28,
+      );
     }
 
-    const nodeById = Object.fromEntries(PATH_NODES.map((n) => [n.id, n]));
-    const pathLinks = [
-      ['path-west-curve', 'path-south-west'],
-      ['path-south-west', 'path-market-bend'],
-      ['path-market-bend', 'path-training-bend'],
-      ['path-training-bend', 'path-dungeon-bend'],
-      ['path-dungeon-bend', 'path-whale'],
-      ['path-north', 'path-whale'],
+    const path = this.add.graphics();
+    path.fillStyle(0xd9bc85);
+    path.fillCircle(PLAZA.x, PLAZA.y, ROAD_WIDTH * 1.45);
+
+    for (const [from, to] of this.pathLinks) {
+      const a = this.pathNodeById[from];
+      const b = this.pathNodeById[to];
+      if (a && b) this.stampPath(path, a.x, a.y, b.x, b.y, ROAD_WIDTH / 2);
+    }
+
+    const places = [
+      ...this.buildings,
+      ...this.decorations.filter((d) => d.path || d.interactive),
     ];
-    for (const [from, to] of pathLinks) {
-      this.stampPath(path, nodeById[from].x, nodeById[from].y, nodeById[to].x, nodeById[to].y);
+    for (const place of places) {
+      const node = this.pathNodeById[place.pathNode];
+      if (!node) continue;
+      const door = this.getDoorSpotForPlace(place);
+      this.stampPath(path, node.x, node.y, door.x, door.y, ROAD_WIDTH / 3);
     }
   }
 
-  stampPath(g, x1, y1, x2, y2) {
+  stampPath(g, x1, y1, x2, y2, radius = 10) {
     // stamped circles read as a hand-laid dirt trail
     const dist = Phaser.Math.Distance.Between(x1, y1, x2, y2);
-    const steps = Math.ceil(dist / 9);
+    const steps = Math.ceil(dist / Math.max(7, radius * 0.62));
     for (let i = 0; i <= steps; i += 1) {
       const t = i / steps;
-      const x = Phaser.Math.Linear(x1, x2, t) + Phaser.Math.Between(-3, 3);
-      const y = Phaser.Math.Linear(y1, y2, t) + Phaser.Math.Between(-3, 3);
+      const jitter = Math.max(1, Math.floor(radius * 0.18));
+      const x = Phaser.Math.Linear(x1, x2, t) + Phaser.Math.Between(-jitter, jitter);
+      const y = Phaser.Math.Linear(y1, y2, t) + Phaser.Math.Between(-jitter, jitter);
       g.fillStyle(Math.random() < 0.15 ? 0xc3a76f : 0xd9bc85);
-      g.fillCircle(x, y, 10);
+      g.fillCircle(x, y, radius);
     }
+  }
+
+  getDoorSpotForPlace(place) {
+    if (!place) return { id: 'plaza-center', x: PLAZA.x, y: PLAZA.y };
+    const offset = place.doorOffsetY ?? (place.id === 'whale' ? 44 : 18);
+    return {
+      id: place.id,
+      x: place.doorX ?? place.x,
+      y: place.doorY ?? place.y + offset,
+    };
+  }
+
+  getPlaceLabelText(place) {
+    return place.shortLabel || place.name || place.id;
+  }
+
+  addPlaceLabel(place, fontSize = LABEL_FONT_SIZE) {
+    const label = this.add.text(
+      place.x + (place.labelOffsetX || 0),
+      place.y + (place.labelOffsetY ?? 4),
+      this.getPlaceLabelText(place),
+      {
+        fontFamily: '"Courier New", monospace',
+        fontSize: `${fontSize}px`,
+        fontStyle: 'bold',
+        color: '#fff6dc',
+        stroke: '#0c1118',
+        strokeThickness: 2,
+        backgroundColor: '#0f1521cc',
+        padding: { x: 4, y: 2 },
+        align: 'center',
+        wordWrap: { width: place.labelWidth || Math.max(86, (place.w || 80) + 34) },
+      },
+    ).setOrigin(0.5, 0).setDepth(2000);
+    label.setMaxLines(2);
+    return label;
+  }
+
+  createPlaceHitZone(place, img, onSelect) {
+    const width = place.interactionW || Math.max(84, (place.w || 64) + 34);
+    const height = place.interactionH || Math.max(72, (place.h || 52) + 34);
+    const centerY = place.y - (place.h || 52) / 2 + (place.interactionOffsetY || 0);
+    const hit = this.add.rectangle(place.x, centerY, width, height, 0xffffff, 0.001)
+      .setOrigin(0.5)
+      .setDepth((place.y || 0) + 8)
+      .setInteractive({ useHandCursor: true });
+    hit.on('pointerover', () => {
+      if (img?.setTint) img.setTint(this.isLocationUnlocked(place.id) ? 0xfff3c0 : 0x9aa3b5);
+      if (img && this.tweens) {
+        const restX = img.getData('restScaleX') || img.getData('baseScaleX') || 1;
+        const restY = img.getData('restScaleY') || img.getData('baseScaleY') || 1;
+        this.tweens.add({ targets: img, scaleX: restX * 1.035, scaleY: restY * 1.035, duration: 90 });
+      }
+    });
+    hit.on('pointerout', () => {
+      if (img?.clearTint && this.isLocationUnlocked(place.id)) img.clearTint();
+      else if (img?.setTint) img.setTint(0x6f7787);
+      if (img && this.tweens) {
+        this.tweens.add({
+          targets: img,
+          scaleX: img.getData('restScaleX') || img.getData('baseScaleX') || 1,
+          scaleY: img.getData('restScaleY') || img.getData('baseScaleY') || 1,
+          duration: 90,
+        });
+      }
+    });
+    hit.on('pointerup', (pointer) => {
+      if (this.wasDragGesture(pointer)) return;
+      onSelect?.(place);
+    });
+    return hit;
   }
 
   buildBuildings() {
@@ -1397,46 +1493,27 @@ export default class TownScene extends Phaser.Scene {
     this.buildingById = {};
     this.placeSpriteById = {};
 
-    for (const b of BUILDINGS) {
+    for (const b of this.buildings) {
       this.buildingById[b.id] = b;
       this.add.ellipse(b.x, b.y - 8, b.w * 0.8, 26, 0x10151d, 0.22).setDepth(b.y - 2);
       const img = this.add.image(b.x, b.y, buildingTexture(this, b))
         .setOrigin(0.5, 1)
-        .setDepth(b.y)
-        .setInteractive({ useHandCursor: true });
+        .setDepth(b.y);
+      img.setScale(b.visualScale ?? LAYOUT_CONSTANTS.BUILDING_SCALE);
       img.setData('baseScaleX', img.scaleX);
       img.setData('baseScaleY', img.scaleY);
+      img.setData('hoverScale', (b.visualScale ?? LAYOUT_CONSTANTS.BUILDING_SCALE) * 1.03);
       this.placeSpriteById[b.id] = img;
 
-      // hover/click feedback: tint plus a small grow pop
-      img.on('pointerover', () => {
-        img.setTint(0xfff3c0);
-        this.tweens.add({ targets: img, scale: 1.03, duration: 90 });
-      });
-      img.on('pointerout', () => {
-        img.clearTint();
-        this.tweens.add({ targets: img, scale: 1, duration: 90 });
-      });
-      img.on('pointerup', (pointer) => {
-        if (this.wasDragGesture(pointer)) return;
+      // Invisible hit zones keep smaller placeholders easy to tap on mobile.
+      this.createPlaceHitZone(b, img, () => {
         this.showTooltip(b);
       });
 
       // name plate under each building keeps the map readable
-      this.add.text(b.x, b.y + 4, b.name, {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '11px',
-        fontStyle: 'bold',
-        color: '#fff6dc',
-        stroke: '#0c1118',
-        strokeThickness: 2,
-        backgroundColor: '#0f1521cc',
-        padding: { x: 5, y: 2 },
-      }).setOrigin(0.5, 0).setDepth(2000);
+      this.addPlaceLabel(b);
 
-      // whale door spot sits in front of the VIP rope, not on the doorstep
-      const doorY = b.id === 'whale' ? b.y + 44 : b.y + 18;
-      this.doorSpots.push({ id: b.id, x: b.x, y: doorY });
+      this.doorSpots.push(this.getDoorSpotForPlace(b));
     }
     this.doorById = Object.fromEntries(this.doorSpots.map((s) => [s.id, s]));
 
@@ -1444,14 +1521,14 @@ export default class TownScene extends Phaser.Scene {
 
     // training yard props
     const yard = this.buildingById.training;
-    this.add.image(yard.x - 90, yard.y - 8, 'dummy').setOrigin(0.5, 1).setDepth(yard.y - 8);
-    this.add.image(yard.x + 88, yard.y - 2, 'dummy').setOrigin(0.5, 1).setDepth(yard.y - 2);
+    this.add.image(yard.x - 62, yard.y - 8, 'dummy').setScale(0.86).setOrigin(0.5, 1).setDepth(yard.y - 8);
+    this.add.image(yard.x + 62, yard.y - 2, 'dummy').setScale(0.86).setOrigin(0.5, 1).setDepth(yard.y - 2);
   }
 
   buildDecorations() {
     this.decorationById = {};
     this.decorationObjectsById = {};
-    for (const d of DECORATIONS) {
+    for (const d of this.decorations) {
       this.decorationById[d.id] = d;
       const key = resolveTexture(this, d.assetKey, d.fallbackKey);
       if (!key) continue;
@@ -1466,9 +1543,10 @@ export default class TownScene extends Phaser.Scene {
       this.placeSpriteById[d.id] = img;
       this.decorationObjectsById[d.id].push(img);
 
-      if (d.scale) img.setScale(d.scale);
+      if (d.visualScale || d.scale) img.setScale(d.visualScale ?? d.scale);
       img.setData('baseScaleX', img.scaleX);
       img.setData('baseScaleY', img.scaleY);
+      img.setData('hoverScale', (d.visualScale ?? d.scale ?? 1) * 1.04);
 
       if (d.fallbackKey === 'tree') {
         this.tweens.add({
@@ -1483,14 +1561,7 @@ export default class TownScene extends Phaser.Scene {
       }
 
       if (d.interactive) {
-        img.setInteractive({ useHandCursor: true });
-        img.on('pointerover', () => img.setTint(this.isLocationUnlocked(d.id) ? 0xfff3c0 : 0x9aa3b5));
-        img.on('pointerout', () => {
-          if (this.isLocationUnlocked(d.id)) img.clearTint();
-          else img.setTint(0x6f7787);
-        });
-        img.on('pointerup', (pointer) => {
-          if (this.wasDragGesture(pointer)) return;
+        const hit = this.createPlaceHitZone(d, img, () => {
           if (!this.isLocationUnlocked(d.id)) {
             this.game.events.emit('gwg-event', `${d.name} is still locked. The town has not earned that problem yet.`);
             this.floatText(d.x, d.y - (d.h || 44) - 10, 'LOCKED', '#d4dae2');
@@ -1498,24 +1569,16 @@ export default class TownScene extends Phaser.Scene {
           }
           this.showTooltip(d);
         });
+        this.decorationObjectsById[d.id].push(hit);
       }
 
       if (d.label) {
-        const label = this.add.text(d.x, d.y + 4, d.name, {
-          fontFamily: '"Courier New", monospace',
-          fontSize: '9px',
-          fontStyle: 'bold',
-          color: '#fff6dc',
-          stroke: '#0c1118',
-          strokeThickness: 2,
-          backgroundColor: '#0f1521cc',
-          padding: { x: 4, y: 2 },
-        }).setOrigin(0.5, 0).setDepth(2000);
+        const label = this.addPlaceLabel(d, d.labelFontSize || SMALL_LABEL_FONT_SIZE);
         this.decorationObjectsById[d.id].push(label);
       }
 
       if (d.spot) {
-        this.doorSpots.push({ id: d.id, x: d.x, y: d.y + 8 });
+        this.doorSpots.push(this.getDoorSpotForPlace(d));
       }
       this.updateDecorationLockState(d.id);
     }
@@ -1544,8 +1607,8 @@ export default class TownScene extends Phaser.Scene {
     this.questNoticeContainers = [];
 
     const board = this.decorationById.notice_board || this.buildingById.guildhall;
-    const x = board.x - 72;
-    const y = board.y - (board.h || 60) - 20;
+    const x = board.x + 22;
+    const y = board.y - (board.h || 60) - 36;
     const w = 144;
     const h = 42;
     const container = this.add.container(x, y).setDepth(3600);
@@ -1666,7 +1729,8 @@ export default class TownScene extends Phaser.Scene {
     const text = `Posted ${quest.name} for ${quest.cost}g. Heroes will make it worse shortly.`;
     this.game.events.emit('gwg-event', text);
     this.addTownLog(text, 'quest');
-    this.floatText(QUEST_NOTICE_SPOTS[0].x + 80, QUEST_NOTICE_SPOTS[0].y - 8, 'QUEST POSTED', '#ffe08a');
+    const board = this.decorationById.notice_board || this.buildingById.guildhall;
+    this.floatText(board.x + 44, board.y - (board.h || 60) - 32, 'QUEST POSTED', '#ffe08a');
     this.buildQuestNotices();
     this.checkObjectives();
     this.advanceOnboarding('postQuest');
@@ -1691,15 +1755,15 @@ export default class TownScene extends Phaser.Scene {
 
     const glow = this.add.image(whale.x, whale.y - 60, 'glow')
       .setDepth(whale.y - whale.h - 1)
-      .setScale(2.6)
+      .setScale(2.05)
       .setAlpha(0.62);
     this.tweens.add({
-      targets: glow, alpha: 0.95, scale: 2.95,
+      targets: glow, alpha: 0.92, scale: 2.32,
       duration: 1100, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
     const profitHalo = this.add.image(whale.x, whale.y - 18, 'glow')
       .setDepth(whale.y - 2)
-      .setScale(1.45)
+      .setScale(1.1)
       .setAlpha(0.35);
     this.tweens.add({
       targets: profitHalo, angle: 360, alpha: 0.62,
@@ -1709,19 +1773,19 @@ export default class TownScene extends Phaser.Scene {
     // real whale sign asset floats above the door once it exists
     const signKey = resolveTexture(this, 'icon_whale', 'ph-icon_whale');
     this.add.image(whale.x, whale.y - whale.h * 0.55, signKey)
-      .setScale(1.8)
+      .setScale(1.38)
       .setDepth(whale.y + 2);
 
     // steady trickle of coins rising out of the chimney region
     this.add.particles(whale.x, whale.y - whale.h + 20, coinKey, {
-      x: { min: -70, max: 70 },
+      x: { min: -Math.floor(whale.w * 0.42), max: Math.floor(whale.w * 0.42) },
       speedY: { min: -45, max: -20 },
       speedX: { min: -16, max: 16 },
       alpha: { start: 1, end: 0 },
-      scale: { min: 0.8, max: 1.35 },
+      scale: { min: 0.62, max: 1.05 },
       lifespan: 1900,
-      frequency: 170,
-      maxParticles: 34,
+      frequency: 190,
+      maxParticles: 28,
     }).setDepth(whale.y + 2);
 
     // burst emitter fired when the station cashes in during a cycle
@@ -1737,11 +1801,11 @@ export default class TownScene extends Phaser.Scene {
     }).setDepth(whale.y + 2);
 
     // premium entrance: red carpet + velvet rope in front of the door
-    this.add.image(whale.x, whale.y + 22, 'carpet').setDepth(2);
-    this.add.image(whale.x, whale.y + 30, 'viprope').setOrigin(0.5, 1).setDepth(whale.y + 30);
+    this.add.image(whale.x, whale.y + 22, 'carpet').setScale(0.82).setDepth(2);
+    this.add.image(whale.x, whale.y + 30, 'viprope').setScale(0.9).setOrigin(0.5, 1).setDepth(whale.y + 30);
     this.add.text(whale.x, whale.y + 45, 'VIP QUEUE', {
       fontFamily: '"Courier New", monospace',
-      fontSize: '11px',
+      fontSize: '10px',
       fontStyle: 'bold',
       color: '#f6c945',
       stroke: '#141a24',
@@ -1771,8 +1835,14 @@ export default class TownScene extends Phaser.Scene {
     if (sprite) {
       const baseX = sprite.getData('baseScaleX') || 1;
       const baseY = sprite.getData('baseScaleY') || 1;
-      const scaleBoost = Math.min(0.14, Math.max(0, level - 1) * 0.035);
-      sprite.setScale(baseX * (1 + scaleBoost), baseY * (1 + scaleBoost));
+      const maxBoost = place.maxUpgradeScaleBoost ?? 0.14;
+      const step = place.upgradeScaleStep ?? 0.035;
+      const scaleBoost = Math.min(maxBoost, Math.max(0, level - 1) * step);
+      const restScaleX = baseX * (1 + scaleBoost);
+      const restScaleY = baseY * (1 + scaleBoost);
+      sprite.setScale(restScaleX, restScaleY);
+      sprite.setData('restScaleX', restScaleX);
+      sprite.setData('restScaleY', restScaleY);
     }
     if (level <= 1) return;
 
@@ -2195,6 +2265,7 @@ export default class TownScene extends Phaser.Scene {
     marker.fillCircle(0, -31, 34);
     hero.container.add(marker);
     this.selectionMarker = marker;
+    hero.label?.setAlpha(1);
     this.tweens.add({ targets: marker, alpha: 0.45, duration: 620, yoyo: true, repeat: -1 });
   }
 
@@ -2203,6 +2274,7 @@ export default class TownScene extends Phaser.Scene {
       this.selectionMarker.destroy();
       this.selectionMarker = null;
     }
+    for (const hero of this.heroes || []) hero.label?.setAlpha(0.52);
     if (clearInspector) {
       this.tooltipTarget = null;
       this.heroTooltipTarget = null;
@@ -2659,21 +2731,21 @@ export default class TownScene extends Phaser.Scene {
 
   buildHeroes() {
     this.heroes = HEROES.map((def, i) => {
-      const spot = this.doorSpots[i % this.doorSpots.length];
-      const x = spot.x + Phaser.Math.Between(-40, 40);
-      const y = spot.y + Phaser.Math.Between(0, 20);
+      const spot = this.getInitialHeroSpot(def, i);
+      const x = spot.x + Phaser.Math.Between(-28, 28);
+      const y = spot.y + Phaser.Math.Between(2, 22);
 
-      const sprite = this.add.image(0, 0, heroTexture(this, def)).setScale(2).setOrigin(0.5, 1);
+      const sprite = this.add.image(0, 0, heroTexture(this, def)).setScale(NPC_SCALE).setOrigin(0.5, 1);
       const label = this.add.text(0, -40, def.name, {
         fontFamily: '"Courier New", monospace',
-        fontSize: '9px',
+        fontSize: `${SMALL_LABEL_FONT_SIZE}px`,
         fontStyle: 'bold',
         color: '#ffffff',
         stroke: '#0c1118',
         strokeThickness: 2,
         backgroundColor: '#0f1521cc',
         padding: { x: 4, y: 2 },
-      }).setOrigin(0.5, 1).setAlpha(0.82);
+      }).setOrigin(0.5, 1).setAlpha(0.52);
 
       const container = this.add.container(x, y, [sprite, label]).setDepth(y);
       const savedStats = this.savedHeroStats?.[def.id] || {};
@@ -2711,7 +2783,7 @@ export default class TownScene extends Phaser.Scene {
           admiredId: savedStats.admiredId || null,
           resentmentTargetId: savedStats.resentmentTargetId || null,
         },
-        at: spot.id, destination: null, state: 'idle',
+        at: spot.id, pathNode: this.getPathNodeForPlaceId(spot.id)?.id || null, destination: null, state: 'idle',
         currentAction: `Idle near ${this.getPlaceName(spot.id)}`,
         moveTween: null, bobTween: null, timer: null,
         destMarker: null, bubble: null, bubbleTimer: null,
@@ -2735,8 +2807,14 @@ export default class TownScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       container.add(hit);
       hero.hit = hit;
-      hit.on('pointerover', () => sprite.setTint(0xfff3c0));
-      hit.on('pointerout', () => this.applyHeroTint(hero));
+      hit.on('pointerover', () => {
+        sprite.setTint(0xfff3c0);
+        label.setAlpha(1);
+      });
+      hit.on('pointerout', () => {
+        this.applyHeroTint(hero);
+        if (this.heroTooltipTarget !== hero) label.setAlpha(0.52);
+      });
       hit.on('pointerup', (pointer) => {
         if (this.wasDragGesture(pointer)) return;
         this.showHeroTooltip(hero);
@@ -2744,7 +2822,7 @@ export default class TownScene extends Phaser.Scene {
 
       // idle breathing — replace with a real idle animation later
       this.tweens.add({
-        targets: sprite, scaleY: { from: 2, to: 2.08 },
+        targets: sprite, scaleY: { from: NPC_SCALE, to: NPC_SCALE * 1.04 },
         duration: Phaser.Math.Between(700, 1000), yoyo: true, repeat: -1,
         ease: 'Sine.easeInOut', delay: Phaser.Math.Between(0, 600),
       });
@@ -2753,6 +2831,21 @@ export default class TownScene extends Phaser.Scene {
       this.scheduleAmbient(hero, Phaser.Math.Between(300, 2500));
       return hero;
     });
+  }
+
+  getInitialHeroSpot(def, index = 0) {
+    const preferredIds = def.preferredDestinations || [def.prefers].filter(Boolean);
+    const preferred = preferredIds
+      .map((id) => this.doorById?.[id])
+      .filter((spot) => spot && this.isLocationUnlocked(spot.id));
+    if (preferred.length > 0) return preferred[index % preferred.length];
+
+    const districts = this.getHeroDistrictPreferences({ def });
+    for (const district of districts) {
+      const spots = this.getDistrictDoorSpots(district);
+      if (spots.length > 0) return spots[index % spots.length];
+    }
+    return this.doorById?.guildhall || this.doorSpots[index % this.doorSpots.length];
   }
 
   addHeroHistory(hero, line) {
@@ -2968,19 +3061,110 @@ export default class TownScene extends Phaser.Scene {
     hero.timer = this.time.delayedCall(delay, () => this.ambientMove(hero));
   }
 
-  ambientMove(hero) {
-    // heroes drift toward their preferred hangouts most of the time
-    let spot;
+  getHeroDistrictPreferences(hero) {
+    const personality = hero?.def?.personality || hero?.personality || '';
+    const status = hero?.stats?.status || '';
+    if (/Protest|Bitter|Balance/.test(status)) return ['training', 'guild', 'social'];
+    if (/Whale|Premium|Brand|Sponsored/.test(status) || HERO_GROUPS.whale.includes(personality)) return ['premium', 'social'];
+    if (/Debt|Contract|Cursed/.test(status) || HERO_GROUPS.debt.includes(personality)) return ['premium', 'market'];
+    if (personality === 'Guild Clerk' || personality === 'Quest Intern' || personality === 'Patch Notes Prophet') return ['guild', 'social'];
+    if (personality === 'Suspicious Merchant' || personality === 'Lootbox Philosopher') return ['market', 'premium'];
+    if (HERO_GROUPS.veteran.includes(personality)) return ['social', 'training', 'guild'];
+    if (HERO_GROUPS.honest.includes(personality)) return ['training', 'guild', 'market'];
+    return ['guild', 'social', 'market'];
+  }
+
+  getDistrictDoorSpots(district) {
+    return (this.doorSpots || []).filter((spot) => {
+      const place = this.placeById?.[spot.id];
+      return place?.district === district && this.isLocationUnlocked(spot.id);
+    });
+  }
+
+  pickAmbientSpot(hero) {
     const preferredIds = hero.def.preferredDestinations || [hero.def.prefers].filter(Boolean);
     const preferredSpots = preferredIds
       .map((id) => this.doorById[id])
       .filter((s) => s && s.id !== hero.at && this.isLocationUnlocked(s.id));
-    if (Math.random() < 0.62 && preferredSpots.length > 0) {
-      spot = Phaser.Utils.Array.GetRandom(preferredSpots);
-    } else {
-      spot = Phaser.Utils.Array.GetRandom(this.doorSpots.filter((s) => s.id !== hero.at && this.isLocationUnlocked(s.id)));
+
+    if (/Protest|Bitter/.test(hero.stats.status || '') && Math.random() < 0.74) {
+      const protest = ['complaint_barrel', 'hero_union_tent', 'whale']
+        .map((id) => this.doorById[id])
+        .filter((s) => s && s.id !== hero.at && this.isLocationUnlocked(s.id));
+      if (protest.length > 0) return Phaser.Utils.Array.GetRandom(protest);
     }
+
+    if (Math.random() < 0.72 && preferredSpots.length > 0) return Phaser.Utils.Array.GetRandom(preferredSpots);
+
+    const districtSpots = this.getHeroDistrictPreferences(hero)
+      .flatMap((district) => this.getDistrictDoorSpots(district))
+      .filter((s) => s.id !== hero.at);
+    if (Math.random() < 0.86 && districtSpots.length > 0) return Phaser.Utils.Array.GetRandom(districtSpots);
+
+    const fallback = this.doorSpots.filter((s) => s.id !== hero.at && this.isLocationUnlocked(s.id));
+    return Phaser.Utils.Array.GetRandom(fallback);
+  }
+
+  ambientMove(hero) {
+    const spot = this.pickAmbientSpot(hero);
     this.walkTo(hero, spot, () => this.onAmbientArrive(hero, spot));
+  }
+
+  getPathNodeForPlaceId(id) {
+    const place = this.placeById?.[id];
+    if (place?.pathNode && this.pathNodeById?.[place.pathNode]) return this.pathNodeById[place.pathNode];
+    if (place) return this.getNearestPathNode(place.x, place.y);
+    return null;
+  }
+
+  getNearestPathNode(x, y) {
+    if (!this.pathNodes?.length) return null;
+    return this.pathNodes.reduce((best, node) => {
+      const dist = Phaser.Math.Distance.Between(x, y, node.x, node.y);
+      return !best || dist < best.dist ? { node, dist } : best;
+    }, null)?.node || null;
+  }
+
+  getPathRouteIds(fromId, toId) {
+    if (!fromId || !toId || fromId === toId) return fromId ? [fromId] : [];
+    const graph = new Map();
+    for (const [a, b] of this.pathLinks || []) {
+      if (!graph.has(a)) graph.set(a, []);
+      if (!graph.has(b)) graph.set(b, []);
+      graph.get(a).push(b);
+      graph.get(b).push(a);
+    }
+    const queue = [[fromId]];
+    const seen = new Set([fromId]);
+    while (queue.length > 0) {
+      const route = queue.shift();
+      const last = route[route.length - 1];
+      for (const next of graph.get(last) || []) {
+        if (seen.has(next)) continue;
+        const candidate = [...route, next];
+        if (next === toId) return candidate;
+        seen.add(next);
+        queue.push(candidate);
+      }
+    }
+    return [fromId, TOWN_WORLD.centerNode, toId].filter(Boolean);
+  }
+
+  buildWalkRoute(hero, spot, tx, ty) {
+    const fromNode = this.getPathNodeForPlaceId(hero.at) || this.getNearestPathNode(hero.container.x, hero.container.y);
+    const toNode = this.getPathNodeForPlaceId(spot.id) || this.getNearestPathNode(spot.x, spot.y);
+    const routeIds = this.getPathRouteIds(fromNode?.id, toNode?.id);
+    const points = [];
+    const addPoint = (point) => {
+      if (!point) return;
+      const prev = points[points.length - 1] || { x: hero.container.x, y: hero.container.y };
+      if (Phaser.Math.Distance.Between(prev.x, prev.y, point.x, point.y) > 28) {
+        points.push({ x: point.x, y: point.y, pathNode: point.id });
+      }
+    };
+    for (const id of routeIds) addPoint(this.pathNodeById[id]);
+    points.push({ x: tx, y: ty, pathNode: toNode?.id, final: true });
+    return points;
   }
 
   walkTo(hero, spot, onArrive) {
@@ -2995,8 +3179,7 @@ export default class TownScene extends Phaser.Scene {
 
     const tx = spot.x + Phaser.Math.Between(-38, 38);
     const ty = spot.y + Phaser.Math.Between(-4, 18);
-    const dist = Phaser.Math.Distance.Between(hero.container.x, hero.container.y, tx, ty);
-    const duration = Math.max(300, (dist / hero.def.speed) * 1000);
+    const route = this.buildWalkRoute(hero, spot, tx, ty);
 
     // destination indicator: a small chevron bouncing where the hero is headed
     hero.destMarker = this.add.image(tx, ty - 12, 'chevron').setDepth(3500).setAlpha(0.85);
@@ -3011,21 +3194,40 @@ export default class TownScene extends Phaser.Scene {
       targets: hero.sprite, angle: { from: -4, to: 4 },
       duration: 160, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
-    hero.moveTween = this.tweens.add({
-      targets: hero.container,
-      x: tx, y: ty, duration,
-      onComplete: () => {
+
+    const moveSegment = (index) => {
+      const point = route[index];
+      if (!point) {
         if (hero.bobTween) { hero.bobTween.stop(); hero.bobTween = null; }
         if (hero.destMarker) { hero.destMarker.destroy(); hero.destMarker = null; }
         hero.sprite.setAngle(0);
         hero.moveTween = null;
         hero.at = spot.id;
+        hero.pathNode = this.getPathNodeForPlaceId(spot.id)?.id || hero.pathNode;
         hero.destination = null;
         hero.state = 'idle';
         hero.currentAction = `Idle near ${this.getPlaceName(spot.id)}`;
-        onArrive();
-      },
-    });
+        onArrive?.();
+        return;
+      }
+      hero.sprite.setFlipX(point.x < hero.container.x);
+      const dist = Phaser.Math.Distance.Between(hero.container.x, hero.container.y, point.x, point.y);
+      const duration = Math.max(180, (dist / hero.def.speed) * 1000);
+      hero.moveTween = this.tweens.add({
+        targets: hero.container,
+        x: point.x,
+        y: point.y,
+        duration,
+        ease: point.final ? 'Sine.easeInOut' : 'Linear',
+        onUpdate: () => hero.container.setDepth(hero.container.y),
+        onComplete: () => {
+          if (point.pathNode) hero.pathNode = point.pathNode;
+          moveSegment(index + 1);
+        },
+      });
+    };
+
+    moveSegment(0);
   }
 
   onAmbientArrive(hero, spot) {
@@ -3241,10 +3443,10 @@ export default class TownScene extends Phaser.Scene {
     const right = this.cursors?.right?.isDown || this.wasd?.D?.isDown;
     const up = this.cursors?.up?.isDown || this.wasd?.W?.isDown;
     const down = this.cursors?.down?.isDown || this.wasd?.S?.isDown;
-    if (left) cam.scrollX = Phaser.Math.Clamp(cam.scrollX - speed, 0, WORLD_WIDTH - WIDTH);
-    if (right) cam.scrollX = Phaser.Math.Clamp(cam.scrollX + speed, 0, WORLD_WIDTH - WIDTH);
-    if (up) cam.scrollY = Phaser.Math.Clamp(cam.scrollY - speed, 0, WORLD_HEIGHT - HEIGHT);
-    if (down) cam.scrollY = Phaser.Math.Clamp(cam.scrollY + speed, 0, WORLD_HEIGHT - HEIGHT);
+    if (left) cam.scrollX = Phaser.Math.Clamp(cam.scrollX - speed, 0, Math.max(0, WORLD_WIDTH - WIDTH));
+    if (right) cam.scrollX = Phaser.Math.Clamp(cam.scrollX + speed, 0, Math.max(0, WORLD_WIDTH - WIDTH));
+    if (up) cam.scrollY = Phaser.Math.Clamp(cam.scrollY - speed, 0, Math.max(0, WORLD_HEIGHT - HEIGHT));
+    if (down) cam.scrollY = Phaser.Math.Clamp(cam.scrollY + speed, 0, Math.max(0, WORLD_HEIGHT - HEIGHT));
 
     // depth-sort heroes by their feet; talking heroes pop above rooftops
     for (const hero of this.heroes) {

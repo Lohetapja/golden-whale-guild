@@ -43,6 +43,12 @@ Current prototype priorities:
   labels, signs, glow, and report lines instead of large modal spectacle
 - NPC status changes should remain readable with tiny placeholder markers
   above sprites until real character/status assets exist
+- Town placement is organized by districts through `src/data/townLayout.js`.
+  Future sprites should fit the footprint bands there: small locations around
+  60-90px, normal buildings around 90-130px, major buildings around 130-170px.
+- Road/path readability comes from the explicit path-node graph in
+  `townLayout.js`; keep NPC destination points near those paths so movement
+  feels intentional without needing complex pathfinding.
 
 ## Asset-replaceable architecture
 
