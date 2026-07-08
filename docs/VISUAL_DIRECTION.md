@@ -28,6 +28,11 @@ Current prototype priorities:
   or particles rather than management UI
 - quest posting and objectives should stay as small notices/signage layered on
   the town, not as a separate quest-log dashboard
+- responsive/mobile play should preserve the same map-first canvas: scale the
+  game, support drag panning, and keep touch targets readable without adding
+  dashboard UI
+- NPC hero detail belongs in compact tooltips anchored to the map, not in a
+  roster screen
 
 ## Asset-replaceable architecture
 

@@ -25,13 +25,16 @@ export default class UIScene extends Phaser.Scene {
 
   create() {
     this.buildTopBar();
+    this.buildTownHint();
     this.buildObjectives();
+    this.buildHelperText();
     this.buildTicker();
     this.buildEndDayButton();
     this.buildUtilityButtons();
 
     this.registry.events.on('changedata-resources', (_p, value) => this.updateResources(value));
     this.registry.events.on('changedata-objectives', (_p, value) => this.updateObjectives(value));
+    this.registry.events.on('changedata-townHint', (_p, value) => this.updateTownHint(value));
     this.registry.events.on('changedata-day', (_p, value) => {
       this.dayText.setText(`Day ${value}`);
       this.flashDayBanner(value);
@@ -45,6 +48,7 @@ export default class UIScene extends Phaser.Scene {
 
     this.updateResources(this.registry.get('resources'));
     this.updateObjectives(this.registry.get('objectives'));
+    this.updateTownHint(this.registry.get('townHint'));
     this.dayText.setText(`Day ${this.registry.get('day')}`);
   }
 
@@ -112,7 +116,7 @@ export default class UIScene extends Phaser.Scene {
   }
 
   buildObjectives() {
-    this.objectiveText = this.add.text(WIDTH - 16, 52, '', {
+    this.objectiveText = this.add.text(WIDTH - 16, 92, '', {
       fontFamily: FONT,
       fontSize: '12px',
       fontStyle: 'bold',
@@ -130,6 +134,41 @@ export default class UIScene extends Phaser.Scene {
     const lines = [`Objectives ${data.completed}/${data.total}`];
     for (const item of data.active || []) lines.push(`- ${item}`);
     this.objectiveText.setText(lines.join('\n'));
+  }
+
+  buildTownHint() {
+    this.townHintText = this.add.text(WIDTH - 16, 50, '', {
+      fontFamily: FONT,
+      fontSize: '13px',
+      fontStyle: 'bold',
+      color: '#ffe08a',
+      stroke: '#0c1118',
+      strokeThickness: 3,
+      align: 'right',
+      wordWrap: { width: 390 },
+    }).setOrigin(1, 0).setDepth(6000);
+  }
+
+  updateTownHint(text) {
+    this.townHintText.setText(text || '');
+  }
+
+  buildHelperText() {
+    const hasTouch = this.sys.game.device.input.touch;
+    const text = hasTouch
+      ? 'Drag to pan - Tap buildings/heroes - Post quests - Open Gates'
+      : 'Drag/WASD to pan - Click buildings/heroes - Post quests - Open Gates';
+    this.helperText = this.add.text(WIDTH / 2, 54, text, {
+      fontFamily: FONT,
+      fontSize: '12px',
+      fontStyle: 'bold',
+      color: '#d4dae2',
+      stroke: '#0c1118',
+      strokeThickness: 3,
+    }).setOrigin(0.5, 0).setDepth(6000);
+    this.time.delayedCall(9000, () => {
+      this.tweens.add({ targets: this.helperText, alpha: 0, duration: 800 });
+    });
   }
 
   // --- bottom event ticker ----------------------------------------------
@@ -182,14 +221,14 @@ export default class UIScene extends Phaser.Scene {
   // "Open Gates" is the town-cycle trigger; internally still a day tick.
 
   buildEndDayButton() {
-    const x = WIDTH - 80;
-    const y = HEIGHT - 60;
+    const x = WIDTH - 90;
+    const y = HEIGHT - 62;
 
     // ui_button asset replaces the drawn rectangle when present
     const useAsset = this.textures.exists('ui_button');
     if (useAsset) {
       this.cycleBg = this.add.image(x, y, 'ui_button')
-        .setDisplaySize(132, 34)
+        .setDisplaySize(154, 42)
         .setInteractive({ useHandCursor: true });
       this.styleButton = (state) => {
         if (state === 'hover') this.cycleBg.setTint(0xffe6b0);
@@ -197,7 +236,7 @@ export default class UIScene extends Phaser.Scene {
         else this.cycleBg.clearTint();
       };
     } else {
-      this.cycleBg = this.add.rectangle(x, y, 128, 32, 0x8a5a2b)
+      this.cycleBg = this.add.rectangle(x, y, 150, 40, 0x8a5a2b)
         .setStrokeStyle(2, 0xf2c744)
         .setInteractive({ useHandCursor: true });
       this.styleButton = (state) => {
@@ -207,7 +246,7 @@ export default class UIScene extends Phaser.Scene {
       };
     }
     this.cycleLabel = this.add.text(x, y, 'Open Gates >', {
-      fontFamily: FONT, fontSize: '14px', fontStyle: 'bold', color: '#fff6dc',
+      fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: '#fff6dc',
     }).setOrigin(0.5);
 
     this.cycleBg.on('pointerover', () => this.styleButton('hover'));
@@ -223,23 +262,23 @@ export default class UIScene extends Phaser.Scene {
       // locked until TownScene reports the cycle playback has finished
       this.cycleBg.disableInteractive();
       this.styleButton('locked');
-      this.cycleLabel.setText('The town stirs...').setAlpha(0.8);
+      this.cycleLabel.setText('Town stirs...').setAlpha(0.8);
       this.game.events.emit('gwg-end-day');
     });
   }
 
   buildUtilityButtons() {
-    this.makeUtilityButton(WIDTH - 182, HEIGHT - 60, 'Save', 'gwg-save');
-    this.makeUtilityButton(WIDTH - 240, HEIGHT - 60, 'Reset', 'gwg-reset');
+    this.makeUtilityButton(WIDTH - 205, HEIGHT - 62, 'Save', 'gwg-save');
+    this.makeUtilityButton(WIDTH - 275, HEIGHT - 62, 'Reset', 'gwg-reset');
   }
 
   makeUtilityButton(x, y, label, eventName) {
-    const bg = this.add.rectangle(x, y, 52, 24, 0x273244, 0.94)
+    const bg = this.add.rectangle(x, y, 64, 32, 0x273244, 0.94)
       .setStrokeStyle(1, 0xf6c945)
       .setInteractive({ useHandCursor: true });
     const text = this.add.text(x, y, label, {
       fontFamily: FONT,
-      fontSize: '11px',
+      fontSize: '12px',
       fontStyle: 'bold',
       color: '#fff6dc',
     }).setOrigin(0.5);
@@ -247,6 +286,18 @@ export default class UIScene extends Phaser.Scene {
     bg.on('pointerout', () => bg.setFillStyle(0x273244, 0.94));
     bg.on('pointerup', () => {
       this.tweens.add({ targets: [bg, text], scale: 0.92, duration: 70, yoyo: true });
+      if (eventName === 'gwg-reset') {
+        if (!this.resetArmUntil || this.time.now > this.resetArmUntil) {
+          this.resetArmUntil = this.time.now + 2600;
+          text.setText('Reset?');
+          this.time.delayedCall(2600, () => {
+            if (this.time.now >= this.resetArmUntil) text.setText(label);
+          });
+          return;
+        }
+        this.resetArmUntil = 0;
+        text.setText(label);
+      }
       this.game.events.emit(eventName);
     });
   }

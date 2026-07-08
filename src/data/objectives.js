@@ -3,6 +3,13 @@
 
 export const OBJECTIVES = [
   {
+    id: 'post-one-quest',
+    text: 'Post 1 quest',
+    reward: { gold: 80, morale: 1 },
+    complete: (state) => state.stats.questsPosted >= 1,
+    event: 'Objective complete: the quest board stopped being decorative. +80g.',
+  },
+  {
     id: 'upgrade-any-2',
     text: 'Upgrade any building to level 2',
     reward: { gold: 120, trust: 1 },
@@ -31,11 +38,25 @@ export const OBJECTIVES = [
     event: 'Objective complete: the accountant blinked first. +220g.',
   },
   {
+    id: 'whale-level-2',
+    text: 'Upgrade Golden Whale to level 2',
+    reward: { gold: 160, corruption: 1, trust: -1 },
+    complete: (state) => (state.levels.whale || 1) >= 2,
+    event: 'Objective complete: the whale learned to glow louder. +160g.',
+  },
+  {
     id: 'whale-level-3',
     text: 'Upgrade Golden Whale to level 3',
     reward: { gold: 250, corruption: 2, trust: -1 },
     complete: (state) => (state.levels.whale || 1) >= 3,
     event: 'Objective complete: the whale achieved suspicious maturity. +250g.',
+  },
+  {
+    id: 'reduce-threat',
+    text: 'Reduce Threat below 40',
+    reward: { gold: 130, trust: 1, morale: 1 },
+    complete: (state) => state.day > 1 && state.resources.threat < 40,
+    event: 'Objective complete: the dungeon became briefly less rude. +130g.',
   },
   {
     id: 'survive-threat',

@@ -14,6 +14,11 @@ const game = new Phaser.Game({
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: 1280,
+    height: 720,
+  },
+  input: {
+    activePointers: 3,
   },
   scene: [BootScene, TownScene, UIScene],
 });

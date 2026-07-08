@@ -25,6 +25,8 @@ import { loadAssets, ensureFallbacks, resolveTexture, buildingTexture, heroTextu
 
 const WIDTH = 1280;
 const HEIGHT = 720;
+const WORLD_WIDTH = 1480;
+const WORLD_HEIGHT = 860;
 const PLAZA = { x: 610, y: 410 };
 const STEP_MS = 950; // pacing of the day-cycle playback
 const MAX_IDLE_BUBBLES = 2;
@@ -33,11 +35,12 @@ const BUBBLE_MIN_SPACING = 150;
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
 const SAVE_KEY = 'golden-whale-guild-save-v2';
+const TAP_MOVE_THRESHOLD = 14;
 
 const QUEST_NOTICE_SPOTS = [
-  { x: 360, y: 208 },
-  { x: 522, y: 208 },
-  { x: 442, y: 292 },
+  { x: 318, y: 182 },
+  { x: 532, y: 182 },
+  { x: 426, y: 296 },
 ];
 
 const HERO_GROUPS = {
@@ -56,6 +59,34 @@ const RES_COLORS = {
 };
 const RES_SHORT = { gold: 'g', trust: ' Trust', corruption: ' Corr', morale: ' Morale', threat: ' Threat' };
 
+const LOCKABLE_LOCATION_IDS = new Set([
+  'complaint_barrel',
+  'debt_collector_booth',
+  'balance_memorial',
+  'refund_denial_desk',
+  'sponsored_quest_board',
+  'ethics_fountain',
+]);
+
+const START_UNLOCKED_LOCATIONS = [
+  'notice_board',
+  'vip_rope_entrance',
+  'poor_hero_queue',
+];
+
+const WHALE_PURCHASES = [
+  'Sword of Unfair Advantage',
+  'Deluxe Struggle Removal Bundle',
+  'Premium Knees',
+  'Loot Priority Blessing',
+  'Revive Insurance Scroll',
+  'Dragon Mount Trial',
+  'Confidence Booster Soup',
+  'Legendary Receipt',
+  'Sponsored Armor of Plausible Skill',
+  'Queue Skip Relic',
+];
+
 export default class TownScene extends Phaser.Scene {
   constructor() {
     super('TownScene');
@@ -67,6 +98,9 @@ export default class TownScene extends Phaser.Scene {
 
   create() {
     ensureFallbacks(this);
+    this.input.mouse?.disableContextMenu();
+    this.input.addPointer(2);
+    this.setupCameraControls();
 
     const saved = this.loadSavedState();
     this.day = saved?.day || 1;
@@ -79,13 +113,19 @@ export default class TownScene extends Phaser.Scene {
       honestQuestSuccesses: 0,
       threatEventsSurvived: 0,
       trustStreak: 0,
+      whaleEvents: 0,
       ...(saved?.stats || {}),
     };
     this.completedObjectives = new Set(saved?.completedObjectives || []);
+    this.unlockedLocations = new Set([
+      ...START_UNLOCKED_LOCATIONS,
+      ...(saved?.unlockedLocations || []),
+    ]);
     this.availableQuests = saved?.availableQuests?.length ? saved.availableQuests : rollQuestNotices(this.day);
     this.postedQuests = saved?.postedQuests || [];
     this.savedHeroStats = saved?.heroStats || {};
     this.cycleRunning = false;
+    this.lastUpgradeAt = 0;
 
     this.buildTerrain();
     this.buildBuildings();
@@ -107,6 +147,8 @@ export default class TownScene extends Phaser.Scene {
     this.registry.set('day', this.day);
     this.registry.set('resources', { ...this.resources });
     this.publishObjectives();
+    this.publishTownHint();
+    this.checkUnlocks(true);
 
     this.scene.launch('UIScene');
     this.game.events.on('gwg-end-day', this.runCycle, this);
@@ -118,7 +160,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-reset', this.resetGame, this);
     });
 
-    this.game.events.emit('gwg-event', 'Welcome to Golden Whale Guild. Post quests, upgrade buildings, then Open Gates.');
+    this.game.events.emit('gwg-event', 'Welcome to Golden Whale Guild. Post quests, inspect heroes, upgrade buildings, then Open Gates.');
   }
 
   loadSavedState() {
@@ -130,6 +172,59 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
+  setupCameraControls() {
+    const cam = this.cameras.main;
+    cam.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    cam.setScroll(0, 0);
+
+    this.cursors = this.input.keyboard?.createCursorKeys();
+    this.wasd = this.input.keyboard?.addKeys('W,A,S,D');
+    this.cameraDrag = { active: false, moved: false, lastX: 0, lastY: 0 };
+
+    this.input.on('pointerdown', (pointer) => {
+      if (!pointer.primaryDown) return;
+      this.cameraDrag.active = true;
+      this.cameraDrag.moved = false;
+      this.cameraDrag.lastX = pointer.x;
+      this.cameraDrag.lastY = pointer.y;
+    });
+
+    this.input.on('pointermove', (pointer) => {
+      if (!this.cameraDrag.active || !pointer.primaryDown) return;
+      const dx = pointer.x - this.cameraDrag.lastX;
+      const dy = pointer.y - this.cameraDrag.lastY;
+      const total = Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.x, pointer.y);
+      if (total > TAP_MOVE_THRESHOLD) this.cameraDrag.moved = true;
+      if (this.cameraDrag.moved) {
+        cam.scrollX = Phaser.Math.Clamp(cam.scrollX - dx, 0, WORLD_WIDTH - WIDTH);
+        cam.scrollY = Phaser.Math.Clamp(cam.scrollY - dy, 0, WORLD_HEIGHT - HEIGHT);
+      }
+      this.cameraDrag.lastX = pointer.x;
+      this.cameraDrag.lastY = pointer.y;
+    });
+
+    this.input.on('pointerup', () => {
+      if (this.cameraDrag.moved) this.suppressTapUntil = this.time.now + 120;
+      this.cameraDrag.active = false;
+    });
+  }
+
+  wasDragGesture(pointer) {
+    if (!pointer) return this.time.now < (this.suppressTapUntil || 0);
+    const dist = Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.x, pointer.y);
+    return dist > TAP_MOVE_THRESHOLD || this.time.now < (this.suppressTapUntil || 0);
+  }
+
+  getVisibleWorldRect() {
+    const cam = this.cameras.main;
+    return {
+      left: cam.scrollX,
+      top: cam.scrollY,
+      right: cam.scrollX + WIDTH,
+      bottom: cam.scrollY + HEIGHT,
+    };
+  }
+
   getSavePayload() {
     return {
       day: this.day,
@@ -137,6 +232,7 @@ export default class TownScene extends Phaser.Scene {
       upgradeLevels: { ...this.upgradeLevels },
       availableQuests: this.availableQuests,
       postedQuests: this.postedQuests,
+      unlockedLocations: [...this.unlockedLocations],
       completedObjectives: [...this.completedObjectives],
       stats: { ...this.stats },
       heroStats: Object.fromEntries((this.heroes || []).map((hero) => [hero.def.id, {
@@ -152,12 +248,16 @@ export default class TownScene extends Phaser.Scene {
     };
   }
 
-  saveGame() {
+  saveGame(showEvent = true) {
     try {
       window.localStorage.setItem(SAVE_KEY, JSON.stringify(this.getSavePayload()));
-      this.game.events.emit('gwg-event', 'Guild records saved locally. No cloud. No account. Just paperwork.');
+      if (showEvent) {
+        this.game.events.emit('gwg-event', 'Guild records saved locally. No cloud. No account. Just paperwork.');
+      }
+      return true;
     } catch {
-      this.game.events.emit('gwg-event', 'The save clerk dropped the ledger. Local save failed politely.');
+      if (showEvent) this.game.events.emit('gwg-event', 'The save clerk dropped the ledger. Local save failed politely.');
+      return false;
     }
   }
 
@@ -224,6 +324,36 @@ export default class TownScene extends Phaser.Scene {
       completed: this.completedObjectives.size,
       total: OBJECTIVES.length,
     });
+    this.publishTownHint();
+  }
+
+  getTownHint() {
+    const R = this.resources;
+    if (this.cycleRunning) return 'Town Problem: gates are open. Watch the consequences.';
+    if (R.threat >= 76) return 'Warning: Threat is rising. Post safer quests.';
+    if (R.trust < 34) return 'Warning: Trust is low. Honest heroes may leave.';
+    if (R.morale < 34) return 'Town Problem: heroes are losing morale.';
+    if (R.corruption >= 66) return 'Warning: Corruption is profitable and very awake.';
+    if (this.postedQuests.length === 0) return 'Goal: Post a quest near the Guild Hall.';
+
+    const whale = this.buildingById?.whale;
+    const whaleInfo = whale ? this.getUpgradeInfo(whale) : null;
+    if (whaleInfo?.cost && this.resources.gold >= whaleInfo.cost) {
+      return 'Temptation: Golden Whale upgrade available.';
+    }
+
+    const canUpgrade = Object.values(this.placeById || {}).some((place) => {
+      if (!this.isLocationUnlocked(place.id)) return false;
+      const info = this.getUpgradeInfo(place);
+      return info.cost && !info.maxed && R.gold >= info.cost;
+    });
+    if (canUpgrade) return 'Goal: Upgrade a building before opening gates.';
+    return 'Goal: Open Gates when your bad choices are ready.';
+  }
+
+  publishTownHint() {
+    if (!this.registry) return;
+    this.registry.set('townHint', this.getTownHint());
   }
 
   checkObjectives() {
@@ -242,10 +372,45 @@ export default class TownScene extends Phaser.Scene {
     this.publishObjectives();
   }
 
+  isLocationUnlocked(id) {
+    if (!id || !LOCKABLE_LOCATION_IDS.has(id)) return true;
+    return this.unlockedLocations?.has(id);
+  }
+
+  getMaxHeroDebt() {
+    return Math.max(0, ...(this.heroes || []).map((hero) => hero.stats?.debt || 0));
+  }
+
+  checkUnlocks(silent = false) {
+    if (!this.unlockedLocations) return;
+    const whaleLevel = this.buildingById?.whale ? this.getPlaceLevel(this.buildingById.whale) : 1;
+    const guildLevel = this.buildingById?.guildhall ? this.getPlaceLevel(this.buildingById.guildhall) : 1;
+    const rules = [
+      ['complaint_barrel', this.day >= 3 || this.resources.trust < 60, 'Complaint Barrel unlocked. The town discovered official yelling.'],
+      ['debt_collector_booth', this.resources.corruption > 40 || this.getMaxHeroDebt() > 500, 'Debt Collector Booth unlocked. The small print found a desk.'],
+      ['sponsored_quest_board', this.day >= 4 || guildLevel >= 2, 'Sponsored Quest Board unlocked. Danger now has tasteful branding.'],
+      ['balance_memorial', this.stats.whaleEvents > 0 || this.resources.corruption > 55, 'Balance Memorial unlocked. Veterans requested a place to sigh.'],
+      ['ethics_fountain', this.resources.corruption >= 55, 'Fountain of Questionable Ethics unlocked. Coins enter. Principles get wet.'],
+      ['refund_denial_desk', whaleLevel >= 3, 'Refund Denial Desk unlocked. Hope now has business hours.'],
+    ];
+
+    for (const [id, condition, text] of rules) {
+      if (!condition || this.unlockedLocations.has(id)) continue;
+      this.unlockedLocations.add(id);
+      this.updateDecorationLockState(id);
+      if (!silent) {
+        const place = this.decorationById?.[id];
+        if (place) this.floatText(place.x, place.y - (place.h || 48) - 14, 'UNLOCKED', '#ffe08a');
+        this.game.events.emit('gwg-event', text);
+      }
+    }
+    this.publishTownHint();
+  }
+
   // --- world ------------------------------------------------------------
 
   buildTerrain() {
-    this.add.tileSprite(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 'grass');
+    this.add.tileSprite(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, WORLD_WIDTH, WORLD_HEIGHT, 'grass');
 
     const path = this.add.graphics();
     path.fillStyle(0xd9bc85);
@@ -312,7 +477,10 @@ export default class TownScene extends Phaser.Scene {
         img.clearTint();
         this.tweens.add({ targets: img, scale: 1, duration: 90 });
       });
-      img.on('pointerup', () => this.showTooltip(b));
+      img.on('pointerup', (pointer) => {
+        if (this.wasDragGesture(pointer)) return;
+        this.showTooltip(b);
+      });
 
       // name plate under each building keeps the map readable
       this.add.text(b.x, b.y + 4, b.name, {
@@ -342,17 +510,21 @@ export default class TownScene extends Phaser.Scene {
 
   buildDecorations() {
     this.decorationById = {};
+    this.decorationObjectsById = {};
     for (const d of DECORATIONS) {
       this.decorationById[d.id] = d;
       const key = resolveTexture(this, d.assetKey, d.fallbackKey);
       if (!key) continue;
 
-      this.add.ellipse(d.x, d.y - 5, (d.w || 42) * 0.72, 15, 0x10151d, 0.16)
+      this.decorationObjectsById[d.id] = [];
+      const shadow = this.add.ellipse(d.x, d.y - 5, (d.w || 42) * 0.72, 15, 0x10151d, 0.16)
         .setDepth(d.y - 2);
+      this.decorationObjectsById[d.id].push(shadow);
       const img = this.add.image(d.x, d.y, key)
         .setOrigin(0.5, 1)
         .setDepth(d.y + (d.depthOffset || 0));
       this.placeSpriteById[d.id] = img;
+      this.decorationObjectsById[d.id].push(img);
 
       if (d.scale) img.setScale(d.scale);
       img.setData('baseScaleX', img.scaleX);
@@ -372,13 +544,24 @@ export default class TownScene extends Phaser.Scene {
 
       if (d.interactive) {
         img.setInteractive({ useHandCursor: true });
-        img.on('pointerover', () => img.setTint(0xfff3c0));
-        img.on('pointerout', () => img.clearTint());
-        img.on('pointerup', () => this.showTooltip(d));
+        img.on('pointerover', () => img.setTint(this.isLocationUnlocked(d.id) ? 0xfff3c0 : 0x9aa3b5));
+        img.on('pointerout', () => {
+          if (this.isLocationUnlocked(d.id)) img.clearTint();
+          else img.setTint(0x6f7787);
+        });
+        img.on('pointerup', (pointer) => {
+          if (this.wasDragGesture(pointer)) return;
+          if (!this.isLocationUnlocked(d.id)) {
+            this.game.events.emit('gwg-event', `${d.name} is still locked. The town has not earned that problem yet.`);
+            this.floatText(d.x, d.y - (d.h || 44) - 10, 'LOCKED', '#d4dae2');
+            return;
+          }
+          this.showTooltip(d);
+        });
       }
 
       if (d.label) {
-        this.add.text(d.x, d.y + 4, d.name, {
+        const label = this.add.text(d.x, d.y + 4, d.name, {
           fontFamily: '"Courier New", monospace',
           fontSize: '10px',
           fontStyle: 'bold',
@@ -388,10 +571,25 @@ export default class TownScene extends Phaser.Scene {
           backgroundColor: '#0f1521cc',
           padding: { x: 4, y: 2 },
         }).setOrigin(0.5, 0).setDepth(2000);
+        this.decorationObjectsById[d.id].push(label);
       }
 
       if (d.spot) {
         this.doorSpots.push({ id: d.id, x: d.x, y: d.y + 8 });
+      }
+      this.updateDecorationLockState(d.id);
+    }
+  }
+
+  updateDecorationLockState(id) {
+    const objects = this.decorationObjectsById?.[id];
+    if (!objects) return;
+    const unlocked = this.isLocationUnlocked(id);
+    for (const obj of objects) {
+      obj.setAlpha(unlocked ? 1 : 0.34);
+      if (obj.setTint) {
+        if (unlocked) obj.clearTint?.();
+        else obj.setTint(0x6f7787);
       }
     }
   }
@@ -413,8 +611,10 @@ export default class TownScene extends Phaser.Scene {
   }
 
   createQuestNotice(quest, x, y) {
-    const w = 154;
-    const h = 78;
+    quest.noticeX = x;
+    quest.noticeY = y;
+    const w = 182;
+    const h = 96;
     const container = this.add.container(x, y).setDepth(3600);
     const bg = this.add.graphics();
     const drawBg = (hover = false) => {
@@ -430,22 +630,25 @@ export default class TownScene extends Phaser.Scene {
 
     const title = this.add.text(8, 10, quest.name, {
       fontFamily: '"Courier New", monospace',
-      fontSize: '10px',
+      fontSize: '11px',
       fontStyle: 'bold',
       color: quest.posted ? '#ffe08a' : '#1d2430',
       wordWrap: { width: w - 16 },
     });
-    const body = this.add.text(8, 32, [
-      `Post ${quest.cost}g -> ${quest.reward}g`,
-      `Diff ${quest.difficulty}  Risk ${quest.risk}`,
-      quest.posted ? 'POSTED: resolves next cycle' : 'Click to post bounty',
+    const body = this.add.text(8, 35, [
+      `${quest.type.toUpperCase()} | Cost ${quest.cost}g -> ${quest.reward}g`,
+      `Diff ${quest.difficulty}  Risk ${quest.risk}  Threat -${quest.threatReduction}`,
+      quest.description,
+      quest.posted ? 'POSTED: resolves next cycle' : 'Tap to post bounty',
     ].join('\n'), {
       fontFamily: '"Courier New", monospace',
       fontSize: '9px',
       fontStyle: 'bold',
       color: quest.posted ? '#fff6dc' : '#243042',
       lineSpacing: 2,
+      wordWrap: { width: w - 16 },
     });
+    body.setMaxLines(4);
     container.add([bg, title, body]);
     container.setSize(w, h);
     container.setInteractive(new Phaser.Geom.Rectangle(0, 0, w, h), Phaser.Geom.Rectangle.Contains);
@@ -453,20 +656,27 @@ export default class TownScene extends Phaser.Scene {
       if (!quest.posted) drawBg(true);
     });
     container.on('pointerout', () => drawBg(false));
-    container.on('pointerup', () => this.postQuest(quest));
+    container.on('pointerup', (pointer) => {
+      if (this.wasDragGesture(pointer)) return;
+      this.postQuest(quest);
+    });
     return container;
   }
 
   postQuest(quest) {
     if (this.cycleRunning || quest.posted) return;
     if (this.resources.gold < quest.cost) {
-      this.floatText(quest.x || 500, quest.y || 250, 'NOT ENOUGH GOLD', '#f0938f');
-      this.game.events.emit('gwg-event', 'Not enough gold. Please exploit responsibly.');
+      this.floatText(quest.noticeX || 500, quest.noticeY || 250, 'NOT ENOUGH GOLD', '#f0938f');
+      this.game.events.emit('gwg-event', Phaser.Utils.Array.GetRandom([
+        'Not enough gold. Please exploit responsibly.',
+        'The accountant suggests more whales.',
+        'Try selling fairness. It was decorative anyway.',
+      ]));
       return;
     }
 
     this.applyDeltas({ gold: -quest.cost });
-    const postedQuest = { ...quest, posted: true };
+    const postedQuest = { ...quest, posted: true, status: 'posted' };
     this.postedQuests.push(postedQuest);
     this.availableQuests = this.availableQuests.map((item) => (
       item.noticeId === quest.noticeId ? postedQuest : item
@@ -476,6 +686,8 @@ export default class TownScene extends Phaser.Scene {
     this.floatText(QUEST_NOTICE_SPOTS[0].x + 80, QUEST_NOTICE_SPOTS[0].y - 8, 'QUEST POSTED', '#ffe08a');
     this.buildQuestNotices();
     this.checkObjectives();
+    this.publishTownHint();
+    this.saveGame(false);
 
     const clerk = this.heroes?.find((hero) => hero.def.personality === 'Guild Clerk');
     if (clerk) this.say(clerk, 'Quest posted. Liability pending.', true);
@@ -732,14 +944,14 @@ export default class TownScene extends Phaser.Scene {
       wordWrap: { width: 300 },
       lineSpacing: 4,
     }).setDepth(5001);
-    this.tooltipButton = this.add.rectangle(0, 0, 156, 28, 0x8a5a2b, 1)
+    this.tooltipButton = this.add.rectangle(0, 0, 190, 36, 0x8a5a2b, 1)
       .setOrigin(0, 0)
       .setStrokeStyle(2, 0xf6c945)
       .setDepth(5001)
       .setInteractive({ useHandCursor: true });
     this.tooltipButtonLabel = this.add.text(0, 0, '', {
       fontFamily: '"Courier New", monospace',
-      fontSize: '13px',
+      fontSize: '14px',
       fontStyle: 'bold',
       color: '#fff6dc',
       stroke: '#0c1118',
@@ -747,16 +959,21 @@ export default class TownScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(5002);
     this.tooltipButton.on('pointerover', () => this.tooltipButton.setFillStyle(0xa66f38));
     this.tooltipButton.on('pointerout', () => this.tooltipButton.setFillStyle(0x8a5a2b));
-    this.tooltipButton.on('pointerup', () => this.tryUpgradeTooltipTarget());
+    this.tooltipButton.on('pointerup', (pointer) => {
+      if (this.wasDragGesture(pointer)) return;
+      this.tryUpgradeTooltipTarget();
+    });
     this.hideTooltip();
 
     // clicking empty ground dismisses the tooltip
     this.input.on('pointerdown', (pointer, over) => {
       const b = this.tooltipBounds;
+      const px = pointer.worldX ?? pointer.x;
+      const py = pointer.worldY ?? pointer.y;
       const insideTooltip = b
-        && pointer.x >= b.x && pointer.x <= b.x + b.w
-        && pointer.y >= b.y && pointer.y <= b.y + b.h;
-      if (over.length === 0 && !insideTooltip) this.hideTooltip();
+        && px >= b.x && px <= b.x + b.w
+        && py >= b.y && py <= b.y + b.h;
+      if (!this.cameraDrag?.moved && over.length === 0 && !insideTooltip) this.hideTooltip();
     });
   }
 
@@ -779,7 +996,25 @@ export default class TownScene extends Phaser.Scene {
     return { def, level, cost, flavor, effect, nextEffect, maxed };
   }
 
+  getTooltipPosition(anchorX, anchorY, anchorH, tw, th) {
+    const view = this.getVisibleWorldRect();
+    const maxX = Math.max(view.left + 8, view.right - tw - 8);
+    const maxY = Math.max(view.top + 48, view.bottom - th - 52);
+    const x = Phaser.Math.Clamp(anchorX - tw / 2, view.left + 8, maxX);
+    const preferredY = anchorY - anchorH - th - 10;
+    const belowY = anchorY + 24;
+    const y = preferredY < view.top + 48
+      ? Phaser.Math.Clamp(belowY, view.top + 48, maxY)
+      : Phaser.Math.Clamp(preferredY, view.top + 48, maxY);
+    return { x, y };
+  }
+
   showTooltip(b) {
+    if (!this.isLocationUnlocked(b.id)) {
+      this.game.events.emit('gwg-event', `${b.name} is still locked. The town has not earned that problem yet.`);
+      return;
+    }
+    this.heroTooltipTarget = null;
     this.tooltipTarget = b;
     const info = this.getUpgradeInfo(b);
     const level = `Level: ${info.level}${info.maxed ? ' (max)' : ''}`;
@@ -824,14 +1059,7 @@ export default class TownScene extends Phaser.Scene {
       + this.tooltipUpgrade.height
       + buttonH
       + pad;
-    const maxX = Math.max(8, WIDTH - tw - 8);
-    const maxY = Math.max(48, HEIGHT - th - 52);
-    const x = Phaser.Math.Clamp(b.x - tw / 2, 8, maxX);
-    const preferredY = b.y - (b.h || 60) - th - 10;
-    const belowY = b.y + 24;
-    const y = preferredY < 48
-      ? Phaser.Math.Clamp(belowY, 48, maxY)
-      : Phaser.Math.Clamp(preferredY, 48, maxY);
+    const { x, y } = this.getTooltipPosition(b.x, b.y, b.h || 60, tw, th);
     this.tooltipBounds = { x, y, w: tw, h: th };
 
     if (this.tooltipPanel) {
@@ -875,12 +1103,102 @@ export default class TownScene extends Phaser.Scene {
     this.tooltipButton.setVisible(false);
     this.tooltipButtonLabel.setVisible(false);
     this.tooltipTarget = null;
+    this.heroTooltipTarget = null;
     this.tooltipBounds = null;
+  }
+
+  getHeroThought(hero) {
+    const lines = [
+      ...(hero.def.idleLines || []),
+      hero.def.statLine,
+    ].filter(Boolean);
+    if (this.resources.trust < 30 && this.isHonestHero(hero.def)) return 'Thought: "Trust is not a purchasable stat."';
+    if (this.resources.corruption > 70 && this.isDebtHero(hero.def)) return 'Thought: "My debt has a health bar now."';
+    if (hero.stats.whaleAccess) return 'Thought: "Progression is a mindset, and mine is funded."';
+    return `Thought: "${Phaser.Utils.Array.GetRandom(lines) || 'The economy is making eye contact.'}"`;
+  }
+
+  getHeroActionText(hero) {
+    if (hero.currentAction) return hero.currentAction;
+    if (hero.state === 'away') return `Away until Day ${hero.awayUntil}`;
+    if (hero.destination) return `Walking to ${this.getPlaceName(hero.destination)}`;
+    return `Idle near ${this.getPlaceName(hero.at)}`;
+  }
+
+  getPlaceName(id) {
+    return this.placeById?.[id]?.name || this.decorationById?.[id]?.name || id || 'town';
+  }
+
+  showHeroTooltip(hero) {
+    if (!hero || hero.state === 'away') return;
+    this.tooltipTarget = null;
+    this.heroTooltipTarget = hero;
+
+    const whaleAccess = hero.stats.whaleAccess ? 'Yes' : (hero.stats.debt > 250 ? 'Technically' : 'No');
+    this.tooltipTitle.setText(hero.def.name);
+    this.tooltipText.setText(hero.def.personality);
+    this.tooltipEffects.setText([
+      `Power: ${hero.stats.power}`,
+      `Morale: ${hero.stats.morale}`,
+      `Debt: ${hero.stats.debt}`,
+      `Loyalty: ${hero.stats.loyalty}`,
+      `Whale Access: ${whaleAccess}`,
+      `Action: ${this.getHeroActionText(hero)}`,
+    ].join('\n'));
+    this.tooltipUpgrade.setText(this.getHeroThought(hero));
+    this.tooltipButton.setVisible(false);
+    this.tooltipButtonLabel.setVisible(false);
+
+    const pad = 12;
+    const gap = 7;
+    const contentW = Math.max(
+      230,
+      this.tooltipTitle.width,
+      this.tooltipText.width,
+      this.tooltipEffects.width,
+      this.tooltipUpgrade.width,
+    );
+    const tw = Math.min(350, contentW + pad * 2);
+    const th = pad
+      + this.tooltipTitle.height + gap
+      + this.tooltipText.height + gap
+      + this.tooltipEffects.height + gap
+      + this.tooltipUpgrade.height
+      + pad;
+    const { x, y } = this.getTooltipPosition(hero.container.x, hero.container.y, 58, tw, th);
+    this.tooltipBounds = { x, y, w: tw, h: th };
+
+    if (this.tooltipPanel) {
+      this.tooltipPanel.setPosition(x, y).setDisplaySize(tw, th).setVisible(true);
+    } else {
+      this.tooltipBg.clear();
+      this.tooltipBg.fillStyle(0x05070c, 0.42);
+      this.tooltipBg.fillRoundedRect(x + 4, y + 4, tw, th, 6);
+      this.tooltipBg.fillStyle(0x121a25, 0.98);
+      this.tooltipBg.fillRoundedRect(x, y, tw, th, 6);
+      this.tooltipBg.lineStyle(2, 0xf6c945, 0.95);
+      this.tooltipBg.strokeRoundedRect(x, y, tw, th, 6);
+      this.tooltipBg.setVisible(true);
+    }
+
+    let ty = y + pad;
+    this.tooltipTitle.setPosition(x + pad, ty).setVisible(true);
+    ty += this.tooltipTitle.height + gap;
+    this.tooltipText.setPosition(x + pad, ty).setVisible(true);
+    ty += this.tooltipText.height + gap;
+    this.tooltipEffects.setPosition(x + pad, ty).setVisible(true);
+    ty += this.tooltipEffects.height + gap;
+    this.tooltipUpgrade.setPosition(x + pad, ty).setVisible(true);
+
+    if (this.tooltipTimer) this.tooltipTimer.remove();
+    this.tooltipTimer = this.time.delayedCall(7000, () => this.hideTooltip());
   }
 
   tryUpgradeTooltipTarget() {
     const place = this.tooltipTarget;
     if (!place) return;
+    if (this.time.now - this.lastUpgradeAt < 450) return;
+    this.lastUpgradeAt = this.time.now;
 
     const info = this.getUpgradeInfo(place);
     if (!info.cost || info.maxed) {
@@ -889,7 +1207,11 @@ export default class TownScene extends Phaser.Scene {
     }
     if (this.resources.gold < info.cost) {
       this.floatText(place.x, place.y - (place.h || 50) - 8, 'NOT ENOUGH GOLD', '#f0938f');
-      this.game.events.emit('gwg-event', `${place.name} demanded ${info.cost}g. Not enough gold. Please exploit responsibly.`);
+      this.game.events.emit('gwg-event', `${place.name} demanded ${info.cost}g. ${Phaser.Utils.Array.GetRandom([
+        'Not enough gold. Please exploit responsibly.',
+        'The accountant suggests more whales.',
+        'Try selling fairness. It was decorative anyway.',
+      ])}`);
       return;
     }
 
@@ -930,6 +1252,9 @@ export default class TownScene extends Phaser.Scene {
       ? info.def.event(place.name, nextLevel)
       : `${place.name} upgraded. The town pretends this was wise.`;
     this.game.events.emit('gwg-event', `${eventText} Level ${nextLevel}.`);
+    this.checkUnlocks();
+    this.publishTownHint();
+    this.saveGame(false);
     this.showTooltip(place);
   }
 
@@ -966,6 +1291,7 @@ export default class TownScene extends Phaser.Scene {
           ...savedStats,
         },
         at: spot.id, destination: null, state: 'idle',
+        currentAction: `Idle near ${this.getPlaceName(spot.id)}`,
         moveTween: null, bobTween: null, timer: null,
         destMarker: null, bubble: null, bubbleTimer: null,
         awayUntil: savedStats.awayUntil || 0,
@@ -973,12 +1299,21 @@ export default class TownScene extends Phaser.Scene {
       if (hero.awayUntil > this.day) {
         hero.state = 'away';
         hero.container.setAlpha(0.28);
+        hero.currentAction = `Away until Day ${hero.awayUntil}`;
       }
 
-      // clicking a hero shows their satire stat line
-      sprite.setInteractive({ useHandCursor: true });
-      sprite.on('pointerup', () => {
-        this.say(hero, hero.def.statLine || `PWR ${hero.stats.power} - ${hero.stats.gold}g - spent ${hero.stats.spent}g`, true);
+      // clicking/tapping a hero shows their compact detail sheet; the invisible
+      // hit rectangle is larger than the placeholder sprite for mobile fingers.
+      const hit = this.add.rectangle(0, -34, 58, 72, 0xffffff, 0.001)
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
+      container.add(hit);
+      hero.hit = hit;
+      hit.on('pointerover', () => sprite.setTint(0xfff3c0));
+      hit.on('pointerout', () => sprite.clearTint());
+      hit.on('pointerup', (pointer) => {
+        if (this.wasDragGesture(pointer)) return;
+        this.showHeroTooltip(hero);
       });
 
       // idle breathing — replace with a real idle animation later
@@ -1003,9 +1338,11 @@ export default class TownScene extends Phaser.Scene {
     hero.container.setAlpha(1);
     hero.destination = null;
     hero.state = 'idle';
+    hero.currentAction = `Idle near ${this.getPlaceName(hero.at)}`;
   }
 
   scheduleAmbient(hero, delay) {
+    if (hero.state === 'away') return;
     hero.timer = this.time.delayedCall(delay, () => this.ambientMove(hero));
   }
 
@@ -1015,11 +1352,11 @@ export default class TownScene extends Phaser.Scene {
     const preferredIds = hero.def.preferredDestinations || [hero.def.prefers].filter(Boolean);
     const preferredSpots = preferredIds
       .map((id) => this.doorById[id])
-      .filter((s) => s && s.id !== hero.at);
+      .filter((s) => s && s.id !== hero.at && this.isLocationUnlocked(s.id));
     if (Math.random() < 0.62 && preferredSpots.length > 0) {
       spot = Phaser.Utils.Array.GetRandom(preferredSpots);
     } else {
-      spot = Phaser.Utils.Array.GetRandom(this.doorSpots.filter((s) => s.id !== hero.at));
+      spot = Phaser.Utils.Array.GetRandom(this.doorSpots.filter((s) => s.id !== hero.at && this.isLocationUnlocked(s.id)));
     }
     this.walkTo(hero, spot, () => this.onAmbientArrive(hero, spot));
   }
@@ -1032,6 +1369,7 @@ export default class TownScene extends Phaser.Scene {
     this.interruptHero(hero);
     hero.state = 'walking';
     hero.destination = spot.id;
+    hero.currentAction = `Walking to ${this.getPlaceName(spot.id)}`;
 
     const tx = spot.x + Phaser.Math.Between(-38, 38);
     const ty = spot.y + Phaser.Math.Between(-4, 18);
@@ -1062,6 +1400,7 @@ export default class TownScene extends Phaser.Scene {
         hero.at = spot.id;
         hero.destination = null;
         hero.state = 'idle';
+        hero.currentAction = `Idle near ${this.getPlaceName(spot.id)}`;
         onArrive();
       },
     });
@@ -1101,10 +1440,12 @@ export default class TownScene extends Phaser.Scene {
   // hero slips inside the building for a moment, then pops back out
   enterBuilding(hero) {
     hero.state = 'inside';
+    hero.currentAction = `Visiting ${this.getPlaceName(hero.at)}`;
     this.tweens.add({ targets: hero.container, alpha: 0, duration: 250 });
     hero.timer = this.time.delayedCall(Phaser.Math.Between(1500, 4000), () => {
       this.tweens.add({ targets: hero.container, alpha: 1, duration: 250 });
       hero.state = 'idle';
+      hero.currentAction = `Idle near ${this.getPlaceName(hero.at)}`;
       this.scheduleAmbient(hero, Phaser.Math.Between(800, 3000));
     });
   }
@@ -1182,15 +1523,16 @@ export default class TownScene extends Phaser.Scene {
     g.lineStyle(2, 0x1d2430, 0.65);
     g.strokeRoundedRect(-bw / 2, -bh - 2, bw, bh, 5);
 
+    const view = this.getVisibleWorldRect();
     const left = hero.container.x - bw / 2;
     const right = hero.container.x + bw / 2;
     let edgeOffset = 0;
-    if (left < 12) edgeOffset = 12 - left;
-    if (right > WIDTH - 12) edgeOffset = WIDTH - 12 - right;
+    if (left < view.left + 12) edgeOffset = view.left + 12 - left;
+    if (right > view.right - 12) edgeOffset = view.right - 12 - right;
 
     let localY = -64;
     const top = hero.container.y + localY - bh - 2;
-    if (top < 52) localY += 52 - top;
+    if (top < view.top + 52) localY += view.top + 52 - top;
 
     const bubble = this.add.container(edgeOffset, localY, [g, txt]).setScale(0);
     hero.container.add(bubble);
@@ -1212,8 +1554,9 @@ export default class TownScene extends Phaser.Scene {
       if (oldest?.active) oldest.destroy();
     }
 
-    const safeX = Phaser.Math.Clamp(x, 58, WIDTH - 58);
-    const safeY = Phaser.Math.Clamp(y, 60, HEIGHT - 72);
+    const view = this.getVisibleWorldRect();
+    const safeX = Phaser.Math.Clamp(x, view.left + 58, view.right - 58);
+    const safeY = Phaser.Math.Clamp(y, view.top + 60, view.bottom - 72);
     const t = this.add.text(safeX, safeY, str, {
       fontFamily: '"Courier New", monospace',
       fontSize: '14px',
@@ -1270,10 +1613,22 @@ export default class TownScene extends Phaser.Scene {
   }
 
   update() {
+    const cam = this.cameras.main;
+    const speed = 6;
+    const left = this.cursors?.left?.isDown || this.wasd?.A?.isDown;
+    const right = this.cursors?.right?.isDown || this.wasd?.D?.isDown;
+    const up = this.cursors?.up?.isDown || this.wasd?.W?.isDown;
+    const down = this.cursors?.down?.isDown || this.wasd?.S?.isDown;
+    if (left) cam.scrollX = Phaser.Math.Clamp(cam.scrollX - speed, 0, WORLD_WIDTH - WIDTH);
+    if (right) cam.scrollX = Phaser.Math.Clamp(cam.scrollX + speed, 0, WORLD_WIDTH - WIDTH);
+    if (up) cam.scrollY = Phaser.Math.Clamp(cam.scrollY - speed, 0, WORLD_HEIGHT - HEIGHT);
+    if (down) cam.scrollY = Phaser.Math.Clamp(cam.scrollY + speed, 0, WORLD_HEIGHT - HEIGHT);
+
     // depth-sort heroes by their feet; talking heroes pop above rooftops
     for (const hero of this.heroes) {
       hero.container.setDepth(hero.container.y + (hero.bubble ? 800 : 0));
     }
+
   }
 
   // --- daily simulation ----------------------------------------------------
@@ -1290,6 +1645,9 @@ export default class TownScene extends Phaser.Scene {
     R.gold = Math.max(0, R.gold);
     this.registry.set('resources', { ...R });
     if (this.tooltipTarget) this.showTooltip(this.tooltipTarget);
+    if (this.heroTooltipTarget) this.showHeroTooltip(this.heroTooltipTarget);
+    this.checkUnlocks();
+    this.publishTownHint();
     if (!this.checkingObjectives) this.checkObjectives();
   }
 
@@ -1409,6 +1767,10 @@ export default class TownScene extends Phaser.Scene {
       text = `${hero.def.name} solved ${quest.name} by applying superior purchasing decisions. ${quest.whale}`;
       bubble = 'Receipt victory.';
       hero.stats.spent += Math.ceil(reward / 4);
+      hero.stats.power += 2 + this.getPlaceLevel(this.buildingById.whale);
+      hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 3, 0, 100);
+      hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty - 3, 0, 100);
+      this.stats.whaleEvents += 1;
       this.burstCoins(44);
     } else if (success) {
       const honest = this.isHonestHero(hero.def);
@@ -1423,6 +1785,7 @@ export default class TownScene extends Phaser.Scene {
       bubble = honest ? 'Earned loot.' : quest.bubble;
       hero.stats.power += honest ? 1 : 0;
       hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 8, 0, 100);
+      hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty + (honest ? 5 : 2), 0, 100);
       this.stats.questsCompleted += 1;
       if (honest) this.stats.honestQuestSuccesses += 1;
     } else {
@@ -1437,12 +1800,14 @@ export default class TownScene extends Phaser.Scene {
       bubble = 'This scaled badly.';
       hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - quest.risk * 4, 0, 100);
       hero.stats.debt += quest.risk * 8;
+      hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty - quest.risk, 0, 100);
     }
 
     this.applyDeltas(deltas);
     this.floatDeltas(place.x, place.y - (place.h || 58) - 10, deltas);
     this.game.events.emit('gwg-event', text);
     this.checkObjectives();
+    this.checkUnlocks();
     this.walkTo(hero, spot, () => {
       this.say(hero, bubble, true);
       this.scheduleAmbient(hero, Phaser.Math.Between(2500, 5200));
@@ -1453,6 +1818,7 @@ export default class TownScene extends Phaser.Scene {
     this.interruptHero(hero);
     hero.awayUntil = this.day + cycles;
     hero.state = 'away';
+    hero.currentAction = `Away until Day ${hero.awayUntil}`;
     hero.container.setAlpha(0.28);
     hero.stats.loyalty = Math.max(0, hero.stats.loyalty - 18);
     this.floatText(hero.container.x, hero.container.y - 36, 'LEFT TOWN', '#f0938f');
@@ -1498,12 +1864,16 @@ export default class TownScene extends Phaser.Scene {
     }
 
     if (this.isWhaleHero(hero.def) && Math.random() < 0.48 + whale * 0.05) {
+      const purchase = Phaser.Utils.Array.GetRandom(WHALE_PURCHASES);
       const income = 100 + whale * 75 + Math.floor(R.corruption * 1.4);
       hero.stats.spent += Math.floor(income / 3);
+      hero.stats.power += 1 + whale;
+      hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 5, 0, 100);
+      this.stats.whaleEvents += 1;
       return {
         building: 'whale',
-        text: `${hero.def.name} bought momentum and called it mastery.`,
-        bubble: 'Momentum purchased.',
+        text: `${hero.def.name} bought ${purchase} and called it mastery.`,
+        bubble: purchase,
         d: { gold: income, trust: -2 - Math.floor(whale / 2), corruption: 2 + whale },
         whale: true,
       };
@@ -1549,6 +1919,7 @@ export default class TownScene extends Phaser.Scene {
   runCycle() {
     if (this.cycleRunning) return;
     this.cycleRunning = true;
+    this.publishTownHint();
 
     this.day += 1;
     this.registry.set('day', this.day);
@@ -1566,6 +1937,9 @@ export default class TownScene extends Phaser.Scene {
       }
     } else {
       steps.push(() => {
+        const d = { gold: -35, morale: -2, threat: 7 };
+        this.applyDeltas(d);
+        this.floatDeltas(this.buildingById.guildhall.x, this.buildingById.guildhall.y - this.buildingById.guildhall.h - 10, d);
         this.game.events.emit('gwg-event', 'No quest bounties were posted. Heroes improvise, which is rarely cheaper.');
       });
     }
@@ -1582,6 +1956,7 @@ export default class TownScene extends Phaser.Scene {
         corruption: Phaser.Math.Between(3 + whaleLevel, 7 + whaleLevel),
       };
       this.applyDeltas(d);
+      this.stats.whaleEvents += 1;
       this.burstCoins(42);
       this.floatDeltas(whale.x, whale.y - whale.h - 10, d);
       this.game.events.emit('gwg-event',
@@ -1610,7 +1985,13 @@ export default class TownScene extends Phaser.Scene {
       steps.push(() => {
         const b = this.placeById[ev.building] || this.buildingById.guildhall;
         const spot = this.doorById[ev.building] || this.doorById.guildhall;
+        hero.currentAction = ev.whale ? 'Buying premium advantage' : `Acting at ${this.getPlaceName(ev.building)}`;
         this.applyDeltas(ev.d);
+        hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + (ev.d.morale || 0) * 2, 0, 100);
+        hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty + (ev.d.trust || 0) * 2, 0, 100);
+        if (ev.d.corruption > 0 && !hero.stats.whaleAccess && this.resources.corruption > 55) {
+          hero.stats.debt += ev.d.corruption * 12;
+        }
         this.floatDeltas(b.x, b.y - (b.h || 58) - 10, ev.d);
         this.game.events.emit('gwg-event', ev.text);
 
@@ -1620,6 +2001,7 @@ export default class TownScene extends Phaser.Scene {
         if (ev.whale) {
           this.burstCoins(34);
           this.triggerWhaleReaction();
+          this.checkUnlocks();
         }
 
         this.walkTo(hero, spot, () => {
@@ -1701,6 +2083,9 @@ export default class TownScene extends Phaser.Scene {
       this.cycleRunning = false;
       this.refreshQuestNotices();
       this.checkObjectives();
+      this.checkUnlocks();
+      this.publishTownHint();
+      this.saveGame(false);
       this.game.events.emit('gwg-cycle-done');
     });
 
