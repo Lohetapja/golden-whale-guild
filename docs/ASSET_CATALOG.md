@@ -48,13 +48,13 @@ Generated assets are optional and must stay routed through
 | `prop_barrel` | `public/assets/objects/object_barrel.png` | Reused barrels | New PixelLab asset |
 | `prop_crate` | `public/assets/objects/object_crate.png` | Reused crates | New PixelLab asset |
 | `prop_signpost` | `public/assets/objects/object_signpost.png` | Reused signposts | New PixelLab asset |
-| `object_bench` | `public/assets/objects/object_bench.png` | Cataloged social prop | New PixelLab asset |
-| `object_table` | `public/assets/objects/object_table.png` | Cataloged social prop | New PixelLab asset |
-| `object_coin_pile` | `public/assets/objects/object_coin_pile.png` | Cataloged premium prop | New PixelLab asset |
-| `object_contract_stack` | `public/assets/objects/object_contract_stack.png` | Cataloged debt prop | New PixelLab asset |
-| `object_anvil` | `public/assets/objects/object_anvil.png` | Cataloged blacksmith prop | New PixelLab asset |
-| `object_training_dummy` | `public/assets/objects/object_training_dummy.png` | Cataloged training prop | New PixelLab asset |
-| `object_target` | `public/assets/objects/object_target.png` | Cataloged training prop | New PixelLab asset |
+| `object_bench` | `public/assets/objects/object_bench.png` | Social District bench accent | New PixelLab asset |
+| `object_table` | `public/assets/objects/object_table.png` | Social District table accent | New PixelLab asset |
+| `object_coin_pile` | `public/assets/objects/object_coin_pile.png` | Premium District coin accent | New PixelLab asset |
+| `object_contract_stack` | `public/assets/objects/object_contract_stack.png` | Premium/Debt district contract accent | New PixelLab asset |
+| `object_anvil` | `public/assets/objects/object_anvil.png` | Blacksmith/upgrade accent | New PixelLab asset |
+| `object_training_dummy` | `public/assets/objects/object_training_dummy.png` | Training District/upgrade accent | New PixelLab asset |
+| `object_target` | `public/assets/objects/object_target.png` | Training District/upgrade accent | New PixelLab asset |
 
 ## Characters
 
@@ -81,6 +81,10 @@ Generated assets are optional and must stay routed through
 | `hero_bankrupt_bard` | `public/assets/characters/hero_bankrupt_bard.png` | Bankrupt Bard | PixelLab idle sprite |
 | `hero_quest_intern` | `public/assets/characters/hero_quest_intern.png` | Quest Intern | PixelLab idle sprite |
 | `hero_disillusioned_blacksmith` | `public/assets/characters/hero_disillusioned_blacksmith.png` | Disillusioned Blacksmith | PixelLab idle sprite |
+| `hero_angry_veteran` | `public/assets/characters/hero_veteran.png` | Angry Veteran alias | Uses Veteran sprite until a dedicated variant is generated |
+| `hero_free_trial_paladin` | `public/assets/characters/hero_honest_grinder.png` | Free Trial Paladin alias | Uses Honest Grinder sprite until a dedicated variant is generated |
+| `hero_overleveled_toddler` | `public/assets/characters/hero_noble_whale.png` | Overleveled Toddler alias | Uses Noble Whale sprite until a dedicated variant is generated |
+| `hero_lootbox_philosopher` | `public/assets/characters/hero_suspicious_merchant.png` | Lootbox Philosopher alias | Uses Suspicious Merchant sprite until a dedicated variant is generated |
 
 ## Icons
 
@@ -96,12 +100,16 @@ Generated assets are optional and must stay routed through
 | `icon_quest` | `public/assets/icons/icon_quest.png` | Cataloged quest icon | New PixelLab asset |
 | `icon_warning` | `public/assets/icons/icon_warning.png` | Cataloged warning icon | New PixelLab asset |
 | `icon_whale` | `public/assets/icons/icon_whale.png` | Golden Whale sign/identity | New PixelLab asset |
+| `icon_debt` | `public/assets/icons/icon_corruption.png` | Debt icon alias | Uses corruption icon until a dedicated debt icon is generated |
+| `icon_protest` | `public/assets/icons/icon_warning.png` | Protest icon alias | Uses warning icon until a dedicated protest icon is generated |
+| `icon_locked` | `public/assets/icons/icon_warning.png` | Locked icon alias | Uses warning icon until a dedicated lock icon is generated |
+| `icon_max` | `public/assets/icons/icon_upgrade.png` | Max-level icon alias | Uses upgrade icon until a dedicated max icon is generated |
 
 ## Tiles And UI
 
 | Asset key | File | Where used | Notes |
 | --- | --- | --- | --- |
-| `tileset_town_basic` | `public/assets/tiles/tileset_town_basic.png` | Cataloged terrain tileset | New PixelLab Wang tileset, not deeply integrated yet |
+| `tileset_town_basic` | `public/assets/tiles/tileset_town_basic.png` | Cataloged terrain tileset | New PixelLab Wang tileset, not deeply integrated yet; stamped paths now have edge/pebble detail |
 | `ui_panel` | `public/assets/ui/ui_panel_parchment.png` | Manifest-ready panel slot | PixelLab job stalled at 95%; fallback remains active until file exists |
 | `ui_panel_dark` | `public/assets/ui/ui_panel_dark.png` | Manifest-ready panel slot | PixelLab job stalled at 95%; fallback remains active until file exists |
 | `ui_button` | `public/assets/ui/ui_button_normal.png` | Manifest-ready button slot | PixelLab job stalled at 95%; fallback remains active until file exists |

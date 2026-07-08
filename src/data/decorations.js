@@ -387,6 +387,15 @@ export const DECORATIONS = [
   { id: 'sign-dungeon', x: 1085, y: 515, fallbackKey: 'signpost', assetKey: 'prop_signpost' },
   { id: 'sign-market', x: 605, y: 620, fallbackKey: 'signpost', assetKey: 'prop_signpost' },
   { id: 'sign-training', x: 962, y: 650, fallbackKey: 'signpost', assetKey: 'prop_signpost' },
+
+  // PixelLab prop accents: quiet district identity without blocking buildings.
+  { id: 'bench-social-1', x: 190, y: 455, fallbackKey: 'crate', assetKey: 'object_bench', visualScale: 0.72 },
+  { id: 'table-social-1', x: 298, y: 432, fallbackKey: 'barrel', assetKey: 'object_table', visualScale: 0.68 },
+  { id: 'coin-pile-whale-1', x: 1160, y: 382, fallbackKey: 'ph-icon_coin', assetKey: 'object_coin_pile', visualScale: 0.64 },
+  { id: 'contracts-premium-1', x: 1200, y: 474, fallbackKey: 'crate', assetKey: 'object_contract_stack', visualScale: 0.62 },
+  { id: 'anvil-blacksmith-1', x: 590, y: 658, fallbackKey: 'crate', assetKey: 'object_anvil', visualScale: 0.66 },
+  { id: 'dummy-training-1', x: 875, y: 666, fallbackKey: 'dummy', assetKey: 'object_training_dummy', visualScale: 0.66 },
+  { id: 'target-training-1', x: 1008, y: 646, fallbackKey: 'dummy', assetKey: 'object_target', visualScale: 0.6 },
 ];
 
 export const PATH_NODES = [

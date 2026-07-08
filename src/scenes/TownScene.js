@@ -1404,7 +1404,7 @@ export default class TownScene extends Phaser.Scene {
   }
 
   stampPath(g, x1, y1, x2, y2, radius = 10) {
-    // stamped circles read as a hand-laid dirt trail
+    // Stamped circles keep the road organic without needing a full tilemap yet.
     const dist = Phaser.Math.Distance.Between(x1, y1, x2, y2);
     const steps = Math.ceil(dist / Math.max(7, radius * 0.62));
     for (let i = 0; i <= steps; i += 1) {
@@ -1412,8 +1412,18 @@ export default class TownScene extends Phaser.Scene {
       const jitter = Math.max(1, Math.floor(radius * 0.18));
       const x = Phaser.Math.Linear(x1, x2, t) + Phaser.Math.Between(-jitter, jitter);
       const y = Phaser.Math.Linear(y1, y2, t) + Phaser.Math.Between(-jitter, jitter);
+      g.fillStyle(0xbf9a61, 0.28);
+      g.fillCircle(x, y + 1, radius * 1.12);
       g.fillStyle(Math.random() < 0.15 ? 0xc3a76f : 0xd9bc85);
       g.fillCircle(x, y, radius);
+      if (Math.random() < 0.22) {
+        g.fillStyle(Math.random() < 0.5 ? 0xf0d49a : 0xa98252, 0.34);
+        g.fillCircle(
+          x + Phaser.Math.Between(-Math.floor(radius * 0.35), Math.floor(radius * 0.35)),
+          y + Phaser.Math.Between(-Math.floor(radius * 0.28), Math.floor(radius * 0.28)),
+          Math.max(2, radius * 0.18),
+        );
+      }
     }
   }
 
@@ -1451,6 +1461,24 @@ export default class TownScene extends Phaser.Scene {
     ).setOrigin(0.5, 0).setDepth(2000);
     label.setMaxLines(2);
     return label;
+  }
+
+  getTextureScaleForBox(textureKey, targetW, targetH, fallbackScale = 1, maxScale = 1.15) {
+    const source = this.textures.get(textureKey)?.getSourceImage?.();
+    if (!source?.width || !source?.height || !targetW || !targetH) return fallbackScale;
+    const fitScale = Math.min(targetW / source.width, targetH / source.height);
+    return Phaser.Math.Clamp(fitScale, 0.18, maxScale);
+  }
+
+  getPlaceSpriteScale(place, textureKey, fallbackScale = 1) {
+    if (place.fitToFootprint === false) return fallbackScale;
+    return this.getTextureScaleForBox(
+      textureKey,
+      place.w,
+      place.h,
+      fallbackScale,
+      place.maxVisualScale ?? 1.1,
+    );
   }
 
   createPlaceHitZone(place, img, onSelect) {
@@ -1496,13 +1524,15 @@ export default class TownScene extends Phaser.Scene {
     for (const b of this.buildings) {
       this.buildingById[b.id] = b;
       this.add.ellipse(b.x, b.y - 8, b.w * 0.8, 26, 0x10151d, 0.22).setDepth(b.y - 2);
-      const img = this.add.image(b.x, b.y, buildingTexture(this, b))
+      const textureKey = buildingTexture(this, b);
+      const img = this.add.image(b.x, b.y, textureKey)
         .setOrigin(0.5, 1)
         .setDepth(b.y);
-      img.setScale(b.visualScale ?? LAYOUT_CONSTANTS.BUILDING_SCALE);
+      const baseScale = this.getPlaceSpriteScale(b, textureKey, b.visualScale ?? LAYOUT_CONSTANTS.BUILDING_SCALE);
+      img.setScale(baseScale);
       img.setData('baseScaleX', img.scaleX);
       img.setData('baseScaleY', img.scaleY);
-      img.setData('hoverScale', (b.visualScale ?? LAYOUT_CONSTANTS.BUILDING_SCALE) * 1.03);
+      img.setData('hoverScale', baseScale * 1.03);
       this.placeSpriteById[b.id] = img;
 
       // Invisible hit zones keep smaller placeholders easy to tap on mobile.
@@ -1545,10 +1575,13 @@ export default class TownScene extends Phaser.Scene {
       this.placeSpriteById[d.id] = img;
       this.decorationObjectsById[d.id].push(img);
 
-      if (d.visualScale || d.scale) img.setScale(d.visualScale ?? d.scale);
+      const decorScale = d.w && d.h
+        ? this.getPlaceSpriteScale(d, key, d.visualScale ?? d.scale ?? 1)
+        : (d.visualScale ?? d.scale ?? 1);
+      img.setScale(decorScale);
       img.setData('baseScaleX', img.scaleX);
       img.setData('baseScaleY', img.scaleY);
-      img.setData('hoverScale', (d.visualScale ?? d.scale ?? 1) * 1.04);
+      img.setData('hoverScale', decorScale * 1.04);
 
       if (d.fallbackKey === 'tree') {
         this.tweens.add({
@@ -1939,8 +1972,10 @@ export default class TownScene extends Phaser.Scene {
     } else if (place.id === 'whale') {
       const upgradeCoinKey = resolveTexture(this, 'icon_coin', 'ph-icon_coin');
       const upgradeCoinScale = this.getTextureScaleForMaxDimension(upgradeCoinKey, 10, 1);
+      const upgradeWhaleKey = resolveTexture(this, 'icon_whale', 'ph-icon_whale');
+      const upgradeWhaleScale = this.getTextureScaleForMaxDimension(upgradeWhaleKey, 28 + level * 3, 1.4);
       addImage(0, -h * 0.52, 'glow', 1.15 + level * 0.18);
-      addImage(0, -h * 0.58, 'ph-icon_whale', 1.3 + level * 0.15);
+      addImage(0, -h * 0.58, upgradeWhaleKey, upgradeWhaleScale);
       addImage(0, 20, 'viprope', 1 + level * 0.05);
       addSparkles(10 + level * 3, 0xffe08a);
       for (let i = 0; i < level + 2; i += 1) {

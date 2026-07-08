@@ -8,8 +8,7 @@ const FONT = '"Courier New", monospace';
 const MAX_TICKER_QUEUE = 6;
 const MAX_TICKER_CHARS = 150;
 
-// gold icon resolves through the icon_coin asset slot at create time;
-// the rest are placeholder HUD icons with no asset slot yet
+// HUD icons resolve through manifest slots when present; placeholders remain fallback.
 const RESOURCE_META = [
   {
     key: 'gold', label: 'Gold', icon: 'ph-icon_coin', asset: 'icon_coin', color: '#f6c945',
