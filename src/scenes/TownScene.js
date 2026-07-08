@@ -1521,8 +1521,10 @@ export default class TownScene extends Phaser.Scene {
 
     // training yard props
     const yard = this.buildingById.training;
-    this.add.image(yard.x - 62, yard.y - 8, 'dummy').setScale(0.86).setOrigin(0.5, 1).setDepth(yard.y - 8);
-    this.add.image(yard.x + 62, yard.y - 2, 'dummy').setScale(0.86).setOrigin(0.5, 1).setDepth(yard.y - 2);
+    const dummyKey = resolveTexture(this, 'object_training_dummy', 'dummy');
+    const targetKey = resolveTexture(this, 'object_target', 'dummy');
+    this.add.image(yard.x - 62, yard.y - 8, dummyKey).setScale(0.86).setOrigin(0.5, 1).setDepth(yard.y - 8);
+    this.add.image(yard.x + 62, yard.y - 2, targetKey).setScale(0.72).setOrigin(0.5, 1).setDepth(yard.y - 2);
   }
 
   buildDecorations() {
@@ -1748,10 +1750,25 @@ export default class TownScene extends Phaser.Scene {
     this.buildQuestNotices();
   }
 
+  getTextureScaleForMaxDimension(textureKey, targetPx, fallbackScale = 1) {
+    const source = this.textures.get(textureKey)?.getSourceImage?.();
+    const sourceSize = Math.max(source?.width || 0, source?.height || 0);
+    if (!sourceSize) return fallbackScale;
+    return Phaser.Math.Clamp(targetPx / sourceSize, 0.2, fallbackScale);
+  }
+
+  getTextureScaleForHeight(textureKey, targetHeight, fallbackScale = 1) {
+    const source = this.textures.get(textureKey)?.getSourceImage?.();
+    const sourceHeight = source?.height || 0;
+    if (!sourceHeight) return fallbackScale;
+    return Phaser.Math.Clamp(targetHeight / sourceHeight, 0.4, fallbackScale);
+  }
+
   buildWhaleStationDressing() {
     // Golden Whale Milking Station: glow, coins, carpet, VIP rope. Peak premium.
     const whale = this.buildingById.whale;
     const coinKey = resolveTexture(this, 'icon_coin', 'ph-icon_coin');
+    const coinScale = this.getTextureScaleForMaxDimension(coinKey, 10, 1);
 
     const glow = this.add.image(whale.x, whale.y - 60, 'glow')
       .setDepth(whale.y - whale.h - 1)
@@ -1782,7 +1799,7 @@ export default class TownScene extends Phaser.Scene {
       speedY: { min: -45, max: -20 },
       speedX: { min: -16, max: 16 },
       alpha: { start: 1, end: 0 },
-      scale: { min: 0.62, max: 1.05 },
+      scale: { min: coinScale * 0.62, max: coinScale * 1.05 },
       lifespan: 1900,
       frequency: 190,
       maxParticles: 28,
@@ -1794,7 +1811,7 @@ export default class TownScene extends Phaser.Scene {
       angle: { min: 210, max: 330 },
       gravityY: 260,
       lifespan: 1200,
-      scale: { start: 1.45, end: 0.45 },
+      scale: { start: coinScale * 1.45, end: coinScale * 0.45 },
       alpha: { start: 1, end: 0 },
       emitting: false,
       maxParticles: 80,
@@ -1880,8 +1897,8 @@ export default class TownScene extends Phaser.Scene {
     };
 
     if (place.id === 'tavern') {
-      addImage(-w / 2 - 10, -8, 'barrel', 0.85);
-      if (level >= 3) addImage(w / 2 + 10, -10, 'lamp', 0.8);
+      addImage(-w / 2 - 10, -8, resolveTexture(this, 'prop_barrel', 'barrel'), 0.85);
+      if (level >= 3) addImage(w / 2 + 10, -10, resolveTexture(this, 'prop_lamp', 'lamp'), 0.8);
       g.fillStyle(0xf6c945);
       g.fillRect(-26, -h + 22, 52, 7);
       if (level >= 4) {
@@ -1894,7 +1911,8 @@ export default class TownScene extends Phaser.Scene {
       g.fillRoundedRect(-20, -46, 40, 28, 4);
       g.fillStyle(0xf6c945, 0.75);
       g.fillRect(-13, -39, 26, 12);
-      if (level >= 3) addImage(-w / 2 - 10, -7, 'crate', 0.9);
+      if (level >= 2) addImage(w / 2 + 10, -8, resolveTexture(this, 'object_anvil', 'crate'), 0.75);
+      if (level >= 3) addImage(-w / 2 - 10, -7, resolveTexture(this, 'prop_crate', 'crate'), 0.9);
       if (level >= 4) addSparkles(8, 0xffa04d);
     } else if (place.id === 'guildhall') {
       g.fillStyle(0x3e6db5);
@@ -1902,28 +1920,32 @@ export default class TownScene extends Phaser.Scene {
       g.fillRect(w / 2 - 30, -h + 18, 12, 42);
       g.fillStyle(0xf2ead8);
       for (let i = 0; i < level; i += 1) g.fillRect(w / 2 - 18, -30 - i * 5, 18, 4);
-      if (level >= 4) addImage(w / 2 + 12, -10, 'signpost', 0.75);
+      if (level >= 4) addImage(w / 2 + 12, -10, resolveTexture(this, 'prop_signpost', 'signpost'), 0.75);
     } else if (place.id === 'training') {
-      if (level >= 2) addImage(-w / 2 - 10, -8, 'dummy', 0.9);
-      if (level >= 3) addImage(w / 2 + 10, -8, 'dummy', 0.9);
+      if (level >= 2) addImage(-w / 2 - 10, -8, resolveTexture(this, 'object_training_dummy', 'dummy'), 0.8);
+      if (level >= 3) addImage(w / 2 + 10, -8, resolveTexture(this, 'object_target', 'dummy'), 0.7);
       g.lineStyle(3, 0x8a5a2b);
       g.strokeCircle(0, -36, 14 + level * 2);
       g.lineStyle(2, 0xf6c945);
       g.strokeCircle(0, -36, 6 + level);
     } else if (place.id === 'market') {
-      addImage(-w / 2 - 8, -8, 'crate', 0.85);
-      addImage(w / 2 + 8, -8, 'barrel', 0.8);
+      addImage(-w / 2 - 8, -8, resolveTexture(this, 'prop_crate', 'crate'), 0.85);
+      addImage(w / 2 + 8, -8, resolveTexture(this, 'prop_barrel', 'barrel'), 0.8);
       if (level >= 3) {
         g.fillStyle(0xf6c945);
         for (let i = 0; i < level + 2; i += 1) g.fillCircle(-26 + i * 12, -44, 4);
       }
-      if (level >= 4) addImage(0, -h - 8, 'signpost', 0.8);
+      if (level >= 4) addImage(0, -h - 8, resolveTexture(this, 'prop_signpost', 'signpost'), 0.8);
     } else if (place.id === 'whale') {
+      const upgradeCoinKey = resolveTexture(this, 'icon_coin', 'ph-icon_coin');
+      const upgradeCoinScale = this.getTextureScaleForMaxDimension(upgradeCoinKey, 10, 1);
       addImage(0, -h * 0.52, 'glow', 1.15 + level * 0.18);
       addImage(0, -h * 0.58, 'ph-icon_whale', 1.3 + level * 0.15);
       addImage(0, 20, 'viprope', 1 + level * 0.05);
       addSparkles(10 + level * 3, 0xffe08a);
-      for (let i = 0; i < level + 2; i += 1) addImage(-52 + i * 22, -h - 4 - (i % 2) * 8, 'ph-icon_coin', 1.15);
+      for (let i = 0; i < level + 2; i += 1) {
+        addImage(-52 + i * 22, -h - 4 - (i % 2) * 8, upgradeCoinKey, upgradeCoinScale * 1.15);
+      }
     } else if (place.id === 'dungeon') {
       g.fillStyle(0x7a4bd0, 0.24 + level * 0.08);
       g.fillEllipse(0, -32, w * 0.55, 34 + level * 5);
@@ -2735,7 +2757,11 @@ export default class TownScene extends Phaser.Scene {
       const x = spot.x + Phaser.Math.Between(-28, 28);
       const y = spot.y + Phaser.Math.Between(2, 22);
 
-      const sprite = this.add.image(0, 0, heroTexture(this, def)).setScale(NPC_SCALE).setOrigin(0.5, 1);
+      const textureKey = heroTexture(this, def);
+      const spriteScale = this.getTextureScaleForHeight(textureKey, 34, NPC_SCALE);
+      const sprite = this.add.image(0, 0, textureKey).setScale(spriteScale).setOrigin(0.5, 1);
+      sprite.setData('baseScaleX', spriteScale);
+      sprite.setData('baseScaleY', spriteScale);
       const label = this.add.text(0, -40, def.name, {
         fontFamily: '"Courier New", monospace',
         fontSize: `${SMALL_LABEL_FONT_SIZE}px`,
@@ -2821,8 +2847,9 @@ export default class TownScene extends Phaser.Scene {
       });
 
       // idle breathing — replace with a real idle animation later
+      const spriteScaleY = sprite.getData('baseScaleY') || sprite.scaleY || NPC_SCALE;
       this.tweens.add({
-        targets: sprite, scaleY: { from: NPC_SCALE, to: NPC_SCALE * 1.04 },
+        targets: sprite, scaleY: { from: spriteScaleY, to: spriteScaleY * 1.04 },
         duration: Phaser.Math.Between(700, 1000), yoyo: true, repeat: -1,
         ease: 'Sine.easeInOut', delay: Phaser.Math.Between(0, 600),
       });
