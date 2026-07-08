@@ -243,7 +243,22 @@ function pickPool(day) {
 }
 
 export function rollQuestNotices(day, count = 3) {
-  return pickPool(day).slice(0, count).map((quest, index) => ({
+  const shuffled = pickPool(day);
+  const buckets = [
+    shuffled.find((quest) => quest.type === 'fair' || quest.type === 'trust'),
+    shuffled.find((quest) => quest.type === 'danger'),
+    shuffled.find((quest) => quest.type === 'sponsored' || quest.type === 'shady'),
+  ].filter(Boolean);
+  const selected = [];
+  for (const quest of buckets) {
+    if (!selected.some((item) => item.id === quest.id)) selected.push(quest);
+  }
+  for (const quest of shuffled) {
+    if (selected.length >= count) break;
+    if (!selected.some((item) => item.id === quest.id)) selected.push(quest);
+  }
+
+  return selected.slice(0, count).map((quest, index) => ({
     ...quest,
     noticeId: `${quest.id}-${day}-${index}`,
     status: 'available',

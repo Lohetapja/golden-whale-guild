@@ -35,6 +35,7 @@ const BUBBLE_MIN_SPACING = 150;
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
 const SAVE_KEY = 'golden-whale-guild-save-v2';
+const SAVE_VERSION = 3;
 const TAP_MOVE_THRESHOLD = 14;
 
 const QUEST_NOTICE_SPOTS = [
@@ -66,6 +67,10 @@ const LOCKABLE_LOCATION_IDS = new Set([
   'refund_denial_desk',
   'sponsored_quest_board',
   'ethics_fountain',
+  'ethics_laundromat',
+  'premium_temple',
+  'patch_notes_shrine',
+  'hero_union_tent',
 ]);
 
 const START_UNLOCKED_LOCATIONS = [
@@ -85,6 +90,185 @@ const WHALE_PURCHASES = [
   'Legendary Receipt',
   'Sponsored Armor of Plausible Skill',
   'Queue Skip Relic',
+];
+
+const TOWN_STAGES = [
+  {
+    id: 'garage',
+    name: 'Garage Guild',
+    message: 'A tiny guild with big invoices and no adult supervision.',
+    requirement: () => true,
+  },
+  {
+    id: 'startup',
+    name: 'Questionable Startup',
+    message: 'The town upgraded from questionable idea to questionable institution.',
+    requirement: (scene) => scene.day >= 5 && scene.getUpgradedPlaceCount() >= 2,
+  },
+  {
+    id: 'hub',
+    name: 'Sponsored Adventurer Hub',
+    message: 'Investors arrived. Citizens hid the chairs.',
+    requirement: (scene) => (
+      scene.stats.questsPosted >= 5
+      && scene.stats.totalGoldEarned >= 3000
+      && (
+        scene.getPlaceLevel(scene.buildingById.whale) >= 2
+        || scene.getPlaceLevel(scene.buildingById.guildhall) >= 3
+      )
+    ),
+  },
+  {
+    id: 'whale_economy',
+    name: 'Whale-Optimized Economy',
+    message: 'Your economy is now too shiny to audit.',
+    requirement: (scene) => (
+      scene.getPlaceLevel(scene.buildingById.whale) >= 4
+      && scene.resources.corruption >= 60
+      && (scene.stats.crisesSurvived || 0) >= 1
+    ),
+  },
+  {
+    id: 'kingdom_problem',
+    name: 'Premium Kingdom Problem',
+    message: 'The king noticed the whale statue and asked for a cut.',
+    requirement: (scene) => (
+      scene.day >= 20
+      && scene.heroes?.some((hero) => ['Whale Champion', 'Protest Leader'].includes(hero.stats.status))
+    ),
+  },
+];
+
+const ACCOUNTANT_NOTES = [
+  'Loss of trust has been reclassified as engagement friction.',
+  'Corruption remains within projected sparkle tolerance.',
+  'The moral deficit is amortizing beautifully.',
+  'Threat exposure increased, but the chart uses heroic colors.',
+  'Fairness leakage is down after we stopped measuring it.',
+  'Citizen complaints have been bundled into premium insight.',
+];
+
+const POLICY_EVENTS = [
+  {
+    id: 'funding-crisis',
+    title: 'Policy Choice: Town Funding Crisis',
+    description: 'The guild needs money and has discovered the usual awful shortcuts.',
+    options: [
+      {
+        id: 'fair-grant',
+        label: 'Fair Training Grant',
+        summary: 'Cost 300g, +Trust, +Morale, honest heroes gain power.',
+        deltas: { gold: -300, trust: 8, morale: 7, corruption: -1 },
+        hero: (scene) => scene.boostHeroGroup('honest', { power: 1, morale: 4, loyalty: 4 }, 'Benefited from a fair training grant.'),
+        text: 'The town funded fair training. Effort briefly got a budget.',
+      },
+      {
+        id: 'sponsored-package',
+        label: 'Sponsored Progress Package',
+        summary: '+Gold, +Corruption, -Trust, whale heroes gain power.',
+        deltas: { gold: 420, trust: -6, corruption: 9, morale: -2 },
+        hero: (scene) => scene.boostHeroGroup('whale', { power: 3, fame: 5, corruption: 5 }, 'Received a sponsored progress package.'),
+        text: 'Sponsored progress arrived. The fine print arrived first.',
+      },
+      {
+        id: 'do-nothing',
+        label: 'Do Nothing',
+        summary: 'No cost, Threat rises, citizens judge silently.',
+        deltas: { threat: 9, morale: -2 },
+        text: 'The guild did nothing. The dungeon considered this consent.',
+      },
+    ],
+  },
+  {
+    id: 'ethics-hearing',
+    title: 'Policy Choice: Golden Whale Ethics Hearing',
+    description: 'Citizens ask if the whale is fair. The whale asks if fairness has liquidity.',
+    options: [
+      {
+        id: 'public-apology',
+        label: 'Public Apology',
+        summary: 'Cost 180g, +Trust, -Corruption, whale profits sulk.',
+        deltas: { gold: -180, trust: 7, corruption: -5, morale: 2 },
+        text: 'The guild apologized in public. Nobody believed it, but the chairs relaxed.',
+      },
+      {
+        id: 'premium-clarification',
+        label: 'Premium Clarification',
+        summary: '+Gold, +Corruption, -Trust, whales call it transparency.',
+        deltas: { gold: 360, trust: -5, corruption: 8 },
+        hero: (scene) => scene.boostHeroGroup('whale', { fame: 4, corruption: 4 }, 'Attended a premium ethics clarification.'),
+        text: 'The hearing clarified that premium fairness is still fairness, allegedly.',
+      },
+      {
+        id: 'delay-committee',
+        label: 'Delay Committee',
+        summary: '+Morale slightly, Threat rises while everyone talks.',
+        deltas: { morale: 2, threat: 6 },
+        text: 'A committee formed. The dungeon attacked the agenda.',
+      },
+    ],
+  },
+  {
+    id: 'union-talks',
+    title: 'Policy Choice: Hero Union Negotiation',
+    description: 'The heroes organized. Someone brought pamphlets and a very tired sword.',
+    options: [
+      {
+        id: 'listen',
+        label: 'Listen To Heroes',
+        summary: 'Cost 220g, +Trust, +Morale, protest resentment cools.',
+        deltas: { gold: -220, trust: 9, morale: 6, corruption: -2 },
+        hero: (scene) => scene.coolResentment(12, 'Heard during union talks.'),
+        text: 'The guild listened. This radical act confused several accountants.',
+      },
+      {
+        id: 'brand-union',
+        label: 'Sponsor The Union',
+        summary: '+Gold, +Corruption, protest leaders get angrier.',
+        deltas: { gold: 280, trust: -4, corruption: 7, morale: -3 },
+        hero: (scene) => scene.raiseResentment(10, 'Saw the union receive tasteful branding.'),
+        text: 'The union got a sponsor. The banner now has terms.',
+      },
+      {
+        id: 'ignore-union',
+        label: 'Ignore It',
+        summary: 'No cost, -Trust, risk of protest growth.',
+        deltas: { trust: -7, morale: -4 },
+        hero: (scene) => scene.raiseResentment(8, 'Ignored during union talks.'),
+        text: 'The guild ignored the union. The pamphlets got louder.',
+      },
+    ],
+  },
+  {
+    id: 'debt-day',
+    title: 'Policy Choice: Debt Forgiveness Day',
+    description: 'The debt contracts are multiplying. One clerk suggests mercy and is asked to define ROI.',
+    options: [
+      {
+        id: 'forgive',
+        label: 'Forgive Debts',
+        summary: 'Cost 260g, +Trust, +Morale, debt heroes recover.',
+        deltas: { gold: -260, trust: 8, morale: 8, corruption: -3 },
+        hero: (scene) => scene.reduceHeroDebt(160, 'Debt forgiveness day happened. The contracts hissed.'),
+        text: 'Debt forgiveness worked. The booth demanded hazard pay.',
+      },
+      {
+        id: 'sell-contracts',
+        label: 'Sell Contracts',
+        summary: '+Gold, +Corruption, -Morale, debt heroes suffer.',
+        deltas: { gold: 390, trust: -5, morale: -7, corruption: 10 },
+        hero: (scene) => scene.addDebtToDebtHeroes(140, 'Contract sold to a worse smile.'),
+        text: 'The guild sold the contracts. The contracts sold the guild spiritually.',
+      },
+      {
+        id: 'misfile',
+        label: 'Misfile Forms',
+        summary: 'Small +Trust, small +Threat because paperwork escaped.',
+        deltas: { trust: 2, threat: 5 },
+        text: 'The debt forms were misfiled. Several became wandering monsters.',
+      },
+    ],
+  },
 ];
 
 export default class TownScene extends Phaser.Scene {
@@ -114,9 +298,20 @@ export default class TownScene extends Phaser.Scene {
       threatEventsSurvived: 0,
       trustStreak: 0,
       whaleEvents: 0,
+      whaleTrustLosses: 0,
+      balanceComplaints: 0,
+      crisesSurvived: 0,
+      policiesChosen: 0,
+      stageUps: 0,
       ...(saved?.stats || {}),
     };
     this.completedObjectives = new Set(saved?.completedObjectives || []);
+    this.townStageId = saved?.townStageId || 'garage';
+    this.townLog = Array.isArray(saved?.townLog) ? saved.townLog.slice(-80) : [];
+    this.crises = saved?.crises || {};
+    this.achievements = new Set(saved?.achievements || []);
+    this.pendingPolicy = saved?.pendingPolicy || null;
+    this.cycleReport = null;
     this.unlockedLocations = new Set([
       ...START_UNLOCKED_LOCATIONS,
       ...(saved?.unlockedLocations || []),
@@ -146,9 +341,11 @@ export default class TownScene extends Phaser.Scene {
     // shared state for the UI scene
     this.registry.set('day', this.day);
     this.registry.set('resources', { ...this.resources });
+    this.registry.set('townStage', this.getCurrentStage().name);
     this.publishObjectives();
     this.publishTownHint();
     this.checkUnlocks(true);
+    this.checkStageProgression(true);
 
     this.scene.launch('UIScene');
     this.game.events.on('gwg-end-day', this.runCycle, this);
@@ -158,6 +355,8 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-post-quest', this.postQuestFromUi, this);
     this.game.events.on('gwg-open-quests', this.openQuestsFromUi, this);
     this.game.events.on('gwg-open-ledger', this.openTownLedger, this);
+    this.game.events.on('gwg-open-town-log', this.openTownLog, this);
+    this.game.events.on('gwg-policy-choice', this.choosePolicyFromUi, this);
     this.game.events.on('gwg-selection-clear', this.clearSelection, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off('gwg-end-day', this.runCycle, this);
@@ -167,6 +366,8 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-post-quest', this.postQuestFromUi, this);
       this.game.events.off('gwg-open-quests', this.openQuestsFromUi, this);
       this.game.events.off('gwg-open-ledger', this.openTownLedger, this);
+      this.game.events.off('gwg-open-town-log', this.openTownLog, this);
+      this.game.events.off('gwg-policy-choice', this.choosePolicyFromUi, this);
       this.game.events.off('gwg-selection-clear', this.clearSelection, this);
     });
 
@@ -176,7 +377,25 @@ export default class TownScene extends Phaser.Scene {
   loadSavedState() {
     try {
       const raw = window.localStorage.getItem(SAVE_KEY);
-      return raw ? JSON.parse(raw) : null;
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return {
+        saveVersion: parsed.saveVersion || 1,
+        day: Number(parsed.day) || 1,
+        resources: { gold: 500, trust: 50, corruption: 10, morale: 60, threat: 20, ...(parsed.resources || {}) },
+        upgradeLevels: parsed.upgradeLevels || {},
+        availableQuests: Array.isArray(parsed.availableQuests) ? parsed.availableQuests : [],
+        postedQuests: Array.isArray(parsed.postedQuests) ? parsed.postedQuests : [],
+        unlockedLocations: Array.isArray(parsed.unlockedLocations) ? parsed.unlockedLocations : [],
+        completedObjectives: Array.isArray(parsed.completedObjectives) ? parsed.completedObjectives : [],
+        stats: parsed.stats || {},
+        heroStats: parsed.heroStats || {},
+        townStageId: parsed.townStageId || 'garage',
+        townLog: Array.isArray(parsed.townLog) ? parsed.townLog : [],
+        crises: parsed.crises || {},
+        achievements: Array.isArray(parsed.achievements) ? parsed.achievements : [],
+        pendingPolicy: parsed.pendingPolicy || null,
+      };
     } catch {
       return null;
     }
@@ -238,6 +457,7 @@ export default class TownScene extends Phaser.Scene {
 
   getSavePayload() {
     return {
+      saveVersion: SAVE_VERSION,
       day: this.day,
       resources: { ...this.resources },
       upgradeLevels: { ...this.upgradeLevels },
@@ -246,6 +466,11 @@ export default class TownScene extends Phaser.Scene {
       unlockedLocations: [...this.unlockedLocations],
       completedObjectives: [...this.completedObjectives],
       stats: { ...this.stats },
+      townStageId: this.townStageId,
+      townLog: (this.townLog || []).slice(-80),
+      crises: { ...this.crises },
+      achievements: [...(this.achievements || [])],
+      pendingPolicy: this.pendingPolicy,
       heroStats: Object.fromEntries((this.heroes || []).map((hero) => [hero.def.id, {
         power: hero.stats.power,
         gold: hero.stats.gold,
@@ -266,6 +491,9 @@ export default class TownScene extends Phaser.Scene {
         daysInTown: hero.stats.daysInTown,
         cyclesActive: hero.stats.cyclesActive,
         active: hero.stats.active,
+        rivalId: hero.stats.rivalId || null,
+        admiredId: hero.stats.admiredId || null,
+        resentmentTargetId: hero.stats.resentmentTargetId || null,
         awayUntil: hero.awayUntil || 0,
       }])),
     };
@@ -291,6 +519,381 @@ export default class TownScene extends Phaser.Scene {
       // Local storage may be blocked; reloading still returns to the default state.
     }
     window.location.reload();
+  }
+
+  addTownLog(text, category = 'event') {
+    if (!text) return;
+    this.townLog = Array.isArray(this.townLog) ? this.townLog : [];
+    this.townLog.push({ day: this.day, text, category });
+    while (this.townLog.length > 80) this.townLog.shift();
+  }
+
+  addReportLine(section, text) {
+    if (!this.cycleReport || !text) return;
+    if (!Array.isArray(this.cycleReport[section])) this.cycleReport[section] = [];
+    this.cycleReport[section].push(text);
+  }
+
+  beginCycleReport() {
+    this.cycleReport = {
+      day: this.day,
+      start: { ...this.resources },
+      quests: [],
+      npc: [],
+      unlocks: [],
+      warnings: [],
+      stage: [],
+      crises: [],
+      achievements: [],
+      policies: [],
+    };
+  }
+
+  getResourceDeltaSummary(start = {}, end = this.resources) {
+    return ['gold', 'trust', 'corruption', 'morale', 'threat'].map((key) => ({
+      key,
+      value: (end[key] || 0) - (start[key] || 0),
+    }));
+  }
+
+  getCurrentStage() {
+    return TOWN_STAGES.find((stage) => stage.id === this.townStageId) || TOWN_STAGES[0];
+  }
+
+  getStageIndex(id = this.townStageId) {
+    return Math.max(0, TOWN_STAGES.findIndex((stage) => stage.id === id));
+  }
+
+  getUpgradedPlaceCount() {
+    return Object.values(this.placeById || {})
+      .filter((place) => this.getPlaceLevel(place) >= 2)
+      .length;
+  }
+
+  checkStageProgression(silent = false) {
+    if (!this.placeById) return;
+    let target = this.getCurrentStage();
+    for (const stage of TOWN_STAGES) {
+      if (stage.requirement(this)) target = stage;
+    }
+    if (target.id === this.townStageId) {
+      this.registry?.set('townStage', this.getCurrentStage().name);
+      return;
+    }
+    this.townStageId = target.id;
+    this.stats.stageUps = (this.stats.stageUps || 0) + 1;
+    this.registry?.set('townStage', target.name);
+    this.addTownLog(`Stage reached: ${target.name}. ${target.message}`, 'stage');
+    this.addReportLine('stage', `${target.name}: ${target.message}`);
+    if (!silent) {
+      this.game.events.emit('gwg-event', `Town stage: ${target.name}. ${target.message}`);
+      this.floatText(PLAZA.x, PLAZA.y - 96, target.name.toUpperCase(), '#ffe08a');
+    }
+  }
+
+  getDangerWarnings() {
+    const warnings = [];
+    if (this.resources.trust <= 20) warnings.push('Trust is near collapse. Fair quests and the Complaint Barrel matter now.');
+    else if (this.resources.trust < 30) warnings.push('Trust is low. Honest heroes may leave.');
+    if (this.resources.corruption >= 90) warnings.push('Corruption is near scandal. Ethics decreased. Sparkle effects increased.');
+    else if (this.resources.corruption > 70) warnings.push('Corruption is high. Debt and shady events are more likely.');
+    if (this.resources.morale <= 20) warnings.push('Morale is near crash. The Tavern is not decorative anymore.');
+    else if (this.resources.morale < 30) warnings.push('Morale is low. Ragequits and failures become louder.');
+    if (this.resources.threat >= 90) warnings.push('Threat is near invasion. The dungeon is making eye contact.');
+    else if (this.resources.threat > 80) warnings.push('Threat is critical. Monsters may visit in person.');
+    return warnings;
+  }
+
+  getAccountantNote() {
+    const stageIndex = this.getStageIndex();
+    const index = (this.day + stageIndex + (this.stats.policiesChosen || 0)) % ACCOUNTANT_NOTES.length;
+    return ACCOUNTANT_NOTES[index];
+  }
+
+  getCycleReportPayload() {
+    const report = this.cycleReport;
+    const deltas = this.getResourceDeltaSummary(report?.start || this.resources);
+    const formatDelta = ({ key, value }) => {
+      const sign = value > 0 ? '+' : '';
+      const label = key.charAt(0).toUpperCase() + key.slice(1);
+      const className = (
+        (key === 'gold' && value >= 0)
+        || (['trust', 'morale'].includes(key) && value >= 0)
+        || (['corruption', 'threat'].includes(key) && value <= 0)
+      ) ? 'gwg-good' : 'gwg-bad';
+      return { text: `${label}: ${sign}${value}`, className };
+    };
+
+    const sections = [
+      {
+        title: 'Resource Changes',
+        lines: deltas.map(formatDelta),
+      },
+      {
+        title: 'Quest Results',
+        lines: report?.quests?.length ? report.quests.map((line) => `- ${line}`) : ['- No posted quests resolved. The town learned less than hoped.'],
+      },
+      {
+        title: 'NPC Changes',
+        lines: report?.npc?.length ? report.npc.map((line) => `- ${line}`) : ['- No major personal spiral was filed today.'],
+      },
+    ];
+
+    const extraSections = [
+      ['Stage', 'stage'],
+      ['New Unlocks', 'unlocks'],
+      ['Town Crises', 'crises'],
+      ['Achievements', 'achievements'],
+      ['Warnings', 'warnings'],
+    ];
+    for (const [title, key] of extraSections) {
+      const lines = report?.[key] || [];
+      if (lines.length) sections.push({ title, lines: lines.map((line) => `- ${line}`) });
+    }
+
+    const pendingPolicy = this.getPendingPolicy();
+    if (pendingPolicy) {
+      sections.push({
+        title: pendingPolicy.title,
+        lines: [pendingPolicy.description],
+      });
+    }
+
+    sections.push({
+      title: 'Town Accountant Note',
+      lines: [{ text: `"${this.getAccountantNote()}"`, className: 'gwg-whale' }],
+    });
+
+    const rows = pendingPolicy ? pendingPolicy.options.map((option) => ({
+      title: option.label,
+      meta: 'Policy',
+      kind: option.id.includes('sponsored') || option.id.includes('sell') || option.id.includes('premium') ? 'shady' : 'fair',
+      lines: [option.summary],
+      actions: [{
+        label: 'Choose',
+        event: 'gwg-policy-choice',
+        id: option.id,
+      }],
+    })) : [];
+
+    return {
+      title: report?.crises?.length ? `Town Crisis - Day ${this.day}` : `Day ${this.day} Report`,
+      subtitle: `${this.getCurrentStage().name} - compact consequences ledger`,
+      sections,
+      rows,
+    };
+  }
+
+  showCycleReport() {
+    if (!this.cycleReport) return;
+    this.activeInspector = { type: 'report' };
+    this.clearSelection(false);
+    this.game.events.emit('gwg-inspector-open', this.getCycleReportPayload());
+  }
+
+  getPendingPolicy() {
+    const id = typeof this.pendingPolicy === 'string' ? this.pendingPolicy : this.pendingPolicy?.id;
+    return POLICY_EVENTS.find((policy) => policy.id === id) || null;
+  }
+
+  maybeOfferPolicy() {
+    if (this.pendingPolicy || this.day < 4 || this.day % 4 !== 0) return;
+    const policy = POLICY_EVENTS[(Math.floor(this.day / 4) + this.getStageIndex()) % POLICY_EVENTS.length];
+    this.pendingPolicy = policy.id;
+    this.addTownLog(`Policy offered: ${policy.title}.`, 'policy');
+    this.addReportLine('policies', `${policy.title} is waiting for a choice.`);
+  }
+
+  choosePolicyFromUi(optionId) {
+    const policy = this.getPendingPolicy();
+    if (!policy) {
+      this.game.events.emit('gwg-event', 'No policy is pending. The committee has briefly run out of harm.');
+      return;
+    }
+    const option = policy.options.find((item) => item.id === optionId);
+    if (!option) return;
+    if (option.deltas?.gold < 0 && this.resources.gold < Math.abs(option.deltas.gold)) {
+      this.game.events.emit('gwg-event', 'Not enough gold for policy virtue. The accountant recommends hypocrisy.');
+      return;
+    }
+
+    this.applyDeltas(option.deltas || {});
+    option.hero?.(this);
+    this.pendingPolicy = null;
+    this.stats.policiesChosen = (this.stats.policiesChosen || 0) + 1;
+    this.floatDeltas(PLAZA.x, PLAZA.y - 90, option.deltas || {});
+    this.game.events.emit('gwg-event', option.text);
+    this.addTownLog(`Policy chosen: ${option.label}. ${option.text}`, 'policy');
+    this.addReportLine('policies', `${option.label}: ${option.text}`);
+    this.checkStageProgression();
+    this.checkAchievements();
+    this.refreshActivePanel();
+    this.saveGame(false);
+    this.showCycleReport();
+  }
+
+  boostHeroGroup(group, changes, historyLine) {
+    for (const hero of this.getActiveHeroes()) {
+      const match = (
+        (group === 'honest' && this.isHonestHero(hero.def))
+        || (group === 'whale' && this.isWhaleHero(hero.def))
+        || (group === 'debt' && this.isDebtHero(hero.def))
+      );
+      if (!match) continue;
+      for (const [key, amount] of Object.entries(changes)) {
+        hero.stats[key] = Phaser.Math.Clamp((hero.stats[key] || 0) + amount, 0, key === 'debt' ? 2000 : 100);
+      }
+      this.addHeroHistory(hero, historyLine);
+      this.refreshHeroStatusMarker(hero);
+    }
+  }
+
+  coolResentment(amount, historyLine) {
+    for (const hero of this.getActiveHeroes()) {
+      hero.stats.resentment = Phaser.Math.Clamp((hero.stats.resentment || 0) - amount, 0, 100);
+      hero.stats.loyalty = Phaser.Math.Clamp((hero.stats.loyalty || 0) + 3, 0, 100);
+      this.addHeroHistory(hero, historyLine);
+    }
+  }
+
+  raiseResentment(amount, historyLine) {
+    for (const hero of this.getActiveHeroes().filter((item) => !this.isWhaleHero(item.def))) {
+      hero.stats.resentment = Phaser.Math.Clamp((hero.stats.resentment || 0) + amount, 0, 100);
+      hero.stats.loyalty = Phaser.Math.Clamp((hero.stats.loyalty || 0) - 3, 0, 100);
+      this.addHeroHistory(hero, historyLine);
+    }
+  }
+
+  reduceHeroDebt(amount, historyLine) {
+    for (const hero of this.getActiveHeroes()) {
+      if ((hero.stats.debt || 0) <= 0) continue;
+      hero.stats.debt = Math.max(0, hero.stats.debt - amount);
+      hero.stats.morale = Phaser.Math.Clamp((hero.stats.morale || 0) + 4, 0, 100);
+      this.addHeroHistory(hero, historyLine);
+    }
+  }
+
+  addDebtToDebtHeroes(amount, historyLine) {
+    for (const hero of this.getActiveHeroes().filter((item) => this.isDebtHero(item.def) || item.stats.debt > 0)) {
+      hero.stats.debt += amount;
+      hero.stats.morale = Phaser.Math.Clamp((hero.stats.morale || 0) - 4, 0, 100);
+      this.addHeroHistory(hero, historyLine);
+    }
+  }
+
+  buildRelationship(sourceHero, trigger = '') {
+    const active = this.getActiveHeroes();
+    if (active.length < 2) return;
+
+    if (trigger === 'whaleEvent') {
+      if (!sourceHero) return;
+      const honest = active
+        .filter((hero) => this.isHonestHero(hero.def) && hero.def.id !== sourceHero.def.id)
+        .sort((a, b) => (b.stats.resentment || 0) - (a.stats.resentment || 0))[0];
+      if (honest && honest.stats.rivalId !== sourceHero.def.id) {
+        honest.stats.rivalId = sourceHero.def.id;
+        honest.stats.resentmentTargetId = sourceHero.def.id;
+        const text = `${honest.def.name} now considers ${sourceHero.def.name} a balance incident.`;
+        this.addHeroHistory(honest, text);
+        this.addTownLog(text, 'npc');
+        this.addReportLine('npc', text);
+        this.game.events.emit('gwg-event', text);
+      }
+      return;
+    }
+
+    const mentor = active.find((hero) => hero.stats.status === 'Mentor');
+    const weak = active
+      .filter((hero) => hero.def.id !== mentor?.def.id && (hero.stats.power || 0) < 8)
+      .sort((a, b) => (a.stats.power || 0) - (b.stats.power || 0))[0];
+    if (mentor && weak && weak.stats.admiredId !== mentor.def.id) {
+      weak.stats.admiredId = mentor.def.id;
+      const text = `${mentor.def.name} started mentoring ${weak.def.name}. Old skill still has hands.`;
+      this.addHeroHistory(mentor, text);
+      this.addHeroHistory(weak, text);
+      this.addTownLog(text, 'npc');
+      this.addReportLine('npc', text);
+      this.game.events.emit('gwg-event', text);
+    }
+  }
+
+  triggerCrisis(type, title, eventText, deltas, recovery) {
+    const count = this.crises[type] || 0;
+    if (count > 0 && this.day - count < 4) return false;
+    this.crises[type] = this.day;
+    this.stats.crisesSurvived = (this.stats.crisesSurvived || 0) + 1;
+    this.applyDeltas(deltas);
+    this.addTownLog(`${title}: ${eventText}`, 'crisis');
+    this.addReportLine('crises', `${title}: ${eventText} Recovery: ${recovery}`);
+    this.game.events.emit('gwg-event', `${title}: ${eventText}`);
+    this.floatText(PLAZA.x, PLAZA.y - 120, title, '#f0938f');
+    return true;
+  }
+
+  checkCrises() {
+    if (this.resources.trust <= 0) {
+      const triggered = this.triggerCrisis(
+        'trustCollapse',
+        'TRUST COLLAPSE',
+        'The citizens discovered the fairness policy was decorative.',
+        { gold: -160, morale: -8, corruption: 2, trust: 12 },
+        'Upgrade Complaint Barrel, complete fair quests, and avoid whale upgrades for a while.',
+      );
+      if (triggered) {
+        this.getActiveHeroes()
+          .filter((hero) => this.isHonestHero(hero.def))
+          .slice(0, 2)
+          .forEach((hero) => this.sendHeroAway(hero, 3));
+      }
+    }
+    if (this.resources.corruption >= 100) {
+      this.triggerCrisis(
+        'corruptionScandal',
+        'CORRUPTION SCANDAL',
+        'The town accountant renamed corruption to strategic sparkle and got subpoenaed by common sense.',
+        { gold: -260, trust: -12, morale: -4, corruption: -18 },
+        'Run fair policies, complete trust quests, and let the ethics fog clear.',
+      );
+    }
+    if (this.resources.threat >= 100) {
+      this.triggerCrisis(
+        'threatInvasion',
+        'THREAT INVASION',
+        'Monsters noticed the economy was distracted.',
+        { gold: -320, morale: -10, trust: -6, threat: -35 },
+        'Post high threat-reduction quests and upgrade honest infrastructure.',
+      );
+      this.stats.threatEventsSurvived += 1;
+    }
+    if (this.resources.morale <= 0) {
+      this.triggerCrisis(
+        'moraleCrash',
+        'MORALE CRASH',
+        'The tavern ran out of chairs for complaints.',
+        { trust: -6, morale: 18, threat: 5 },
+        'Upgrade Tavern or Complaint Barrel and stop feeding heroes receipt-shaped trauma.',
+      );
+    }
+  }
+
+  checkAchievements() {
+    const checks = [
+      ['cycle25', this.day >= 25, 'Achievement: Day 25 reached. The economy calls this retention.'],
+      ['stage5', this.getStageIndex() >= 4, 'Achievement: Premium Kingdom Problem reached. The king wants a cut.'],
+      ['trust10', (this.stats.trustStreak || 0) >= 10, 'Achievement: Trust stayed above 50 for 10 cycles. Citizens briefly believed.'],
+      ['fairEconomy', this.day >= 12 && this.getPlaceLevel(this.buildingById.whale) < 3 && this.resources.threat < 40, 'Achievement: Fair-ish economy built. The whale sulked responsibly.'],
+      ['cursedEconomy', this.getPlaceLevel(this.buildingById.whale) >= 5 && (this.crises.corruptionScandal || 0) > 0, 'Achievement: Cursed economy survived scandal. Sparkles hid the paperwork.'],
+      ['townLegend', this.heroes?.some((hero) => hero.stats.status === 'Town Legend' || hero.stats.fame >= 95), 'Achievement: A Town Legend emerged. Historians requested a receipt.'],
+      ['surviveInvasion', (this.crises.threatInvasion || 0) > 0, 'Achievement: Threat invasion survived. The dungeon left feedback.'],
+      ['recoverTrust', (this.crises.trustCollapse || 0) > 0 && this.resources.trust >= 35, 'Achievement: Recovered from Trust Collapse. The brochure got thicker.'],
+    ];
+    for (const [id, condition, text] of checks) {
+      if (!condition || this.achievements.has(id)) continue;
+      this.achievements.add(id);
+      this.addTownLog(text, 'achievement');
+      this.addReportLine('achievements', text);
+      this.game.events.emit('gwg-event', text);
+    }
   }
 
   isHonestHero(def) {
@@ -356,6 +959,7 @@ export default class TownScene extends Phaser.Scene {
   getTownHint() {
     const R = this.resources;
     if (this.cycleRunning) return 'Town Problem: gates are open. Watch the consequences.';
+    if (this.pendingPolicy) return 'Policy choice pending: open the Day Report and pick a compromise.';
     if (R.threat >= 76) return 'Warning: Threat is rising. Post safer quests.';
     if (R.trust < 34) return 'Warning: Trust is low. Honest heroes may leave.';
     if (R.morale < 34) return 'Town Problem: heroes are losing morale.';
@@ -374,7 +978,7 @@ export default class TownScene extends Phaser.Scene {
       return info.cost && !info.maxed && R.gold >= info.cost;
     });
     if (canUpgrade) return 'Goal: Upgrade a building before opening gates.';
-    return 'Goal: Open Gates when your bad choices are ready.';
+    return `Goal: Open Gates toward ${TOWN_STAGES[Math.min(this.getStageIndex() + 1, TOWN_STAGES.length - 1)].name}.`;
   }
 
   publishTownHint() {
@@ -393,6 +997,8 @@ export default class TownScene extends Phaser.Scene {
       this.completedObjectives.add(objective.id);
       this.applyDeltas(objective.reward || {});
       this.game.events.emit('gwg-event', objective.event);
+      this.addTownLog(objective.event, 'objective');
+      this.addReportLine('achievements', objective.event);
     }
     this.checkingObjectives = false;
     this.publishObjectives();
@@ -411,22 +1017,47 @@ export default class TownScene extends Phaser.Scene {
     if (!this.unlockedLocations) return;
     const whaleLevel = this.buildingById?.whale ? this.getPlaceLevel(this.buildingById.whale) : 1;
     const guildLevel = this.buildingById?.guildhall ? this.getPlaceLevel(this.buildingById.guildhall) : 1;
+    const bitterCount = (this.heroes || []).filter((hero) => (
+      hero.stats?.active !== false
+      && (hero.stats?.evolutionStage || 0) > 0
+      && /Protest|Bitter|Angry|Balance/.test(hero.stats?.status || hero.def?.personality || '')
+    )).length;
     const rules = [
       ['complaint_barrel', this.day >= 3 || this.resources.trust < 60, 'Complaint Barrel unlocked. The town discovered official yelling.'],
       ['debt_collector_booth', this.resources.corruption > 40 || this.getMaxHeroDebt() > 500, 'Debt Collector Booth unlocked. The small print found a desk.'],
-      ['sponsored_quest_board', this.day >= 4 || guildLevel >= 2, 'Sponsored Quest Board unlocked. Danger now has tasteful branding.'],
-      ['balance_memorial', this.stats.whaleEvents > 0 || this.resources.corruption > 55, 'Balance Memorial unlocked. Veterans requested a place to sigh.'],
-      ['ethics_fountain', this.resources.corruption >= 55, 'Fountain of Questionable Ethics unlocked. Coins enter. Principles get wet.'],
+      ['sponsored_quest_board', guildLevel >= 2 || whaleLevel >= 2, 'Sponsored Quest Board unlocked. Danger now has tasteful branding.'],
+      ['balance_memorial', (this.stats.whaleTrustLosses || 0) > 0 || this.stats.whaleEvents > 0, 'Balance Memorial unlocked. Veterans requested a place to sigh.'],
       ['refund_denial_desk', whaleLevel >= 3, 'Refund Denial Desk unlocked. Hope now has business hours.'],
+      ['ethics_fountain', this.resources.corruption > 70, 'Fountain of Questionable Ethics unlocked. Coins enter. Principles get wet.'],
+      ['ethics_laundromat', this.resources.corruption >= 85 || (this.crises.corruptionScandal || 0) > 0, 'Ethics Laundromat unlocked. The town can now wash principles on warm.'],
+      ['patch_notes_shrine', this.day >= 10 || (this.stats.balanceComplaints || 0) > 0, 'Patch Notes Shrine unlocked. Working as intended now has candles.'],
+      ['hero_union_tent', bitterCount >= 2, 'Hero Union Tent unlocked. Fairness has organized.'],
+      ['premium_temple', whaleLevel >= 5, 'Premium Temple unlocked. The whale discovered architecture.'],
     ];
 
     for (const [id, condition, text] of rules) {
       if (!condition || this.unlockedLocations.has(id)) continue;
       this.unlockedLocations.add(id);
       this.updateDecorationLockState(id);
+      this.addTownLog(text, 'unlock');
+      this.addReportLine('unlocks', text);
       if (!silent) {
         const place = this.decorationById?.[id];
-        if (place) this.floatText(place.x, place.y - (place.h || 48) - 14, 'UNLOCKED', '#ffe08a');
+        if (place) {
+          this.floatText(place.x, place.y - (place.h || 48) - 14, 'UNLOCKED', '#ffe08a');
+          const sprite = this.placeSpriteById?.[id];
+          if (sprite) {
+            this.tweens.add({
+              targets: sprite,
+              scaleX: sprite.scaleX * 1.12,
+              scaleY: sprite.scaleY * 1.12,
+              alpha: 1,
+              duration: 260,
+              yoyo: true,
+              ease: 'Back.easeOut',
+            });
+          }
+        }
         this.game.events.emit('gwg-event', text);
       }
     }
@@ -748,7 +1379,9 @@ export default class TownScene extends Phaser.Scene {
       item.noticeId === quest.noticeId ? postedQuest : item
     ));
     this.stats.questsPosted += 1;
-    this.game.events.emit('gwg-event', `Posted ${quest.name} for ${quest.cost}g. Heroes will make it worse shortly.`);
+    const text = `Posted ${quest.name} for ${quest.cost}g. Heroes will make it worse shortly.`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'quest');
     this.floatText(QUEST_NOTICE_SPOTS[0].x + 80, QUEST_NOTICE_SPOTS[0].y - 8, 'QUEST POSTED', '#ffe08a');
     this.buildQuestNotices();
     this.checkObjectives();
@@ -965,6 +1598,13 @@ export default class TownScene extends Phaser.Scene {
       g.fillStyle(0xfff6dc);
       for (let i = 0; i < level + 2; i += 1) g.fillRect(-24 + i * 13, -h + 8 + (i % 2) * 10, 10, 12);
       if (level >= 3) addSparkles(4, 0x7fdc93);
+    } else {
+      g.fillStyle(place.eventPoolCategory?.includes('corruption') ? 0xc99aec : 0xf6c945, 0.72);
+      g.fillRect(-w / 2 - 8, -h + 18, 7, 28);
+      g.fillRect(w / 2 + 1, -h + 18, 7, 28);
+      g.fillStyle(0xfff6dc);
+      g.fillRect(-w / 2 - 14, -h + 8, w + 28, 12);
+      if (level >= 3) addSparkles(4 + level, place.eventPoolCategory?.includes('corruption') ? 0xc99aec : 0x7fdc93);
     }
 
     this.upgradeVisualsById[place.id] = container;
@@ -988,17 +1628,21 @@ export default class TownScene extends Phaser.Scene {
     const reasons = {
       complaint_barrel: 'Unlocks after Day 3 or when Trust drops below 60.',
       debt_collector_booth: 'Unlocks when Corruption exceeds 40 or somebody owes too much.',
-      sponsored_quest_board: 'Unlocks after Day 4 or Guild Hall level 2.',
-      balance_memorial: 'Unlocks after the first whale disaster or heavy corruption.',
-      ethics_fountain: 'Unlocks when Corruption reaches 55.',
+      sponsored_quest_board: 'Unlocks at Guild Hall level 2 or Golden Whale level 2.',
+      balance_memorial: 'Unlocks after whale success causes trust loss.',
+      ethics_fountain: 'Unlocks when Corruption exceeds 70.',
       refund_denial_desk: 'Unlocks when Golden Whale reaches level 3.',
+      ethics_laundromat: 'Unlocks near Corruption 85 or after a corruption scandal.',
+      patch_notes_shrine: 'Unlocks on Day 10 or after a major balance complaint.',
+      hero_union_tent: 'Unlocks when at least two heroes become protest or bitter types.',
+      premium_temple: 'Unlocks when Golden Whale reaches level 5.',
     };
     return reasons[id] || 'Locked until the town earns this problem.';
   }
 
   getPlaceKind(place) {
-    if (place.id === 'whale' || place.id === 'debt_collector_booth' || place.id === 'refund_denial_desk') return 'shady';
-    if (['training', 'blacksmith', 'guildhall', 'tavern', 'complaint_barrel', 'balance_memorial'].includes(place.id)) return 'fair';
+    if (['whale', 'debt_collector_booth', 'refund_denial_desk', 'ethics_fountain', 'ethics_laundromat', 'premium_temple'].includes(place.id)) return 'shady';
+    if (['training', 'blacksmith', 'guildhall', 'tavern', 'complaint_barrel', 'balance_memorial', 'patch_notes_shrine', 'hero_union_tent'].includes(place.id)) return 'fair';
     return '';
   }
 
@@ -1078,6 +1722,9 @@ export default class TownScene extends Phaser.Scene {
       const posted = quest.posted || this.postedQuests.some((item) => item.noticeId === quest.noticeId);
       const canPost = !this.cycleRunning && !posted && this.resources.gold >= quest.cost;
       const typeLabel = quest.type === 'danger' ? 'Risky' : quest.type.charAt(0).toUpperCase() + quest.type.slice(1);
+      const trustText = quest.trust > 0 ? `+${quest.trust}` : `${quest.trust || 0}`;
+      const corruptionText = quest.corruption > 0 ? `+${quest.corruption}` : `${quest.corruption || 0}`;
+      const failThreat = quest.difficulty * 3;
       return {
         title: quest.name,
         meta: typeLabel,
@@ -1085,6 +1732,8 @@ export default class TownScene extends Phaser.Scene {
         lines: [
           `Post: ${quest.cost}g -> Reward: ${quest.reward}g`,
           `Difficulty ${quest.difficulty} / Risk ${quest.risk} / Threat -${quest.threatReduction}`,
+          `Trust ${trustText} / Corruption ${corruptionText} / Fail Threat +${failThreat}`,
+          `Best for: ${(quest.preferred || []).slice(0, 2).join(', ') || 'whoever still answers mail'}`,
           quest.description,
           ...(posted ? [{ text: 'Posted: resolves next Open Gates cycle.', className: 'gwg-good' }] : []),
           ...(!posted && !canPost ? [{ text: 'Not enough gold. The guild recommends suspicious revenue.', className: 'gwg-bad' }] : []),
@@ -1183,6 +1832,37 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.emit('gwg-ledger-open', this.getLedgerPayload());
   }
 
+  getTownLogPayload() {
+    const rows = [...(this.townLog || [])].slice(-60).reverse().map((entry) => ({
+      title: `Day ${entry.day}`,
+      meta: entry.category || 'event',
+      kind: ['policy', 'stage', 'achievement'].includes(entry.category) ? 'fair' : (entry.category === 'crisis' ? 'shady' : ''),
+      lines: [entry.text],
+    }));
+    return {
+      title: 'Town Log',
+      subtitle: `${this.townLog?.length || 0} important events remembered badly`,
+      sections: [{
+        title: 'History',
+        lines: [
+          'Stage changes, upgrades, quest results, policies, crises, and hero spirals are kept here.',
+          'The log is local-only and capped so the browser does not become a historian.',
+        ],
+      }],
+      rows: rows.length ? rows : [{
+        title: 'Day 1',
+        meta: 'quiet',
+        lines: ['No important disasters logged yet. Suspicious.'],
+      }],
+    };
+  }
+
+  openTownLog() {
+    this.activeInspector = { type: 'townlog' };
+    this.clearSelection(false);
+    this.game.events.emit('gwg-ledger-open', this.getTownLogPayload());
+  }
+
   openQuestsFromUi() {
     this.showQuestInspector();
   }
@@ -1243,6 +1923,8 @@ export default class TownScene extends Phaser.Scene {
     if (!this.activeInspector) return;
     if (this.activeInspector.type === 'ledger') this.openTownLedger();
     else if (this.activeInspector.type === 'quests') this.showQuestInspector();
+    else if (this.activeInspector.type === 'report') this.showCycleReport();
+    else if (this.activeInspector.type === 'townlog') this.openTownLog();
     else if (this.activeInspector.type === 'place') {
       const place = this.placeById?.[this.activeInspector.id];
       if (place) this.showPlaceInspector(place);
@@ -1465,6 +2147,18 @@ export default class TownScene extends Phaser.Scene {
     return `Thought: "${Phaser.Utils.Array.GetRandom(lines) || 'The economy is making eye contact.'}"`;
   }
 
+  getHeroRelationshipLine(hero) {
+    const nameFor = (id) => this.heroes?.find((item) => item.def.id === id)?.def.name || null;
+    const parts = [];
+    const rival = nameFor(hero.stats.rivalId);
+    const admired = nameFor(hero.stats.admiredId);
+    const target = nameFor(hero.stats.resentmentTargetId);
+    if (rival) parts.push(`Rival: ${rival}`);
+    if (admired) parts.push(`Admires: ${admired}`);
+    if (target && target !== rival) parts.push(`Resentment target: ${target}`);
+    return parts.length ? parts.join(' / ') : 'Relationships: no named grudge yet.';
+  }
+
   getHeroActionText(hero) {
     if (hero.currentAction) return hero.currentAction;
     if (hero.state === 'away') return `Away until Day ${hero.awayUntil}`;
@@ -1504,6 +2198,7 @@ export default class TownScene extends Phaser.Scene {
             `Resentment: ${hero.stats.resentment || 0}`,
             `Whale Access: ${whaleAccess}`,
             `Cycles Active: ${hero.stats.cyclesActive || 0}`,
+            this.getHeroRelationshipLine(hero),
           ],
         },
         {
@@ -1652,7 +2347,10 @@ export default class TownScene extends Phaser.Scene {
       ? info.def.event(place.name, nextLevel)
       : `${place.name} upgraded. The town pretends this was wise.`;
     this.game.events.emit('gwg-event', `${eventText} Level ${nextLevel}.`);
+    this.addTownLog(`${eventText} Level ${nextLevel}.`, 'upgrade');
+    this.addReportLine('stage', `${place.name} reached Level ${nextLevel}.`);
     this.checkUnlocks();
+    this.checkStageProgression();
     this.publishTownHint();
     this.saveGame(false);
     this.showTooltip(place);
@@ -1699,6 +2397,9 @@ export default class TownScene extends Phaser.Scene {
           daysInTown: 1,
           cyclesActive: 0,
           active: true,
+          rivalId: null,
+          admiredId: null,
+          resentmentTargetId: null,
           ...def.stats,
           ...savedStats,
           originalPersonality: savedStats.originalPersonality || def.personality,
@@ -1707,6 +2408,9 @@ export default class TownScene extends Phaser.Scene {
           currentMood: savedStats.currentMood || 'Wary',
           history: Array.isArray(savedStats.history) ? savedStats.history.slice(-6) : [`Arrived as ${def.personality}.`],
           active: savedStats.active !== false,
+          rivalId: savedStats.rivalId || null,
+          admiredId: savedStats.admiredId || null,
+          resentmentTargetId: savedStats.resentmentTargetId || null,
         },
         at: spot.id, destination: null, state: 'idle',
         currentAction: `Idle near ${this.getPlaceName(spot.id)}`,
@@ -1829,7 +2533,10 @@ export default class TownScene extends Phaser.Scene {
       'I have a new title and concerns.',
       'The economy wrote character development.',
     ]), true);
-    this.game.events.emit('gwg-event', `${hero.def.name} became ${status}. ${reason || 'The town updated the paperwork.'}`);
+    const text = `${hero.def.name} became ${status}. ${reason || 'The town updated the paperwork.'}`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'npc');
+    this.addReportLine('npc', text);
     if (this.heroTooltipTarget === hero) this.showHeroInspector(hero);
     return true;
   }
@@ -1845,7 +2552,10 @@ export default class TownScene extends Phaser.Scene {
     this.addHeroHistory(hero, `Left town: ${reason}`);
     this.refreshHeroStatusMarker(hero);
     this.floatText(hero.container.x, hero.container.y - 40, 'LEFT TOWN', '#f0938f');
-    this.game.events.emit('gwg-event', `${hero.def.name} left town. ${reason}`);
+    const text = `${hero.def.name} left town. ${reason}`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'npc');
+    this.addReportLine('npc', text);
   }
 
   progressHeroStories() {
@@ -1883,6 +2593,7 @@ export default class TownScene extends Phaser.Scene {
       this.refreshHeroStatusMarker(hero);
     }
     this.maybeInviteArrival();
+    this.buildRelationship(null, 'mentor');
     if (this.heroTooltipTarget) this.showHeroInspector(this.heroTooltipTarget);
   }
 
@@ -2353,7 +3064,10 @@ export default class TownScene extends Phaser.Scene {
       const d = { gold: -Math.ceil(quest.cost / 2), threat: quest.difficulty * 2, morale: -2 };
       this.applyDeltas(d);
       this.floatDeltas(place.x, place.y - (place.h || 58) - 10, d);
-      this.game.events.emit('gwg-event', `${quest.name} expired. Nobody volunteered, which is technically feedback.`);
+      const text = `${quest.name} expired. Nobody volunteered, which is technically feedback.`;
+      this.game.events.emit('gwg-event', text);
+      this.addTownLog(text, 'quest');
+      this.addReportLine('quests', text);
       return;
     }
 
@@ -2385,7 +3099,9 @@ export default class TownScene extends Phaser.Scene {
       hero.stats.fame = Phaser.Math.Clamp((hero.stats.fame || 0) + quest.reward / 20, 0, 100);
       this.addHeroHistory(hero, `Whale-cleared ${quest.name}.`);
       this.stats.whaleEvents += 1;
+      this.stats.whaleTrustLosses += Math.abs(deltas.trust || 0);
       this.burstCoins(44);
+      this.buildRelationship(hero, 'whaleEvent');
     } else if (success) {
       const honest = this.isHonestHero(hero.def);
       deltas = {
@@ -2425,6 +3141,8 @@ export default class TownScene extends Phaser.Scene {
     this.applyDeltas(deltas);
     this.floatDeltas(place.x, place.y - (place.h || 58) - 10, deltas);
     this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'quest');
+    this.addReportLine('quests', text);
     this.updateHeroMood(hero);
     this.evaluateHeroEvolution(hero);
     this.refreshHeroStatusMarker(hero);
@@ -2556,6 +3274,7 @@ export default class TownScene extends Phaser.Scene {
 
     this.day += 1;
     this.registry.set('day', this.day);
+    this.beginCycleReport();
     this.returnAwayHeroes();
 
     const steps = [];
@@ -2573,7 +3292,10 @@ export default class TownScene extends Phaser.Scene {
         const d = { gold: -35, morale: -2, threat: 7 };
         this.applyDeltas(d);
         this.floatDeltas(this.buildingById.guildhall.x, this.buildingById.guildhall.y - this.buildingById.guildhall.h - 10, d);
-        this.game.events.emit('gwg-event', 'No quest bounties were posted. Heroes improvise, which is rarely cheaper.');
+        const text = 'No quest bounties were posted. Heroes improvise, which is rarely cheaper.';
+        this.game.events.emit('gwg-event', text);
+        this.addReportLine('quests', text);
+        this.addTownLog(text, 'quest');
       });
     }
 
@@ -2594,6 +3316,7 @@ export default class TownScene extends Phaser.Scene {
       this.floatDeltas(whale.x, whale.y - whale.h - 10, d);
       this.game.events.emit('gwg-event',
         `Golden Whale Milking Station earned ${income} gold. Trust ${d.trust}, Corruption +${d.corruption}.`);
+      if (d.trust < 0) this.stats.whaleTrustLosses += Math.abs(d.trust);
       this.triggerWhaleReaction();
       this.maybeBlockPoorHero();
     });
@@ -2632,12 +3355,15 @@ export default class TownScene extends Phaser.Scene {
         if (ev.building === 'training') hero.stats.power += this.getPlaceLevel(this.buildingById.training);
         if (ev.d.gold > 0) hero.stats.spent += ev.d.gold;
         if (ev.whale) {
+          if (ev.d.trust < 0) this.stats.whaleTrustLosses += Math.abs(ev.d.trust);
           this.burstCoins(34);
           this.triggerWhaleReaction();
           this.checkUnlocks();
           for (const witness of this.getActiveHeroes().filter((item) => this.isHonestHero(item.def))) {
             witness.stats.resentment = Phaser.Math.Clamp((witness.stats.resentment || 0) + 4, 0, 100);
+            witness.stats.resentmentTargetId = hero.def.id;
           }
+          this.buildRelationship(hero, 'whaleEvent');
         }
 
         this.walkTo(hero, spot, () => {
@@ -2667,6 +3393,7 @@ export default class TownScene extends Phaser.Scene {
       if (passive.gold || passive.morale) {
         this.game.events.emit('gwg-event', `Town upgrades paid off: +${passive.gold}g, +${passive.morale} Morale.`);
       }
+      this.checkCrises();
       if (R.trust < 30) {
         const barrel = this.decorationById.complaint_barrel;
         const d = { trust: -1, morale: -Math.max(1, 4 - complaintLevel) };
@@ -2713,6 +3440,7 @@ export default class TownScene extends Phaser.Scene {
       }
       this.stats.trustStreak = this.resources.trust > 50 ? this.stats.trustStreak + 1 : 0;
       this.checkObjectives();
+      for (const warning of this.getDangerWarnings()) this.addReportLine('warnings', warning);
     });
 
     steps.push(() => {
@@ -2721,9 +3449,14 @@ export default class TownScene extends Phaser.Scene {
       this.refreshQuestNotices();
       this.checkObjectives();
       this.checkUnlocks();
+      this.checkCrises();
+      this.checkStageProgression();
+      this.checkAchievements();
+      this.maybeOfferPolicy();
       this.publishTownHint();
       this.refreshActivePanel();
       this.saveGame(false);
+      this.showCycleReport();
       this.game.events.emit('gwg-cycle-done');
     });
 

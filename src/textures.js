@@ -361,6 +361,68 @@ function makeProps(scene) {
   g.fillRect(46, 28, 12, 5);
   g.generateTexture('refund_denial_desk', 74, 54);
   g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x39425c);
+  g.fillRect(7, 18, 60, 30);
+  g.fillStyle(0x8fc6ee);
+  g.fillCircle(28, 33, 10);
+  g.fillCircle(47, 33, 10);
+  g.fillStyle(0xfff6dc);
+  g.fillRect(15, 5, 44, 15);
+  g.lineStyle(2, 0x141a24);
+  g.strokeRect(7, 18, 60, 30);
+  g.strokeRect(15, 5, 44, 15);
+  g.fillStyle(0xf6c945);
+  g.fillRect(22, 11, 30, 3);
+  g.generateTexture('ethics_laundromat', 74, 56);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0xd99a1f);
+  g.fillRect(14, 28, 62, 38);
+  g.fillStyle(0xf6c945);
+  g.fillTriangle(4, 30, 86, 30, 45, 4);
+  g.fillStyle(0xfff1a8);
+  g.fillRect(34, 42, 22, 24);
+  g.fillStyle(0xc0392b);
+  g.fillRect(12, 24, 66, 5);
+  g.lineStyle(2, 0x6b4a2b);
+  g.strokeRect(14, 28, 62, 38);
+  g.strokeTriangle(4, 30, 86, 30, 45, 4);
+  g.generateTexture('premium_temple', 90, 74);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x6f747d);
+  g.fillRect(18, 18, 22, 28);
+  g.fillStyle(0x8a8f98);
+  g.fillRect(13, 14, 32, 6);
+  g.fillRect(11, 45, 36, 5);
+  g.fillStyle(0xfff6dc);
+  g.fillRect(20, 24, 18, 3);
+  g.fillRect(20, 31, 14, 3);
+  g.fillStyle(0xf6c945);
+  g.fillRect(26, 5, 5, 10);
+  g.fillStyle(0xfff1a8);
+  g.fillCircle(28, 4, 4);
+  g.generateTexture('patch_notes_shrine', 58, 58);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0xc0392b);
+  g.fillTriangle(3, 24, 85, 24, 44, 4);
+  g.fillStyle(0xa93226);
+  g.fillRect(8, 24, 72, 26);
+  g.fillStyle(0xf2ead8);
+  g.fillRect(24, 29, 40, 13);
+  g.fillStyle(0x4a2f1b);
+  g.fillRect(5, 50, 78, 5);
+  g.lineStyle(2, 0x5a1e1e);
+  g.strokeTriangle(3, 24, 85, 24, 44, 4);
+  g.strokeRect(24, 29, 40, 13);
+  g.generateTexture('hero_union_tent', 88, 56);
+  g.destroy();
 }
 
 // --- icon placeholders -------------------------------------------------------

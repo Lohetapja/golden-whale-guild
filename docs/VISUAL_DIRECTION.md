@@ -36,6 +36,11 @@ Current prototype priorities:
   detailed stats do not clutter the roads
 - Town Ledger is an in-world guild planning board, not an admin dashboard:
   compact rows, upgrade trade-offs, and immediate map feedback
+- Day Reports, policy choices, and Town Log are compact guild paperwork
+  overlays. They should explain consequences and history without becoming
+  analytics screens, tabs, or full management dashboards
+- Town stages, crises, and unlocks should be visible through small map pulses,
+  labels, signs, glow, and report lines instead of large modal spectacle
 - NPC status changes should remain readable with tiny placeholder markers
   above sprites until real character/status assets exist
 

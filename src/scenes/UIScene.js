@@ -37,6 +37,7 @@ export default class UIScene extends Phaser.Scene {
     this.registry.events.on('changedata-resources', (_p, value) => this.updateResources(value));
     this.registry.events.on('changedata-objectives', (_p, value) => this.updateObjectives(value));
     this.registry.events.on('changedata-townHint', (_p, value) => this.updateTownHint(value));
+    this.registry.events.on('changedata-townStage', (_p, value) => this.updateTownStage(value));
     this.registry.events.on('changedata-day', (_p, value) => {
       this.dayText.setText(`Day ${value}`);
       this.flashDayBanner(value);
@@ -59,6 +60,7 @@ export default class UIScene extends Phaser.Scene {
     this.updateResources(this.registry.get('resources'));
     this.updateObjectives(this.registry.get('objectives'));
     this.updateTownHint(this.registry.get('townHint'));
+    this.updateTownStage(this.registry.get('townStage'));
     this.dayText.setText(`Day ${this.registry.get('day')}`);
   }
 
@@ -93,6 +95,17 @@ export default class UIScene extends Phaser.Scene {
       stroke: '#0c1118',
       strokeThickness: 3,
     }).setDepth(6000);
+
+    this.stageText = this.add.text(WIDTH - 16, 72, '', {
+      fontFamily: FONT,
+      fontSize: '12px',
+      fontStyle: 'bold',
+      color: '#f6c945',
+      stroke: '#0c1118',
+      strokeThickness: 3,
+      align: 'right',
+      wordWrap: { width: 330 },
+    }).setOrigin(1, 0).setDepth(6000);
   }
 
   updateResources(res) {
@@ -161,6 +174,11 @@ export default class UIScene extends Phaser.Scene {
 
   updateTownHint(text) {
     this.townHintText.setText(text || '');
+  }
+
+  updateTownStage(text) {
+    if (!this.stageText) return;
+    this.stageText.setText(text ? `Stage: ${text}` : '');
   }
 
   buildHelperText() {
@@ -284,6 +302,7 @@ export default class UIScene extends Phaser.Scene {
 
   buildTownLedgerButton() {
     this.makeUtilityButton(WIDTH - 374, HEIGHT - 62, 'Town Ledger', 'gwg-open-ledger', 122);
+    this.makeUtilityButton(WIDTH - 508, HEIGHT - 62, 'Town Log', 'gwg-open-town-log', 100);
   }
 
   makeUtilityButton(x, y, label, eventName, width = 64) {
