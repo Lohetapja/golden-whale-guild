@@ -16,6 +16,12 @@ npm run dev
 
 Open the printed local URL.
 
+On Windows PowerShell, if script execution policy blocks `npm`, use:
+
+```sh
+npm.cmd run dev
+```
+
 - Click buildings for tooltips.
 - Click the compact **Upgrade** action in a tooltip to spend fictional gold on
   a building improvement.
@@ -30,6 +36,12 @@ npm run build
 ```
 
 Outputs a static site to `dist/`.
+
+Windows PowerShell fallback:
+
+```sh
+npm.cmd run build
+```
 
 ## GitHub Pages
 

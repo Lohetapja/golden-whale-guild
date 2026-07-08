@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import BootScene from './scenes/BootScene.js';
 import TownScene from './scenes/TownScene.js';
 import UIScene from './scenes/UIScene.js';
 
@@ -14,7 +15,7 @@ const game = new Phaser.Game({
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [TownScene, UIScene],
+  scene: [BootScene, TownScene, UIScene],
 });
 
 // dev convenience: poke at the game from the browser console

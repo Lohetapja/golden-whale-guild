@@ -34,8 +34,9 @@ All important game objects resolve their texture at runtime through
 
 1. Drop a PNG at the manifest `path` under `public/assets/**`.
 2. Reload. The game uses it automatically. No code changes.
-3. If the file is missing, the generated placeholder is used and a console
-   line lists which keys are still fake: `[GWG assets] placeholder art in use for: …`
+3. If the file is missing, the generated placeholder is used. The boot scene
+   skips missing optional files before Phaser's loader runs, then a console info
+   line lists which generated placeholders are active.
 
 Folder layout (all under `public/assets/`):
 
@@ -44,6 +45,7 @@ Folder layout (all under `public/assets/`):
 | `tiles/`      | ground/terrain tilesets (grass, paths, water)     |
 | `characters/` | hero sprites — later spritesheets with walk/idle  |
 | `buildings/`  | one sprite per building, ground-anchored          |
+| `decor/`      | special locations, props, signs, fences, lamps    |
 | `ui/`         | panel, button, frame nine-patches                 |
 | `icons/`      | resource + misc icons (coin, whale, …)            |
 | `particles/`  | particle textures (coin sparkle, glow, dust)      |

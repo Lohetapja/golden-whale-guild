@@ -1,20 +1,20 @@
-// Asset pipeline: try to load every slot in the manifest; anything missing
-// falls back to generated placeholder art (src/textures.js).
+// Asset pipeline: the boot scene probes every optional manifest slot first.
+// Only files that actually exist are queued in Phaser's loader; anything
+// missing falls back to generated placeholder art (src/textures.js).
 //
 // FALLBACK RULES
 //   1. If the file at manifest `path` loaded, its texture key wins.
 //   2. Heroes: if the personality sheet is missing but hero_default exists,
 //      hero_default is used.
 //   3. Otherwise the generated `ph-*` placeholder (temporary debug art) is used.
-import { ASSET_MANIFEST } from './data/assetManifest.js';
 import { BUILDINGS } from './data/buildings.js';
 import { HEROES } from './data/heroes.js';
 import { makeAmbientTextures, makeIconPlaceholders } from './textures.js';
 
-// call from scene.preload(): queue every manifest slot; missing files 404
-// harmlessly and are handled in ensureFallbacks()
+// call from scene.preload(): queue the manifest slots confirmed by BootScene.
 export function loadAssets(scene) {
-  for (const entry of ASSET_MANIFEST) {
+  const availableAssets = scene.registry.get('availableAssets') || [];
+  for (const entry of availableAssets) {
     if (entry.type === 'spritesheet') {
       scene.load.spritesheet(entry.key, entry.path, entry.frameConfig);
     } else {

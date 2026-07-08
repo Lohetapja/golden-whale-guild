@@ -25,6 +25,11 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 const PLAZA = { x: 610, y: 410 };
 const STEP_MS = 1600; // pacing of the day-cycle playback
+const MAX_IDLE_BUBBLES = 2;
+const MAX_IMPORTANT_BUBBLES = 4;
+const BUBBLE_MIN_SPACING = 150;
+const MAX_FLOATING_TEXTS = 12;
+const COIN_BURST_COOLDOWN_MS = 450;
 
 const RES_COLORS = {
   gold: '#f6c945',
@@ -59,6 +64,8 @@ export default class TownScene extends Phaser.Scene {
     this.placeById = { ...this.buildingById, ...this.decorationById };
     this.activeBubbles = 0;
     this.importantChatterUntil = 0;
+    this.floaters = [];
+    this.lastCoinBurstAt = -COIN_BURST_COOLDOWN_MS;
     this.buildTooltip();
     this.buildHeroes();
     this.startIdleChatter();
@@ -262,7 +269,8 @@ export default class TownScene extends Phaser.Scene {
       alpha: { start: 1, end: 0 },
       scale: { min: 0.8, max: 1.35 },
       lifespan: 1900,
-      frequency: 140,
+      frequency: 170,
+      maxParticles: 34,
     }).setDepth(whale.y + 2);
 
     // burst emitter fired when the station cashes in during a cycle
@@ -274,6 +282,7 @@ export default class TownScene extends Phaser.Scene {
       scale: { start: 1.45, end: 0.45 },
       alpha: { start: 1, end: 0 },
       emitting: false,
+      maxParticles: 80,
     }).setDepth(whale.y + 2);
 
     // premium entrance: red carpet + velvet rope in front of the door
@@ -287,6 +296,13 @@ export default class TownScene extends Phaser.Scene {
       stroke: '#141a24',
       strokeThickness: 3,
     }).setOrigin(0.5).setDepth(whale.y + 40);
+  }
+
+  burstCoins(count = 42) {
+    if (!this.coinBurst) return;
+    if (this.time.now - this.lastCoinBurstAt < COIN_BURST_COOLDOWN_MS) return;
+    this.lastCoinBurstAt = this.time.now;
+    this.coinBurst.explode(Math.min(count, 64));
   }
 
   // --- tooltip ------------------------------------------------------------
@@ -420,8 +436,14 @@ export default class TownScene extends Phaser.Scene {
       + this.tooltipUpgrade.height
       + buttonH
       + pad;
-    const x = Phaser.Math.Clamp(b.x - tw / 2, 8, WIDTH - tw - 8);
-    const y = Phaser.Math.Clamp(b.y - (b.h || 60) - th - 10, 48, HEIGHT - th - 52);
+    const maxX = Math.max(8, WIDTH - tw - 8);
+    const maxY = Math.max(48, HEIGHT - th - 52);
+    const x = Phaser.Math.Clamp(b.x - tw / 2, 8, maxX);
+    const preferredY = b.y - (b.h || 60) - th - 10;
+    const belowY = b.y + 24;
+    const y = preferredY < 48
+      ? Phaser.Math.Clamp(belowY, 48, maxY)
+      : Phaser.Math.Clamp(preferredY, 48, maxY);
     this.tooltipBounds = { x, y, w: tw, h: th };
 
     if (this.tooltipPanel) {
@@ -509,7 +531,7 @@ export default class TownScene extends Phaser.Scene {
     }
 
     if (place.id === 'whale') {
-      this.coinBurst.explode(64);
+      this.burstCoins(64);
       this.triggerWhaleReaction();
     }
 
@@ -600,6 +622,10 @@ export default class TownScene extends Phaser.Scene {
   }
 
   walkTo(hero, spot, onArrive) {
+    if (!hero || !spot) {
+      if (hero) this.scheduleAmbient(hero, Phaser.Math.Between(1200, 3000));
+      return;
+    }
     this.interruptHero(hero);
     hero.state = 'walking';
     hero.destination = spot.id;
@@ -682,17 +708,57 @@ export default class TownScene extends Phaser.Scene {
 
   // --- speech bubbles & floating text --------------------------------------
 
+  hasNearbyBubble(hero, minDistance = BUBBLE_MIN_SPACING) {
+    return this.heroes.some((other) => (
+      other !== hero
+      && other.bubble
+      && Phaser.Math.Distance.Between(
+        other.container.x,
+        other.container.y,
+        hero.container.x,
+        hero.container.y,
+      ) < minDistance
+    ));
+  }
+
+  clearHeroBubble(hero, fade = false) {
+    if (!hero?.bubble) return;
+    const bubble = hero.bubble;
+    hero.bubble = null;
+    if (hero.bubbleTimer) {
+      hero.bubbleTimer.remove();
+      hero.bubbleTimer = null;
+    }
+    this.activeBubbles = Math.max(0, this.activeBubbles - 1);
+
+    if (fade && bubble.active) {
+      this.tweens.add({
+        targets: bubble,
+        alpha: 0,
+        duration: 220,
+        onComplete: () => bubble.destroy(),
+      });
+    } else {
+      bubble.destroy();
+    }
+  }
+
+  clearOldestBubble() {
+    const bubbled = this.heroes
+      .filter((h) => h.bubble)
+      .sort((a, b) => (a.bubbleStartedAt || 0) - (b.bubbleStartedAt || 0));
+    if (bubbled.length > 0) this.clearHeroBubble(bubbled[0]);
+  }
+
   say(hero, text, important = false) {
     if (!hero || !text) return;
-    if (!important && this.activeBubbles >= 3) return;
+    const maxBubbles = important ? MAX_IMPORTANT_BUBBLES : MAX_IDLE_BUBBLES;
+    if (!important && this.activeBubbles >= maxBubbles) return;
+    if (!important && this.hasNearbyBubble(hero)) return;
+    if (important && this.activeBubbles >= maxBubbles) this.clearOldestBubble();
     if (important) this.importantChatterUntil = this.time.now + 2800;
 
-    if (hero.bubble) {
-      hero.bubble.destroy();
-      hero.bubble = null;
-      this.activeBubbles = Math.max(0, this.activeBubbles - 1);
-    }
-    if (hero.bubbleTimer) { hero.bubbleTimer.remove(); hero.bubbleTimer = null; }
+    this.clearHeroBubble(hero);
     hero.container.setAlpha(1);
 
     const txt = this.add.text(0, -4, text, {
@@ -713,27 +779,39 @@ export default class TownScene extends Phaser.Scene {
     g.lineStyle(2, 0x1d2430, 0.65);
     g.strokeRoundedRect(-bw / 2, -bh - 2, bw, bh, 5);
 
-    const edgeOffset = hero.container.x < 130 ? 54 : hero.container.x > WIDTH - 130 ? -54 : 0;
-    const bubble = this.add.container(edgeOffset, -64, [g, txt]).setScale(0);
+    const left = hero.container.x - bw / 2;
+    const right = hero.container.x + bw / 2;
+    let edgeOffset = 0;
+    if (left < 12) edgeOffset = 12 - left;
+    if (right > WIDTH - 12) edgeOffset = WIDTH - 12 - right;
+
+    let localY = -64;
+    const top = hero.container.y + localY - bh - 2;
+    if (top < 52) localY += 52 - top;
+
+    const bubble = this.add.container(edgeOffset, localY, [g, txt]).setScale(0);
     hero.container.add(bubble);
     hero.bubble = bubble;
+    hero.bubbleStartedAt = this.time.now;
     this.activeBubbles += 1;
 
     this.tweens.add({ targets: bubble, scale: 1, duration: 180, ease: 'Back.easeOut' });
-    hero.bubbleTimer = this.time.delayedCall(important ? 3400 : 2800, () => {
-      this.tweens.add({
-        targets: bubble, alpha: 0, duration: 220,
-        onComplete: () => {
-          if (hero.bubble === bubble) hero.bubble = null;
-          this.activeBubbles = Math.max(0, this.activeBubbles - 1);
-          bubble.destroy();
-        },
-      });
-    });
+    hero.bubbleTimer = this.time.delayedCall(
+      important ? 3400 : 2600,
+      () => this.clearHeroBubble(hero, true),
+    );
   }
 
   floatText(x, y, str, color) {
-    const t = this.add.text(x, y, str, {
+    this.floaters = this.floaters.filter((item) => item.active);
+    while (this.floaters.length >= MAX_FLOATING_TEXTS) {
+      const oldest = this.floaters.shift();
+      if (oldest?.active) oldest.destroy();
+    }
+
+    const safeX = Phaser.Math.Clamp(x, 58, WIDTH - 58);
+    const safeY = Phaser.Math.Clamp(y, 60, HEIGHT - 72);
+    const t = this.add.text(safeX, safeY, str, {
       fontFamily: '"Courier New", monospace',
       fontSize: '14px',
       fontStyle: 'bold',
@@ -741,10 +819,14 @@ export default class TownScene extends Phaser.Scene {
       stroke: '#141a24',
       strokeThickness: 4,
     }).setOrigin(0.5).setDepth(4000);
+    this.floaters.push(t);
     this.tweens.add({
-      targets: t, y: y - 38, alpha: 0,
+      targets: t, y: safeY - 38, alpha: 0,
       duration: 1500, ease: 'Cubic.easeOut',
-      onComplete: () => t.destroy(),
+      onComplete: () => {
+        this.floaters = this.floaters.filter((item) => item !== t);
+        t.destroy();
+      },
     });
   }
 
@@ -769,7 +851,7 @@ export default class TownScene extends Phaser.Scene {
       if (
         candidates.length > 0
         && !this.cycleRunning
-        && this.activeBubbles < 3
+        && this.activeBubbles < MAX_IDLE_BUBBLES
         && this.time.now > this.importantChatterUntil
       ) {
         const hero = Phaser.Utils.Array.GetRandom(candidates);
@@ -777,7 +859,7 @@ export default class TownScene extends Phaser.Scene {
           ...(IDLE_QUIPS[hero.def.personality] || []),
           ...(hero.def.idleLines || []),
         ];
-        this.say(hero, Phaser.Utils.Array.GetRandom(lines));
+        if (lines.length > 0) this.say(hero, Phaser.Utils.Array.GetRandom(lines));
       }
       this.time.delayedCall(Phaser.Math.Between(4200, 8200), chatter);
     };
@@ -801,6 +883,7 @@ export default class TownScene extends Phaser.Scene {
     }
     R.gold = Math.max(0, R.gold);
     this.registry.set('resources', { ...R });
+    if (this.tooltipTarget) this.showTooltip(this.tooltipTarget);
   }
 
   triggerWhaleReaction() {
@@ -858,7 +941,7 @@ export default class TownScene extends Phaser.Scene {
         corruption: Phaser.Math.Between(3 + whaleLevel, 7 + whaleLevel),
       };
       this.applyDeltas(d);
-      this.coinBurst.explode(42);
+      this.burstCoins(42);
       this.floatDeltas(whale.x, whale.y - whale.h - 10, d);
       this.game.events.emit('gwg-event',
         `Golden Whale Milking Station earned ${income} gold. Trust ${d.trust}, Corruption +${d.corruption}.`);

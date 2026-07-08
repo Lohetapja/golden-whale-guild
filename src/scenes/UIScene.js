@@ -5,6 +5,8 @@ import Phaser from 'phaser';
 const WIDTH = 1280;
 const HEIGHT = 720;
 const FONT = '"Courier New", monospace';
+const MAX_TICKER_QUEUE = 6;
+const MAX_TICKER_CHARS = 150;
 
 // gold icon resolves through the icon_coin asset slot at create time;
 // the rest are placeholder HUD icons with no asset slot yet
@@ -97,14 +99,24 @@ export default class UIScene extends Phaser.Scene {
       wordWrap: { width: WIDTH - 205 },
       lineSpacing: 3,
     }).setOrigin(0, 0.5);
+    this.tickerText.setMaxLines(2);
 
     this.eventQueue = [];
     this.tickerBusy = false;
   }
 
   queueEvent(text) {
-    this.eventQueue.push(text);
+    const cleanText = this.formatTickerText(text);
+    if (!cleanText) return;
+    while (this.eventQueue.length >= MAX_TICKER_QUEUE) this.eventQueue.shift();
+    this.eventQueue.push(cleanText);
     if (!this.tickerBusy) this.showNextEvent();
+  }
+
+  formatTickerText(text) {
+    const cleanText = String(text || '').replace(/\s+/g, ' ').trim();
+    if (cleanText.length <= MAX_TICKER_CHARS) return cleanText;
+    return `${cleanText.slice(0, MAX_TICKER_CHARS - 3)}...`;
   }
 
   showNextEvent() {
