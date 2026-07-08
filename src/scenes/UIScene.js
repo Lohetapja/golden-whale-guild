@@ -11,11 +11,36 @@ const MAX_TICKER_CHARS = 150;
 // gold icon resolves through the icon_coin asset slot at create time;
 // the rest are placeholder HUD icons with no asset slot yet
 const RESOURCE_META = [
-  { key: 'gold', label: 'Gold', icon: 'ph-icon_coin', asset: 'icon_coin', color: '#f6c945' },
-  { key: 'trust', label: 'Trust', icon: 'icon-trust', color: '#7fdc93' },
-  { key: 'corruption', label: 'Corruption', icon: 'icon-corruption', color: '#c99aec' },
-  { key: 'morale', label: 'Morale', icon: 'icon-morale', color: '#f0938f' },
-  { key: 'threat', label: 'Threat', icon: 'icon-threat', color: '#d4dae2' },
+  {
+    key: 'gold', label: 'Gold', icon: 'ph-icon_coin', asset: 'icon_coin', color: '#f6c945',
+    help: 'Used for upgrades, quest bounties, and bad ideas.',
+    danger: (v) => (v < 120 ? 'warning' : 'safe'),
+    dangerText: (v) => (v < 120 ? 'Warning: low gold limits upgrades and quests.' : 'Safe: enough gold to make at least one suspicious decision.'),
+  },
+  {
+    key: 'trust', label: 'Trust', icon: 'icon-trust', color: '#7fdc93',
+    help: 'Trust keeps honest heroes from leaving. Below 30, expect protests and dramatic exits.',
+    danger: (v) => (v < 20 ? 'critical' : v < 30 ? 'warning' : 'safe'),
+    dangerText: (v) => (v < 20 ? 'Critical: trust collapse is close.' : v < 30 ? 'Warning: honest heroes are losing faith.' : 'Safe: citizens can still pretend the brochure is real.'),
+  },
+  {
+    key: 'corruption', label: 'Corruption', icon: 'icon-corruption', color: '#c99aec',
+    help: 'Corruption increases shady profits and premium nonsense. Above 70, consequences begin filing paperwork.',
+    danger: (v) => (v > 86 ? 'critical' : v > 70 ? 'warning' : 'safe'),
+    dangerText: (v) => (v > 86 ? 'Critical: scandal territory, now with sparkle effects.' : v > 70 ? 'Warning: shady events become more common.' : 'Safe-ish: the paperwork is only lightly cursed.'),
+  },
+  {
+    key: 'morale', label: 'Morale', icon: 'icon-morale', color: '#f0938f',
+    help: 'Morale affects quest success and whether heroes keep trying instead of becoming tavern furniture.',
+    danger: (v) => (v < 20 ? 'critical' : v < 30 ? 'warning' : 'safe'),
+    dangerText: (v) => (v < 20 ? 'Critical: morale crash is close.' : v < 30 ? 'Warning: failures and ragequits are more likely.' : 'Safe: heroes are still making eye contact with danger.'),
+  },
+  {
+    key: 'threat', label: 'Threat', icon: 'icon-threat', color: '#d4dae2',
+    help: 'Threat means the dungeon is getting confident. At 100, it visits.',
+    danger: (v) => (v > 90 ? 'critical' : v > 80 ? 'warning' : 'safe'),
+    dangerText: (v) => (v > 90 ? 'Critical: invasion is close.' : v > 80 ? 'Warning: town attack risk is high.' : 'Safe: the dungeon is only thinking loudly.'),
+  },
 ];
 
 export default class UIScene extends Phaser.Scene {
@@ -38,11 +63,13 @@ export default class UIScene extends Phaser.Scene {
     this.registry.events.on('changedata-objectives', (_p, value) => this.updateObjectives(value));
     this.registry.events.on('changedata-townHint', (_p, value) => this.updateTownHint(value));
     this.registry.events.on('changedata-townStage', (_p, value) => this.updateTownStage(value));
+    this.registry.events.on('changedata-townIdentity', () => this.updateTownStage(this.registry.get('townStage')));
     this.registry.events.on('changedata-day', (_p, value) => {
       this.dayText.setText(`Day ${value}`);
       this.flashDayBanner(value);
     });
     this.game.events.on('gwg-event', this.queueEvent, this);
+    this.game.events.on('gwg-achievement', this.showAchievementToast, this);
     this.game.events.on('gwg-cycle-done', this.enableCycleButton, this);
     this.game.events.on('gwg-inspector-open', this.showInspectorPanel, this);
     this.game.events.on('gwg-ledger-open', this.showLedgerPanel, this);
@@ -50,6 +77,7 @@ export default class UIScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-ESC', this.closeHtmlPanel, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off('gwg-event', this.queueEvent, this);
+      this.game.events.off('gwg-achievement', this.showAchievementToast, this);
       this.game.events.off('gwg-cycle-done', this.enableCycleButton, this);
       this.game.events.off('gwg-inspector-open', this.showInspectorPanel, this);
       this.game.events.off('gwg-ledger-open', this.showLedgerPanel, this);
@@ -73,11 +101,13 @@ export default class UIScene extends Phaser.Scene {
     let x = 16;
     for (const meta of RESOURCE_META) {
       const iconKey = meta.asset && this.textures.exists(meta.asset) ? meta.asset : meta.icon;
-      this.add.image(x + 6, 22, iconKey).setScale(1.4);
+      const icon = this.add.image(x + 6, 22, iconKey).setScale(1.4).setInteractive({ useHandCursor: true });
       const text = this.add.text(x + 18, 22, `${meta.label} 0`, {
         fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: meta.color,
         stroke: '#0c1118', strokeThickness: 2,
-      }).setOrigin(0, 0.5);
+      }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
+      icon.on('pointerup', () => this.showResourceHelp(meta));
+      text.on('pointerup', () => this.showResourceHelp(meta));
       this.resourceTexts[meta.key] = { text, meta };
       x += 30 + text.width + 120; // generous fixed spacing; text length varies little
     }
@@ -120,7 +150,9 @@ export default class UIScene extends Phaser.Scene {
         || (key === 'morale' && res[key] < 30)
         || (key === 'threat' && res[key] > 80)
       );
-      slot.text.setColor(danger ? '#ff6b6b' : slot.meta.color);
+      const dangerState = slot.meta.danger?.(res[key]) || (danger ? 'warning' : 'safe');
+      slot.text.setText(`${slot.meta.label} ${res[key]}${dangerState === 'critical' ? ' !!' : dangerState === 'warning' ? ' !' : ''}`);
+      slot.text.setColor(dangerState === 'critical' ? '#ff4f4f' : dangerState === 'warning' ? '#ffe08a' : slot.meta.color);
       if (changed) {
         // small pulse so the eye catches which resource just moved
         this.tweens.add({
@@ -178,7 +210,28 @@ export default class UIScene extends Phaser.Scene {
 
   updateTownStage(text) {
     if (!this.stageText) return;
-    this.stageText.setText(text ? `Stage: ${text}` : '');
+    const identity = this.registry.get('townIdentity');
+    this.stageText.setText(text ? `Stage: ${text}${identity ? `\nIdentity: ${identity}` : ''}` : '');
+  }
+
+  showResourceHelp(meta) {
+    const res = this.registry.get('resources') || {};
+    const value = res[meta.key] ?? 0;
+    const state = meta.danger?.(value) || 'safe';
+    this.showInspectorPanel({
+      title: meta.label,
+      subtitle: `Current: ${value} - ${state.toUpperCase()}`,
+      sections: [
+        { title: 'Meaning', lines: [meta.help] },
+        {
+          title: 'Current State',
+          lines: [{
+            text: meta.dangerText?.(value) || 'Safe: nothing is currently on fire in this category.',
+            className: state === 'safe' ? 'gwg-good' : 'gwg-bad',
+          }],
+        },
+      ],
+    });
   }
 
   buildHelperText() {
@@ -303,6 +356,7 @@ export default class UIScene extends Phaser.Scene {
   buildTownLedgerButton() {
     this.makeUtilityButton(WIDTH - 374, HEIGHT - 62, 'Town Ledger', 'gwg-open-ledger', 122);
     this.makeUtilityButton(WIDTH - 508, HEIGHT - 62, 'Town Log', 'gwg-open-town-log', 100);
+    this.makeUtilityButton(WIDTH - 598, HEIGHT - 62, 'Help', 'gwg-open-help', 72);
   }
 
   makeUtilityButton(x, y, label, eventName, width = 64) {
@@ -453,6 +507,30 @@ export default class UIScene extends Phaser.Scene {
     this.cycleBg.setInteractive({ useHandCursor: true });
     this.styleButton('normal');
     this.cycleLabel.setText('Open Gates >').setAlpha(1);
+  }
+
+  showAchievementToast(text) {
+    const toast = this.add.text(WIDTH / 2, 116, String(text).replace(/^Achievement:\s*/, ''), {
+      fontFamily: FONT,
+      fontSize: '15px',
+      fontStyle: 'bold',
+      color: '#ffe08a',
+      stroke: '#0c1118',
+      strokeThickness: 4,
+      align: 'center',
+      wordWrap: { width: 520 },
+      backgroundColor: '#0f1521dd',
+      padding: { x: 10, y: 6 },
+    }).setOrigin(0.5, 0).setDepth(7000).setAlpha(0);
+    this.tweens.add({
+      targets: toast,
+      alpha: 1,
+      y: 106,
+      duration: 220,
+      yoyo: true,
+      hold: 2100,
+      onComplete: () => toast.destroy(),
+    });
   }
 
   flashDayBanner(day) {

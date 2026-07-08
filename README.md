@@ -22,6 +22,22 @@ On Windows PowerShell, if script execution policy blocks `npm`, use:
 npm.cmd run dev
 ```
 
+## How to play
+
+The first session is guided by small in-game hints, not a long tutorial. If you
+skip them, use **Help** to reopen the short rules.
+
+1. Click the Guild Hall / Notice Board and post a quest.
+2. Press **Open Gates** to resolve hero actions, quest results, town nonsense,
+   and consequences.
+3. Use **Town Ledger** to compare upgrades. Fair buildings stabilize Trust and
+   Morale; Golden Whale upgrades pay faster and make the town worse in funnier
+   ways.
+4. Click NPC heroes to inspect power, morale, debt, loyalty, whale access,
+   resentment, history, and their current thought.
+5. Watch Gold, Trust, Corruption, Morale, and Threat. Warning icons mean the
+   town is drifting toward protests, scandals, ragequits, or dungeon visits.
+
 - Click buildings for tooltips.
 - Click buildings or special locations to open the fixed inspector panel.
 - Use the compact **Upgrade** action in the inspector to spend fictional gold
@@ -54,6 +70,12 @@ Earn fictional gold, choose between fair infrastructure upgrades and faster
 Golden Whale profits, post safe or risky quests, then open the gates and watch
 heroes react. Trust, Corruption, Morale, and Threat now affect hero behaviour,
 quest results, protests, debt events, and town attacks.
+
+Current features include responsive browser play, first-time onboarding, compact
+Help, resource explainers, early objective chains, quest posting, building
+upgrades, Town Ledger, fixed inspector panels, evolving NPCs, policy choices,
+soft crises, town identity labels, local achievement toasts, and a capped Town
+Log.
 
 The town now has a stronger progression arc: staged growth from **Garage
 Guild** toward **Premium Kingdom Problem**, unlockable locations, soft crises,
