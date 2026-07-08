@@ -1,4 +1,4 @@
-// Minimal HUD overlay: top resource strip, bottom event ticker, End Day button.
+// Minimal HUD overlay: top resource strip, bottom event ticker, Open Gates button.
 // Deliberately small — this is a game scene, not a dashboard.
 import Phaser from 'phaser';
 
@@ -25,10 +25,13 @@ export default class UIScene extends Phaser.Scene {
 
   create() {
     this.buildTopBar();
+    this.buildObjectives();
     this.buildTicker();
     this.buildEndDayButton();
+    this.buildUtilityButtons();
 
     this.registry.events.on('changedata-resources', (_p, value) => this.updateResources(value));
+    this.registry.events.on('changedata-objectives', (_p, value) => this.updateObjectives(value));
     this.registry.events.on('changedata-day', (_p, value) => {
       this.dayText.setText(`Day ${value}`);
       this.flashDayBanner(value);
@@ -41,6 +44,7 @@ export default class UIScene extends Phaser.Scene {
     });
 
     this.updateResources(this.registry.get('resources'));
+    this.updateObjectives(this.registry.get('objectives'));
     this.dayText.setText(`Day ${this.registry.get('day')}`);
   }
 
@@ -66,6 +70,15 @@ export default class UIScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '16px', fontStyle: 'bold', color: '#fff6dc',
       stroke: '#0c1118', strokeThickness: 2,
     }).setOrigin(1, 0.5);
+
+    this.warningText = this.add.text(16, 50, '', {
+      fontFamily: FONT,
+      fontSize: '12px',
+      fontStyle: 'bold',
+      color: '#ffe08a',
+      stroke: '#0c1118',
+      strokeThickness: 3,
+    }).setDepth(6000);
   }
 
   updateResources(res) {
@@ -74,6 +87,13 @@ export default class UIScene extends Phaser.Scene {
       const slot = this.resourceTexts[key];
       const changed = this.lastRes && this.lastRes[key] !== res[key];
       slot.text.setText(`${slot.meta.label} ${res[key]}`);
+      const danger = (
+        (key === 'trust' && res[key] < 30)
+        || (key === 'corruption' && res[key] > 70)
+        || (key === 'morale' && res[key] < 30)
+        || (key === 'threat' && res[key] > 80)
+      );
+      slot.text.setColor(danger ? '#ff6b6b' : slot.meta.color);
       if (changed) {
         // small pulse so the eye catches which resource just moved
         this.tweens.add({
@@ -82,7 +102,34 @@ export default class UIScene extends Phaser.Scene {
         });
       }
     }
+    const warnings = [];
+    if (res.trust < 30) warnings.push('LOW TRUST');
+    if (res.corruption > 70) warnings.push('HIGH CORRUPTION');
+    if (res.morale < 30) warnings.push('LOW MORALE');
+    if (res.threat > 80) warnings.push('THREAT CRITICAL');
+    this.warningText.setText(warnings.join('  /  '));
     this.lastRes = { ...res };
+  }
+
+  buildObjectives() {
+    this.objectiveText = this.add.text(WIDTH - 16, 52, '', {
+      fontFamily: FONT,
+      fontSize: '12px',
+      fontStyle: 'bold',
+      color: '#fff6dc',
+      stroke: '#0c1118',
+      strokeThickness: 3,
+      align: 'right',
+      wordWrap: { width: 340 },
+      lineSpacing: 2,
+    }).setOrigin(1, 0).setDepth(6000);
+  }
+
+  updateObjectives(data) {
+    if (!data) return;
+    const lines = [`Objectives ${data.completed}/${data.total}`];
+    for (const item of data.active || []) lines.push(`- ${item}`);
+    this.objectiveText.setText(lines.join('\n'));
   }
 
   // --- bottom event ticker ----------------------------------------------
@@ -178,6 +225,29 @@ export default class UIScene extends Phaser.Scene {
       this.styleButton('locked');
       this.cycleLabel.setText('The town stirs...').setAlpha(0.8);
       this.game.events.emit('gwg-end-day');
+    });
+  }
+
+  buildUtilityButtons() {
+    this.makeUtilityButton(WIDTH - 182, HEIGHT - 60, 'Save', 'gwg-save');
+    this.makeUtilityButton(WIDTH - 240, HEIGHT - 60, 'Reset', 'gwg-reset');
+  }
+
+  makeUtilityButton(x, y, label, eventName) {
+    const bg = this.add.rectangle(x, y, 52, 24, 0x273244, 0.94)
+      .setStrokeStyle(1, 0xf6c945)
+      .setInteractive({ useHandCursor: true });
+    const text = this.add.text(x, y, label, {
+      fontFamily: FONT,
+      fontSize: '11px',
+      fontStyle: 'bold',
+      color: '#fff6dc',
+    }).setOrigin(0.5);
+    bg.on('pointerover', () => bg.setFillStyle(0x3a4a63, 0.98));
+    bg.on('pointerout', () => bg.setFillStyle(0x273244, 0.94));
+    bg.on('pointerup', () => {
+      this.tweens.add({ targets: [bg, text], scale: 0.92, duration: 70, yoyo: true });
+      this.game.events.emit(eventName);
     });
   }
 

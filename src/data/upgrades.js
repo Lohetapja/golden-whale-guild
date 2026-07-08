@@ -6,7 +6,7 @@ export const UPGRADE_DEFS = {
     baseCost: 250,
     costStep: 125,
     maxLevel: 5,
-    effect: (level) => `Morale recovery +${level} when the town opens.`,
+    effect: (level) => `Morale recovery +${level}; low morale complaints soften.`,
     flavor: [
       'Adds more chairs for heroes to complain in.',
       'Installs softer tables for dramatic quitting.',
@@ -14,14 +14,14 @@ export const UPGRADE_DEFS = {
       'The ale gets warmer, somehow on purpose.',
       'Veterans now receive sigh-resistant mugs.',
     ],
-    deltas: { gold: 0, morale: 3, trust: 1 },
+    deltas: { gold: 0, morale: 4, trust: 1 },
     event: (name) => `${name} upgraded. Complaints now echo with better acoustics.`,
   },
   blacksmith: {
     baseCost: 300,
     costStep: 150,
     maxLevel: 5,
-    effect: (level) => `Honest training power gains feel ${level}% less doomed.`,
+    effect: (level) => `Quest success +${level * 5}% for non-whale heroes.`,
     flavor: [
       'Now sells swords sharp enough to cut through denial.',
       'Adds a receipt anvil for smashing excuses.',
@@ -29,14 +29,14 @@ export const UPGRADE_DEFS = {
       'Sparks now spell "try effort" if viewed honestly.',
       'Budget blades gain emotional durability.',
     ],
-    deltas: { gold: 0, trust: 2 },
+    deltas: { gold: 0, trust: 2, morale: 1 },
     event: (name) => `${name} upgraded. Hope is still sold separately, but cheaper.`,
   },
   guildhall: {
     baseCost: 400,
     costStep: 175,
     maxLevel: 5,
-    effect: (level) => `Quest rewards +${level * 4} gold and +paperwork.`,
+    effect: (level) => `Quest rewards +${level * 12}g and more daily hero actions.`,
     flavor: [
       'Improves quest paperwork and official excuses.',
       'Adds a clerk window for denying obvious problems.',
@@ -51,7 +51,7 @@ export const UPGRADE_DEFS = {
     baseCost: 220,
     costStep: 110,
     maxLevel: 5,
-    effect: (level) => `Market income +${level * 12} gold. Prices remain dramatic.`,
+    effect: (level) => `Steady income +${level * 18}g; level 4+ adds corruption.`,
     flavor: [
       'Adds dynamic pricing and static suffering.',
       'Mystery barrels now contain more mystery per barrel.',
@@ -59,14 +59,14 @@ export const UPGRADE_DEFS = {
       'Dragon supply chains are blamed preemptively.',
       'Hope can now be bundled with onions.',
     ],
-    deltas: { gold: 35, corruption: 1 },
+    deltas: { gold: 45, corruption: 1 },
     event: (name) => `${name} upgraded. The market blamed inflation on decorative dragons.`,
   },
   training: {
     baseCost: 350,
     costStep: 150,
     maxLevel: 5,
-    effect: (level) => `Honest heroes train +${level} stubbornness.`,
+    effect: (level) => `Honest heroes train +${level} power and quest stability.`,
     flavor: [
       'For heroes still pretending effort scales.',
       'Adds another dummy to absorb economic despair.',
@@ -80,8 +80,8 @@ export const UPGRADE_DEFS = {
   whale: {
     baseCost: 650,
     costStep: 320,
-    maxLevel: 6,
-    effect: (level) => `+Gold, +Corruption, -Trust. Glow intensity ${level}.`,
+    maxLevel: 5,
+    effect: (level) => `Fast gold scales with corruption. Trust damage ${level}.`,
     flavor: [
       'Increases revenue, glow intensity, and moral distance.',
       'Adds 40% more ethical fog.',
@@ -97,7 +97,7 @@ export const UPGRADE_DEFS = {
     baseCost: 480,
     costStep: 190,
     maxLevel: 5,
-    effect: (level) => `Quest opportunities +${level}. Threat behaves theatrically.`,
+    effect: (level) => `Quest rewards +${level * 10}g; daily threat also rises.`,
     flavor: [
       'Lets danger enter the economy faster.',
       'The gate hinges now creak in surround sound.',
@@ -111,8 +111,8 @@ export const UPGRADE_DEFS = {
   complaint_barrel: {
     baseCost: 180,
     costStep: 90,
-    maxLevel: 4,
-    effect: (level) => `Trust +${level} when complaints fit through the hole.`,
+    maxLevel: 5,
+    effect: (level) => `Trust vents +${level}; protest morale damage reduced.`,
     flavor: [
       'Now reinforced against repeated truth.',
       'Adds a lid with denial hinges.',
@@ -125,8 +125,8 @@ export const UPGRADE_DEFS = {
   debt_collector_booth: {
     baseCost: 260,
     costStep: 120,
-    maxLevel: 4,
-    effect: (level) => `Debt events produce ${level * 10} extra paperwork gold.`,
+    maxLevel: 5,
+    effect: (level) => `Debt events produce ${level * 18}g and extra corruption.`,
     flavor: [
       'Adds friendlier ink to worse contracts.',
       'The small print learned cursive.',
@@ -139,7 +139,7 @@ export const UPGRADE_DEFS = {
   notice_board: {
     baseCost: 160,
     costStep: 80,
-    maxLevel: 4,
+    maxLevel: 5,
     effect: (level) => `More quests, clearer excuses, +${level} gossip velocity.`,
     flavor: [
       'Pinned excuses now use bigger nails.',

@@ -26,6 +26,8 @@ Current prototype priorities:
 - keep all Golden Whale economy jokes fictional and in-game only
 - upgrade/progression visuals should be small map changes, pulses, glow, signs,
   or particles rather than management UI
+- quest posting and objectives should stay as small notices/signage layered on
+  the town, not as a separate quest-log dashboard
 
 ## Asset-replaceable architecture
 

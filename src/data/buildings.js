@@ -56,7 +56,7 @@ export const BUILDINGS = [
     assetKey: 'building_guild_hall',
     fallback: makeBuildingPlaceholder,
     wall: 0xb99c6b, roof: 0x3e6db5, style: 'house',
-    level: 2, effect: 'Posts 5 hero actions per cycle', upgrade: '400g',
+    level: 1, effect: 'Posts 5 hero actions per cycle', upgrade: '400g',
     tooltipLines: [
       'The guild says this is a player-driven economy.',
       'The players disagree, but in triplicate.',

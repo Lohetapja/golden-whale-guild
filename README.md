@@ -25,9 +25,20 @@ npm.cmd run dev
 - Click buildings for tooltips.
 - Click the compact **Upgrade** action in a tooltip to spend fictional gold on
   a building improvement.
+- Click small quest notices near the Guild Hall / Notice Board to post bounty
+  quests. Posted quests resolve during the next town cycle.
 - Press **Open Gates** (bottom right) to run the daily simulation - watch the
   resource bar (Gold / Trust / Corruption / Morale / Threat) and the event
   ticker at the bottom.
+- Use the small **Save** / **Reset** buttons for localStorage-only browser
+  saves. No backend, accounts, or real payments are involved.
+
+## Current gameplay loop
+
+Earn fictional gold, choose between fair infrastructure upgrades and faster
+Golden Whale profits, post safe or risky quests, then open the gates and watch
+heroes react. Trust, Corruption, Morale, and Threat now affect hero behaviour,
+quest results, protests, debt events, and town attacks.
 
 ## Build
 

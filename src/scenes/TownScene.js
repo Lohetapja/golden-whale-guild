@@ -6,6 +6,8 @@ import { BUILDINGS } from '../data/buildings.js';
 import { DECORATIONS, PATH_NODES } from '../data/decorations.js';
 import { HEROES } from '../data/heroes.js';
 import { rollHeroEvent, WHALE_FLAVOR } from '../data/events.js';
+import { OBJECTIVES } from '../data/objectives.js';
+import { rollQuestNotices } from '../data/quests.js';
 import {
   DENIED_LINES,
   IDLE_QUIPS,
@@ -24,12 +26,26 @@ import { loadAssets, ensureFallbacks, resolveTexture, buildingTexture, heroTextu
 const WIDTH = 1280;
 const HEIGHT = 720;
 const PLAZA = { x: 610, y: 410 };
-const STEP_MS = 1600; // pacing of the day-cycle playback
+const STEP_MS = 950; // pacing of the day-cycle playback
 const MAX_IDLE_BUBBLES = 2;
 const MAX_IMPORTANT_BUBBLES = 4;
 const BUBBLE_MIN_SPACING = 150;
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
+const SAVE_KEY = 'golden-whale-guild-save-v2';
+
+const QUEST_NOTICE_SPOTS = [
+  { x: 360, y: 208 },
+  { x: 522, y: 208 },
+  { x: 442, y: 292 },
+];
+
+const HERO_GROUPS = {
+  honest: ['Honest Grinder', 'Broke Optimist', 'Free Trial Paladin', 'Disillusioned Blacksmith'],
+  whale: ['Noble Whale', 'Whale Apprentice', 'Premium Monk', 'Overleveled Toddler'],
+  debt: ['Debt Goblin', 'Debt Collector', 'Bankrupt Bard', 'Refund Seeker'],
+  veteran: ['Veteran', 'Angry Veteran', 'Balance Refugee', 'Ragequitter'],
+};
 
 const RES_COLORS = {
   gold: '#f6c945',
@@ -52,9 +68,23 @@ export default class TownScene extends Phaser.Scene {
   create() {
     ensureFallbacks(this);
 
-    this.day = 1;
-    this.resources = { gold: 500, trust: 50, corruption: 10, morale: 60, threat: 20 };
-    this.upgradeLevels = {};
+    const saved = this.loadSavedState();
+    this.day = saved?.day || 1;
+    this.resources = saved?.resources || { gold: 500, trust: 50, corruption: 10, morale: 60, threat: 20 };
+    this.upgradeLevels = saved?.upgradeLevels || {};
+    this.stats = {
+      questsPosted: 0,
+      questsCompleted: 0,
+      totalGoldEarned: 0,
+      honestQuestSuccesses: 0,
+      threatEventsSurvived: 0,
+      trustStreak: 0,
+      ...(saved?.stats || {}),
+    };
+    this.completedObjectives = new Set(saved?.completedObjectives || []);
+    this.availableQuests = saved?.availableQuests?.length ? saved.availableQuests : rollQuestNotices(this.day);
+    this.postedQuests = saved?.postedQuests || [];
+    this.savedHeroStats = saved?.heroStats || {};
     this.cycleRunning = false;
 
     this.buildTerrain();
@@ -62,25 +92,154 @@ export default class TownScene extends Phaser.Scene {
     this.buildDecorations();
     this.doorById = Object.fromEntries(this.doorSpots.map((s) => [s.id, s]));
     this.placeById = { ...this.buildingById, ...this.decorationById };
+    this.upgradeVisualsById = {};
+    this.refreshAllUpgradeVisuals();
     this.activeBubbles = 0;
     this.importantChatterUntil = 0;
     this.floaters = [];
     this.lastCoinBurstAt = -COIN_BURST_COOLDOWN_MS;
     this.buildTooltip();
     this.buildHeroes();
+    this.buildQuestNotices();
     this.startIdleChatter();
 
     // shared state for the UI scene
     this.registry.set('day', this.day);
     this.registry.set('resources', { ...this.resources });
+    this.publishObjectives();
 
     this.scene.launch('UIScene');
     this.game.events.on('gwg-end-day', this.runCycle, this);
+    this.game.events.on('gwg-save', this.saveGame, this);
+    this.game.events.on('gwg-reset', this.resetGame, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off('gwg-end-day', this.runCycle, this);
+      this.game.events.off('gwg-save', this.saveGame, this);
+      this.game.events.off('gwg-reset', this.resetGame, this);
     });
 
-    this.game.events.emit('gwg-event', 'Welcome to Golden Whale Guild. Click buildings to inspect. Open Gates to run a town cycle.');
+    this.game.events.emit('gwg-event', 'Welcome to Golden Whale Guild. Post quests, upgrade buildings, then Open Gates.');
+  }
+
+  loadSavedState() {
+    try {
+      const raw = window.localStorage.getItem(SAVE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  getSavePayload() {
+    return {
+      day: this.day,
+      resources: { ...this.resources },
+      upgradeLevels: { ...this.upgradeLevels },
+      availableQuests: this.availableQuests,
+      postedQuests: this.postedQuests,
+      completedObjectives: [...this.completedObjectives],
+      stats: { ...this.stats },
+      heroStats: Object.fromEntries((this.heroes || []).map((hero) => [hero.def.id, {
+        power: hero.stats.power,
+        gold: hero.stats.gold,
+        spent: hero.stats.spent,
+        morale: hero.stats.morale,
+        debt: hero.stats.debt,
+        loyalty: hero.stats.loyalty,
+        whaleAccess: hero.stats.whaleAccess,
+        awayUntil: hero.awayUntil || 0,
+      }])),
+    };
+  }
+
+  saveGame() {
+    try {
+      window.localStorage.setItem(SAVE_KEY, JSON.stringify(this.getSavePayload()));
+      this.game.events.emit('gwg-event', 'Guild records saved locally. No cloud. No account. Just paperwork.');
+    } catch {
+      this.game.events.emit('gwg-event', 'The save clerk dropped the ledger. Local save failed politely.');
+    }
+  }
+
+  resetGame() {
+    try {
+      window.localStorage.removeItem(SAVE_KEY);
+    } catch {
+      // Local storage may be blocked; reloading still returns to the default state.
+    }
+    window.location.reload();
+  }
+
+  isHonestHero(def) {
+    return HERO_GROUPS.honest.includes(def.personality);
+  }
+
+  isWhaleHero(def) {
+    return HERO_GROUPS.whale.includes(def.personality);
+  }
+
+  isDebtHero(def) {
+    return HERO_GROUPS.debt.includes(def.personality);
+  }
+
+  isVeteranHero(def) {
+    return HERO_GROUPS.veteran.includes(def.personality);
+  }
+
+  getActiveHeroes() {
+    return this.heroes.filter((hero) => hero.awayUntil <= this.day && hero.state !== 'away');
+  }
+
+  returnAwayHeroes() {
+    for (const hero of this.heroes) {
+      if (hero.state === 'away' && hero.awayUntil <= this.day) {
+        hero.state = 'idle';
+        hero.container.setAlpha(1);
+        hero.stats.loyalty = Math.max(25, hero.stats.loyalty - 8);
+        this.say(hero, 'I came back. The economy did not improve.', true);
+        this.scheduleAmbient(hero, Phaser.Math.Between(900, 2400));
+      }
+    }
+  }
+
+  getObjectiveState() {
+    return {
+      day: this.day,
+      resources: this.resources,
+      levels: Object.fromEntries(Object.values(this.placeById || {}).map((place) => [
+        place.id,
+        this.getPlaceLevel(place),
+      ])),
+      stats: this.stats,
+    };
+  }
+
+  publishObjectives() {
+    const active = OBJECTIVES
+      .filter((objective) => !this.completedObjectives.has(objective.id))
+      .slice(0, 3)
+      .map((objective) => objective.text);
+    this.registry.set('objectives', {
+      active,
+      completed: this.completedObjectives.size,
+      total: OBJECTIVES.length,
+    });
+  }
+
+  checkObjectives() {
+    if (this.checkingObjectives || !this.placeById) return;
+    this.checkingObjectives = true;
+    const state = this.getObjectiveState();
+    for (const objective of OBJECTIVES) {
+      if (this.completedObjectives.has(objective.id)) continue;
+      if (!objective.complete(state)) continue;
+
+      this.completedObjectives.add(objective.id);
+      this.applyDeltas(objective.reward || {});
+      this.game.events.emit('gwg-event', objective.event);
+    }
+    this.checkingObjectives = false;
+    this.publishObjectives();
   }
 
   // --- world ------------------------------------------------------------
@@ -140,6 +299,8 @@ export default class TownScene extends Phaser.Scene {
         .setOrigin(0.5, 1)
         .setDepth(b.y)
         .setInteractive({ useHandCursor: true });
+      img.setData('baseScaleX', img.scaleX);
+      img.setData('baseScaleY', img.scaleY);
       this.placeSpriteById[b.id] = img;
 
       // hover/click feedback: tint plus a small grow pop
@@ -194,6 +355,8 @@ export default class TownScene extends Phaser.Scene {
       this.placeSpriteById[d.id] = img;
 
       if (d.scale) img.setScale(d.scale);
+      img.setData('baseScaleX', img.scaleX);
+      img.setData('baseScaleY', img.scaleY);
 
       if (d.fallbackKey === 'tree') {
         this.tweens.add({
@@ -231,6 +394,97 @@ export default class TownScene extends Phaser.Scene {
         this.doorSpots.push({ id: d.id, x: d.x, y: d.y + 8 });
       }
     }
+  }
+
+  clearQuestNotices() {
+    for (const container of this.questNoticeContainers || []) container.destroy();
+    this.questNoticeContainers = [];
+  }
+
+  buildQuestNotices() {
+    this.clearQuestNotices();
+    this.questNoticeContainers = [];
+
+    this.availableQuests.forEach((quest, index) => {
+      const spot = QUEST_NOTICE_SPOTS[index] || QUEST_NOTICE_SPOTS[0];
+      const container = this.createQuestNotice(quest, spot.x, spot.y);
+      this.questNoticeContainers.push(container);
+    });
+  }
+
+  createQuestNotice(quest, x, y) {
+    const w = 154;
+    const h = 78;
+    const container = this.add.container(x, y).setDepth(3600);
+    const bg = this.add.graphics();
+    const drawBg = (hover = false) => {
+      bg.clear();
+      bg.fillStyle(quest.posted ? 0x4c3a20 : hover ? 0xfff1c4 : 0xf2ead8, 0.96);
+      bg.fillRoundedRect(0, 0, w, h, 4);
+      bg.lineStyle(2, quest.posted ? 0xf6c945 : 0x6b4a2b, 0.95);
+      bg.strokeRoundedRect(0, 0, w, h, 4);
+      bg.fillStyle(0x6b4a2b, 0.22);
+      bg.fillRect(8, 8, w - 16, 3);
+    };
+    drawBg();
+
+    const title = this.add.text(8, 10, quest.name, {
+      fontFamily: '"Courier New", monospace',
+      fontSize: '10px',
+      fontStyle: 'bold',
+      color: quest.posted ? '#ffe08a' : '#1d2430',
+      wordWrap: { width: w - 16 },
+    });
+    const body = this.add.text(8, 32, [
+      `Post ${quest.cost}g -> ${quest.reward}g`,
+      `Diff ${quest.difficulty}  Risk ${quest.risk}`,
+      quest.posted ? 'POSTED: resolves next cycle' : 'Click to post bounty',
+    ].join('\n'), {
+      fontFamily: '"Courier New", monospace',
+      fontSize: '9px',
+      fontStyle: 'bold',
+      color: quest.posted ? '#fff6dc' : '#243042',
+      lineSpacing: 2,
+    });
+    container.add([bg, title, body]);
+    container.setSize(w, h);
+    container.setInteractive(new Phaser.Geom.Rectangle(0, 0, w, h), Phaser.Geom.Rectangle.Contains);
+    container.on('pointerover', () => {
+      if (!quest.posted) drawBg(true);
+    });
+    container.on('pointerout', () => drawBg(false));
+    container.on('pointerup', () => this.postQuest(quest));
+    return container;
+  }
+
+  postQuest(quest) {
+    if (this.cycleRunning || quest.posted) return;
+    if (this.resources.gold < quest.cost) {
+      this.floatText(quest.x || 500, quest.y || 250, 'NOT ENOUGH GOLD', '#f0938f');
+      this.game.events.emit('gwg-event', 'Not enough gold. Please exploit responsibly.');
+      return;
+    }
+
+    this.applyDeltas({ gold: -quest.cost });
+    const postedQuest = { ...quest, posted: true };
+    this.postedQuests.push(postedQuest);
+    this.availableQuests = this.availableQuests.map((item) => (
+      item.noticeId === quest.noticeId ? postedQuest : item
+    ));
+    this.stats.questsPosted += 1;
+    this.game.events.emit('gwg-event', `Posted ${quest.name} for ${quest.cost}g. Heroes will make it worse shortly.`);
+    this.floatText(QUEST_NOTICE_SPOTS[0].x + 80, QUEST_NOTICE_SPOTS[0].y - 8, 'QUEST POSTED', '#ffe08a');
+    this.buildQuestNotices();
+    this.checkObjectives();
+
+    const clerk = this.heroes?.find((hero) => hero.def.personality === 'Guild Clerk');
+    if (clerk) this.say(clerk, 'Quest posted. Liability pending.', true);
+  }
+
+  refreshQuestNotices() {
+    this.availableQuests = rollQuestNotices(this.day);
+    this.postedQuests = [];
+    this.buildQuestNotices();
   }
 
   buildWhaleStationDressing() {
@@ -303,6 +557,138 @@ export default class TownScene extends Phaser.Scene {
     if (this.time.now - this.lastCoinBurstAt < COIN_BURST_COOLDOWN_MS) return;
     this.lastCoinBurstAt = this.time.now;
     this.coinBurst.explode(Math.min(count, 64));
+  }
+
+  refreshAllUpgradeVisuals() {
+    for (const place of Object.values(this.placeById || {})) {
+      this.refreshUpgradeVisual(place);
+    }
+  }
+
+  refreshUpgradeVisual(place) {
+    const existing = this.upgradeVisualsById?.[place.id];
+    if (existing) existing.destroy();
+
+    const level = this.getPlaceLevel(place);
+    const sprite = this.placeSpriteById?.[place.id];
+    if (sprite) {
+      const baseX = sprite.getData('baseScaleX') || 1;
+      const baseY = sprite.getData('baseScaleY') || 1;
+      const scaleBoost = Math.min(0.14, Math.max(0, level - 1) * 0.035);
+      sprite.setScale(baseX * (1 + scaleBoost), baseY * (1 + scaleBoost));
+    }
+    if (level <= 1) return;
+
+    const w = place.w || 70;
+    const h = place.h || 60;
+    const container = this.add.container(place.x, place.y).setDepth((place.y || 0) + 6);
+    const g = this.add.graphics();
+    container.add(g);
+
+    g.fillStyle(0x141a24, 0.9);
+    g.fillRoundedRect(-w / 2 + 8, -h - 18, 44, 17, 4);
+    g.lineStyle(1, 0xf6c945, 0.9);
+    g.strokeRoundedRect(-w / 2 + 8, -h - 18, 44, 17, 4);
+    const badge = this.add.text(-w / 2 + 14, -h - 17, `Lv ${level}`, {
+      fontFamily: '"Courier New", monospace',
+      fontSize: '10px',
+      fontStyle: 'bold',
+      color: '#ffe08a',
+    });
+    container.add(badge);
+
+    const addImage = (lx, ly, key, scale = 1, depthOffset = 0) => {
+      if (!this.textures.exists(key)) return;
+      const img = this.add.image(lx, ly, key).setScale(scale).setDepth((place.y || 0) + depthOffset);
+      container.add(img);
+    };
+
+    const addSparkles = (count, color = 0xffe08a) => {
+      g.fillStyle(color, 0.9);
+      for (let i = 0; i < count; i += 1) {
+        const lx = Phaser.Math.Between(-Math.floor(w / 2), Math.floor(w / 2));
+        const ly = Phaser.Math.Between(-h, -20);
+        g.fillRect(lx, ly, 3, 3);
+      }
+    };
+
+    if (place.id === 'tavern') {
+      addImage(-w / 2 - 10, -8, 'barrel', 0.85);
+      if (level >= 3) addImage(w / 2 + 10, -10, 'lamp', 0.8);
+      g.fillStyle(0xf6c945);
+      g.fillRect(-26, -h + 22, 52, 7);
+      if (level >= 4) {
+        g.fillStyle(0xd9bc85, 0.75);
+        g.fillCircle(8, -h - 18, 8);
+        g.fillCircle(21, -h - 28, 6);
+      }
+    } else if (place.id === 'blacksmith') {
+      g.fillStyle(0xff7a2f, 0.55 + level * 0.06);
+      g.fillRoundedRect(-20, -46, 40, 28, 4);
+      g.fillStyle(0xf6c945, 0.75);
+      g.fillRect(-13, -39, 26, 12);
+      if (level >= 3) addImage(-w / 2 - 10, -7, 'crate', 0.9);
+      if (level >= 4) addSparkles(8, 0xffa04d);
+    } else if (place.id === 'guildhall') {
+      g.fillStyle(0x3e6db5);
+      g.fillRect(-w / 2 + 18, -h + 18, 12, 42);
+      g.fillRect(w / 2 - 30, -h + 18, 12, 42);
+      g.fillStyle(0xf2ead8);
+      for (let i = 0; i < level; i += 1) g.fillRect(w / 2 - 18, -30 - i * 5, 18, 4);
+      if (level >= 4) addImage(w / 2 + 12, -10, 'signpost', 0.75);
+    } else if (place.id === 'training') {
+      if (level >= 2) addImage(-w / 2 - 10, -8, 'dummy', 0.9);
+      if (level >= 3) addImage(w / 2 + 10, -8, 'dummy', 0.9);
+      g.lineStyle(3, 0x8a5a2b);
+      g.strokeCircle(0, -36, 14 + level * 2);
+      g.lineStyle(2, 0xf6c945);
+      g.strokeCircle(0, -36, 6 + level);
+    } else if (place.id === 'market') {
+      addImage(-w / 2 - 8, -8, 'crate', 0.85);
+      addImage(w / 2 + 8, -8, 'barrel', 0.8);
+      if (level >= 3) {
+        g.fillStyle(0xf6c945);
+        for (let i = 0; i < level + 2; i += 1) g.fillCircle(-26 + i * 12, -44, 4);
+      }
+      if (level >= 4) addImage(0, -h - 8, 'signpost', 0.8);
+    } else if (place.id === 'whale') {
+      addImage(0, -h * 0.52, 'glow', 1.15 + level * 0.18);
+      addImage(0, -h * 0.58, 'ph-icon_whale', 1.3 + level * 0.15);
+      addImage(0, 20, 'viprope', 1 + level * 0.05);
+      addSparkles(10 + level * 3, 0xffe08a);
+      for (let i = 0; i < level + 2; i += 1) addImage(-52 + i * 22, -h - 4 - (i % 2) * 8, 'ph-icon_coin', 1.15);
+    } else if (place.id === 'dungeon') {
+      g.fillStyle(0x7a4bd0, 0.24 + level * 0.08);
+      g.fillEllipse(0, -32, w * 0.55, 34 + level * 5);
+      g.fillStyle(0xe74c3c);
+      g.fillRect(-30, -58, 5, 5);
+      g.fillRect(25, -58, 5, 5);
+      if (level >= 3) {
+        g.fillStyle(0xf2ead8);
+        g.fillCircle(-w / 2 - 6, -24, 8);
+        g.fillRect(-w / 2 - 10, -20, 8, 5);
+      }
+    } else if (place.id === 'debt_collector_booth') {
+      g.fillStyle(0xf2ead8);
+      for (let i = 0; i < level + 1; i += 1) g.fillRect(-w / 2 + 6 + i * 13, -h - 6, 10, 14);
+      g.fillStyle(0x14101c);
+      g.fillRect(w / 2 + 4, -32, 7, 22);
+      g.fillRect(w / 2 + 16, -32, 7, 22);
+    } else if (place.id === 'complaint_barrel') {
+      g.fillStyle(0x6b4a2b);
+      g.fillRect(-w / 2 - 8, -18, 6, 28);
+      g.fillRect(w / 2 + 4, -18, 6, 28);
+      g.fillStyle(0xf2ead8);
+      g.fillRect(-w / 2 - 14, -38, w + 28, 16);
+      g.fillStyle(0xc0392b);
+      g.fillRect(-w / 2 - 8, -31, w + 16, 3);
+    } else if (place.id === 'notice_board') {
+      g.fillStyle(0xfff6dc);
+      for (let i = 0; i < level + 2; i += 1) g.fillRect(-24 + i * 13, -h + 8 + (i % 2) * 10, 10, 12);
+      if (level >= 3) addSparkles(4, 0x7fdc93);
+    }
+
+    this.upgradeVisualsById[place.id] = container;
   }
 
   // --- tooltip ------------------------------------------------------------
@@ -384,11 +770,13 @@ export default class TownScene extends Phaser.Scene {
   getUpgradeInfo(place) {
     const def = getUpgradeDef(place.id);
     const level = this.getPlaceLevel(place);
-    const cost = def ? getUpgradeCost(def, level) : (place.upgradeCost ?? null);
+    const baseCost = place.upgradeCost ?? null;
+    const cost = def ? getUpgradeCost(def, level) : (baseCost ? baseCost + (level - 1) * 80 : null);
     const flavor = def ? getUpgradeFlavor(def, level) : (place.upgradeFlavor || place.upgrade || null);
     const effect = def ? getUpgradeEffect(def, level) : place.effect;
-    const maxed = def ? level >= def.maxLevel : !cost;
-    return { def, level, cost, flavor, effect, maxed };
+    const nextEffect = def ? getUpgradeEffect(def, level + 1) : null;
+    const maxed = def ? level >= def.maxLevel : (!cost || level >= 3);
+    return { def, level, cost, flavor, effect, nextEffect, maxed };
   }
 
   showTooltip(b) {
@@ -399,7 +787,7 @@ export default class TownScene extends Phaser.Scene {
     const detailLines = [b.description, ...(b.tooltipLines || [])].filter(Boolean).slice(0, 4);
     const upgradeText = info.maxed
       ? 'Upgrade: maxed, allegedly balanced'
-      : `Upgrade: ${info.cost}g - ${info.flavor || 'questionable improvements'}`;
+      : `Upgrade: ${info.cost}g - ${info.flavor || 'questionable improvements'}${info.nextEffect ? `\nNext: ${info.nextEffect}` : ''}`;
 
     this.tooltipTitle.setText(b.name);
     this.tooltipText.setText(detailLines.join('\n'));
@@ -501,7 +889,7 @@ export default class TownScene extends Phaser.Scene {
     }
     if (this.resources.gold < info.cost) {
       this.floatText(place.x, place.y - (place.h || 50) - 8, 'NOT ENOUGH GOLD', '#f0938f');
-      this.game.events.emit('gwg-event', `${place.name} demanded ${info.cost}g. The treasury coughed politely.`);
+      this.game.events.emit('gwg-event', `${place.name} demanded ${info.cost}g. Not enough gold. Please exploit responsibly.`);
       return;
     }
 
@@ -513,6 +901,8 @@ export default class TownScene extends Phaser.Scene {
     this.applyDeltas(deltas);
     const nextLevel = info.level + 1;
     this.upgradeLevels[place.id] = nextLevel;
+    this.refreshUpgradeVisual(place);
+    this.checkObjectives();
 
     const sprite = this.placeSpriteById[place.id];
     if (sprite) {
@@ -564,13 +954,26 @@ export default class TownScene extends Phaser.Scene {
       }).setOrigin(0.5, 1);
 
       const container = this.add.container(x, y, [sprite, label]).setDepth(y);
+      const savedStats = this.savedHeroStats?.[def.id] || {};
       const hero = {
         def, container, sprite, label,
-        stats: { ...def.stats },
+        stats: {
+          morale: 60,
+          debt: Math.max(0, -(def.stats?.gold || 0)),
+          loyalty: this.isHonestHero(def) ? 72 : 50,
+          whaleAccess: HERO_GROUPS.whale.includes(def.personality),
+          ...def.stats,
+          ...savedStats,
+        },
         at: spot.id, destination: null, state: 'idle',
         moveTween: null, bobTween: null, timer: null,
         destMarker: null, bubble: null, bubbleTimer: null,
+        awayUntil: savedStats.awayUntil || 0,
       };
+      if (hero.awayUntil > this.day) {
+        hero.state = 'away';
+        hero.container.setAlpha(0.28);
+      }
 
       // clicking a hero shows their satire stat line
       sprite.setInteractive({ useHandCursor: true });
@@ -877,13 +1280,17 @@ export default class TownScene extends Phaser.Scene {
 
   applyDeltas(deltas) {
     const R = this.resources;
-    for (const [key, value] of Object.entries(deltas)) R[key] += value;
+    for (const [key, value] of Object.entries(deltas)) {
+      R[key] += value;
+      if (key === 'gold' && value > 0 && this.stats) this.stats.totalGoldEarned += value;
+    }
     for (const key of ['trust', 'corruption', 'morale', 'threat']) {
       R[key] = Phaser.Math.Clamp(R[key], 0, 100);
     }
     R.gold = Math.max(0, R.gold);
     this.registry.set('resources', { ...R });
     if (this.tooltipTarget) this.showTooltip(this.tooltipTarget);
+    if (!this.checkingObjectives) this.checkObjectives();
   }
 
   triggerWhaleReaction() {
@@ -917,24 +1324,258 @@ export default class TownScene extends Phaser.Scene {
     });
   }
 
+  pickQuestHero(quest) {
+    const active = this.getActiveHeroes();
+    if (active.length === 0) return null;
+
+    const preferred = active.filter((hero) => quest.preferred.includes(hero.def.personality));
+    if (preferred.length > 0) return Phaser.Utils.Array.GetRandom(preferred);
+
+    if (quest.type === 'fair') {
+      const honest = active.filter((hero) => this.isHonestHero(hero.def));
+      if (honest.length > 0) return Phaser.Utils.Array.GetRandom(honest);
+    }
+    if (quest.type === 'sponsored' || quest.type === 'shady') {
+      const whales = active.filter((hero) => this.isWhaleHero(hero.def));
+      if (whales.length > 0) return Phaser.Utils.Array.GetRandom(whales);
+    }
+    if (quest.type === 'trust') {
+      const veterans = active.filter((hero) => this.isVeteranHero(hero.def));
+      if (veterans.length > 0) return Phaser.Utils.Array.GetRandom(veterans);
+    }
+    return Phaser.Utils.Array.GetRandom(active);
+  }
+
+  getQuestSuccessChance(hero, quest) {
+    const R = this.resources;
+    const blacksmith = this.getPlaceLevel(this.buildingById.blacksmith);
+    const training = this.getPlaceLevel(this.buildingById.training);
+    const guildhall = this.getPlaceLevel(this.buildingById.guildhall);
+    const whale = this.getPlaceLevel(this.buildingById.whale);
+    const honestBonus = this.isHonestHero(hero.def) ? training * 4 : 0;
+    const whaleBonus = this.isWhaleHero(hero.def) ? whale * 6 : 0;
+    const corruptionBias = quest.type === 'fair' ? -R.corruption * 0.08 : R.corruption * 0.06;
+
+    return Phaser.Math.Clamp(
+      34
+      + hero.stats.power * 4
+      + R.morale * 0.22
+      + R.trust * 0.12
+      + blacksmith * 5
+      + guildhall * 4
+      + honestBonus
+      + whaleBonus
+      + corruptionBias
+      - quest.difficulty * 12
+      - Math.max(0, R.threat - 50) * 0.18,
+      12,
+      92,
+    );
+  }
+
+  resolvePostedQuest(quest) {
+    const hero = this.pickQuestHero(quest);
+    const dungeon = this.buildingById.dungeon;
+    const spotId = quest.type === 'trust' ? 'complaint_barrel' : 'dungeon';
+    const place = this.placeById[spotId] || dungeon;
+    const spot = this.doorById[spotId] || this.doorById.dungeon;
+
+    if (!hero) {
+      const d = { gold: -Math.ceil(quest.cost / 2), threat: quest.difficulty * 2, morale: -2 };
+      this.applyDeltas(d);
+      this.floatDeltas(place.x, place.y - (place.h || 58) - 10, d);
+      this.game.events.emit('gwg-event', `${quest.name} expired. Nobody volunteered, which is technically feedback.`);
+      return;
+    }
+
+    const chance = this.getQuestSuccessChance(hero, quest);
+    const whaleSolve = this.isWhaleHero(hero.def) && Math.random() < 0.22 + this.getPlaceLevel(this.buildingById.whale) * 0.06;
+    const success = whaleSolve || Math.random() * 100 <= chance;
+    const guildBonus = this.getPlaceLevel(this.buildingById.guildhall) * 12;
+    const dungeonBonus = this.getPlaceLevel(this.buildingById.dungeon) * 10;
+    let text;
+    let bubble;
+    let deltas;
+
+    if (whaleSolve) {
+      const reward = quest.reward + guildBonus + dungeonBonus + this.getPlaceLevel(this.buildingById.whale) * 35;
+      deltas = {
+        gold: reward,
+        trust: -Math.max(2, quest.difficulty),
+        corruption: quest.difficulty + 3,
+        morale: -Math.max(1, Math.floor(quest.risk / 2)),
+        threat: -Math.max(2, Math.floor(quest.threatReduction / 2)),
+      };
+      text = `${hero.def.name} solved ${quest.name} by applying superior purchasing decisions. ${quest.whale}`;
+      bubble = 'Receipt victory.';
+      hero.stats.spent += Math.ceil(reward / 4);
+      this.burstCoins(44);
+    } else if (success) {
+      const honest = this.isHonestHero(hero.def);
+      deltas = {
+        gold: quest.reward + guildBonus + dungeonBonus,
+        trust: quest.trust + (honest ? 2 : 0),
+        morale: quest.morale + 1,
+        corruption: quest.corruption,
+        threat: -quest.threatReduction,
+      };
+      text = `${hero.def.name} completed ${quest.name}. ${quest.success}`;
+      bubble = honest ? 'Earned loot.' : quest.bubble;
+      hero.stats.power += honest ? 1 : 0;
+      hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 8, 0, 100);
+      this.stats.questsCompleted += 1;
+      if (honest) this.stats.honestQuestSuccesses += 1;
+    } else {
+      deltas = {
+        gold: Math.floor(quest.reward * 0.2),
+        trust: -Math.max(1, Math.floor(quest.risk / 2)),
+        morale: -quest.risk,
+        corruption: quest.type === 'shady' ? 2 : 0,
+        threat: quest.difficulty * 3,
+      };
+      text = `${hero.def.name} failed ${quest.name}. ${quest.failure}`;
+      bubble = 'This scaled badly.';
+      hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - quest.risk * 4, 0, 100);
+      hero.stats.debt += quest.risk * 8;
+    }
+
+    this.applyDeltas(deltas);
+    this.floatDeltas(place.x, place.y - (place.h || 58) - 10, deltas);
+    this.game.events.emit('gwg-event', text);
+    this.checkObjectives();
+    this.walkTo(hero, spot, () => {
+      this.say(hero, bubble, true);
+      this.scheduleAmbient(hero, Phaser.Math.Between(2500, 5200));
+    });
+  }
+
+  sendHeroAway(hero, cycles = 2) {
+    this.interruptHero(hero);
+    hero.awayUntil = this.day + cycles;
+    hero.state = 'away';
+    hero.container.setAlpha(0.28);
+    hero.stats.loyalty = Math.max(0, hero.stats.loyalty - 18);
+    this.floatText(hero.container.x, hero.container.y - 36, 'LEFT TOWN', '#f0938f');
+  }
+
+  chooseHeroAction(hero) {
+    const R = this.resources;
+    const tavern = this.getPlaceLevel(this.buildingById.tavern);
+    const training = this.getPlaceLevel(this.buildingById.training);
+    const blacksmith = this.getPlaceLevel(this.buildingById.blacksmith);
+    const whale = this.getPlaceLevel(this.buildingById.whale);
+    const complaint = this.getPlaceLevel(this.decorationById.complaint_barrel);
+    const debtBooth = this.getPlaceLevel(this.decorationById.debt_collector_booth);
+    const market = this.getPlaceLevel(this.buildingById.market);
+
+    if (R.trust < 30 && this.isHonestHero(hero.def) && Math.random() < 0.34) {
+      return {
+        building: 'complaint_barrel',
+        text: `${hero.def.name} left town after discovering the fairness brochure was decorative.`,
+        bubble: 'I need honest air.',
+        d: { trust: -1, morale: -2 + Math.min(2, complaint) },
+        leave: true,
+      };
+    }
+
+    if (R.morale < 30 && (hero.def.personality === 'Ragequitter' || Math.random() < 0.25)) {
+      return {
+        building: 'tavern',
+        text: `${hero.def.name} ragequit into a tavern chair. The chair requested hazard pay.`,
+        bubble: 'I retire loudly.',
+        d: { morale: -2 + Math.min(2, tavern), trust: -1 },
+      };
+    }
+
+    if (R.corruption > 70 && this.isDebtHero(hero.def) && Math.random() < 0.58) {
+      hero.stats.debt += 18 + debtBooth * 6;
+      return {
+        building: 'debt_collector_booth',
+        text: `${hero.def.name} became a debt problem with legs. The booth applauded internally.`,
+        bubble: 'My debt leveled up.',
+        d: { gold: 35 + debtBooth * 18, corruption: 2 + debtBooth, morale: -2 },
+      };
+    }
+
+    if (this.isWhaleHero(hero.def) && Math.random() < 0.48 + whale * 0.05) {
+      const income = 100 + whale * 75 + Math.floor(R.corruption * 1.4);
+      hero.stats.spent += Math.floor(income / 3);
+      return {
+        building: 'whale',
+        text: `${hero.def.name} bought momentum and called it mastery.`,
+        bubble: 'Momentum purchased.',
+        d: { gold: income, trust: -2 - Math.floor(whale / 2), corruption: 2 + whale },
+        whale: true,
+      };
+    }
+
+    if (R.threat > 65 && hero.stats.power >= 7 && Math.random() < 0.45) {
+      return {
+        building: 'dungeon',
+        text: `${hero.def.name} pushed back the dungeon before it billed the town.`,
+        bubble: 'Gate handled.',
+        d: { threat: -(5 + blacksmith), morale: 1, trust: this.isHonestHero(hero.def) ? 1 : 0 },
+      };
+    }
+
+    if (this.isHonestHero(hero.def) && Math.random() < 0.58) {
+      const gain = training + Math.floor(blacksmith / 2);
+      hero.stats.power += gain;
+      hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 4, 0, 100);
+      return {
+        building: Math.random() < 0.55 ? 'training' : 'blacksmith',
+        text: `${hero.def.name} trained honestly and gained ${gain} power. A slow miracle.`,
+        bubble: `+${gain} power. Earned.`,
+        d: { trust: 1, morale: 1 + Math.floor(training / 2) },
+      };
+    }
+
+    if (hero.def.personality === 'Suspicious Merchant' && market >= 3 && Math.random() < 0.55) {
+      return {
+        building: 'market',
+        text: `${hero.def.name} optimized prices until the price tags looked guilty.`,
+        bubble: 'Dynamic suffering.',
+        d: { gold: 40 + market * 18, corruption: market >= 4 ? 2 : 1, trust: market >= 4 ? -1 : 0 },
+      };
+    }
+
+    const rolled = rollHeroEvent(hero.def);
+    return {
+      ...rolled,
+      d: { ...rolled.d },
+    };
+  }
+
   runCycle() {
     if (this.cycleRunning) return;
     this.cycleRunning = true;
 
     this.day += 1;
     this.registry.set('day', this.day);
+    this.returnAwayHeroes();
 
     const steps = [];
     steps.push(() => {
       this.game.events.emit('gwg-event', `Day ${this.day}: the gates open.`);
     });
 
+    const questsToResolve = [...this.postedQuests];
+    if (questsToResolve.length > 0) {
+      for (const quest of questsToResolve) {
+        steps.push(() => this.resolvePostedQuest(quest));
+      }
+    } else {
+      steps.push(() => {
+        this.game.events.emit('gwg-event', 'No quest bounties were posted. Heroes improvise, which is rarely cheaper.');
+      });
+    }
+
     // the whale station always earns; whales in town make it earn harder
     steps.push(() => {
       const whale = this.buildingById.whale;
       const whaleCount = this.heroes.filter((h) => h.def.personality === 'Noble Whale').length;
       const whaleLevel = this.getPlaceLevel(whale);
-      const income = 240 + whaleLevel * 90 + whaleCount * 180 + Phaser.Math.Between(0, 160);
+      const income = 180 + whaleLevel * 95 + whaleCount * 155 + Math.floor(this.resources.corruption * 2.2) + Phaser.Math.Between(0, 120);
       const d = {
         gold: income,
         trust: -Phaser.Math.Between(3, 5 + whaleLevel),
@@ -962,10 +1603,10 @@ export default class TownScene extends Phaser.Scene {
     }
 
     // a handful of heroes act out their day: walk to the building, then speak
-    const actorCount = Phaser.Math.Clamp(5 + this.getPlaceLevel(this.buildingById.guildhall), 6, 10);
-    const actors = Phaser.Utils.Array.Shuffle([...this.heroes]).slice(0, actorCount);
+    const actorCount = Phaser.Math.Clamp(5 + this.getPlaceLevel(this.buildingById.guildhall), 6, 11);
+    const actors = Phaser.Utils.Array.Shuffle([...this.getActiveHeroes()]).slice(0, actorCount);
     for (const hero of actors) {
-      const ev = rollHeroEvent(hero.def);
+      const ev = this.chooseHeroAction(hero);
       steps.push(() => {
         const b = this.placeById[ev.building] || this.buildingById.guildhall;
         const spot = this.doorById[ev.building] || this.doorById.guildhall;
@@ -976,10 +1617,15 @@ export default class TownScene extends Phaser.Scene {
         // satire stat bookkeeping
         if (ev.building === 'training') hero.stats.power += this.getPlaceLevel(this.buildingById.training);
         if (ev.d.gold > 0) hero.stats.spent += ev.d.gold;
+        if (ev.whale) {
+          this.burstCoins(34);
+          this.triggerWhaleReaction();
+        }
 
         this.walkTo(hero, spot, () => {
           this.say(hero, ev.bubble, true);
-          this.scheduleAmbient(hero, Phaser.Math.Between(3000, 6000));
+          if (ev.leave) this.sendHeroAway(hero, 2);
+          else this.scheduleAmbient(hero, Phaser.Math.Between(3000, 6000));
         });
       });
     }
@@ -987,27 +1633,57 @@ export default class TownScene extends Phaser.Scene {
     // world pressure
     steps.push(() => {
       const R = this.resources;
+      const marketLevel = this.getPlaceLevel(this.buildingById.market);
+      const tavernLevel = this.getPlaceLevel(this.buildingById.tavern);
+      const dungeonLevel = this.getPlaceLevel(this.buildingById.dungeon);
+      const complaintLevel = this.getPlaceLevel(this.decorationById.complaint_barrel);
+      const debtLevel = this.getPlaceLevel(this.decorationById.debt_collector_booth);
       const passive = {
-        gold: this.getPlaceLevel(this.buildingById.market) * 8,
-        morale: Math.max(0, this.getPlaceLevel(this.buildingById.tavern) - 1),
-        threat: Phaser.Math.Between(2, 5) - Math.floor(this.getPlaceLevel(this.buildingById.dungeon) / 2),
+        gold: marketLevel * 18 + this.getPlaceLevel(this.buildingById.guildhall) * 6,
+        morale: Math.max(0, tavernLevel + complaintLevel - 2),
+        corruption: marketLevel >= 4 ? 1 : 0,
+        threat: Phaser.Math.Between(4, 8) + dungeonLevel - Math.floor(complaintLevel / 2),
       };
       this.applyDeltas(passive);
       this.floatDeltas(PLAZA.x, PLAZA.y - 64, passive);
       if (passive.gold || passive.morale) {
         this.game.events.emit('gwg-event', `Town upgrades paid off: +${passive.gold}g, +${passive.morale} Morale.`);
       }
-      if (R.corruption >= 60) {
-        this.applyDeltas({ morale: -3 });
-        this.game.events.emit('gwg-event', 'Rumors of rigged loot tables spread through town. Morale -3.');
+      if (R.trust < 30) {
+        const barrel = this.decorationById.complaint_barrel;
+        const d = { trust: -1, morale: -Math.max(1, 4 - complaintLevel) };
+        this.applyDeltas(d);
+        this.floatDeltas(barrel.x, barrel.y - 44, d);
+        this.game.events.emit('gwg-event', 'Citizens discovered the fairness brochure was decorative.');
+        const honest = this.getActiveHeroes().filter((hero) => this.isHonestHero(hero.def));
+        if (honest.length > 0 && Math.random() < 0.5) {
+          const hero = Phaser.Utils.Array.GetRandom(honest);
+          this.say(hero, 'Decorative fairness?', true);
+          this.sendHeroAway(hero, 2);
+        }
       }
-      if (R.trust <= 20) {
-        this.game.events.emit('gwg-event', 'Townsfolk eye the Guild Hall with open suspicion.');
+      if (R.corruption >= 70) {
+        const booth = this.decorationById.debt_collector_booth;
+        const d = { gold: 45 + debtLevel * 22, corruption: 2, trust: -2, morale: -1 };
+        this.applyDeltas(d);
+        this.floatDeltas(booth.x, booth.y - 62, d);
+        this.game.events.emit('gwg-event', 'The town accountant renamed corruption to strategic sparkle.');
+      }
+      if (R.morale < 30) {
+        const tavern = this.buildingById.tavern;
+        const d = { morale: -1, trust: -1 };
+        this.applyDeltas(d);
+        this.floatDeltas(tavern.x, tavern.y - tavern.h - 10, d);
+        this.game.events.emit('gwg-event', 'A hero retired to become a tutorial warning.');
       }
       if (R.threat >= 80) {
         const gate = this.buildingById.dungeon;
-        this.floatText(gate.x, gate.y - gate.h - 14, 'THE GATE RATTLES', '#e74c3c');
-        this.game.events.emit('gwg-event', 'The Dungeon Gate rattles. Something big wants out.');
+        const d = { gold: -Math.min(260, Math.floor(R.gold * 0.16)), trust: -4, morale: -5, threat: -22 };
+        this.applyDeltas(d);
+        this.floatDeltas(gate.x, gate.y - gate.h - 14, d);
+        this.floatText(gate.x, gate.y - gate.h - 34, 'TOWN ATTACK', '#e74c3c');
+        this.stats.threatEventsSurvived += 1;
+        this.game.events.emit('gwg-event', 'The dungeon sent a complaint in person.');
         const candidates = this.heroes.filter((h) => h.state !== 'inside' && !h.bubble);
         if (candidates.length > 0) {
           this.say(
@@ -1017,10 +1693,14 @@ export default class TownScene extends Phaser.Scene {
           );
         }
       }
+      this.stats.trustStreak = this.resources.trust > 50 ? this.stats.trustStreak + 1 : 0;
+      this.checkObjectives();
     });
 
     steps.push(() => {
       this.cycleRunning = false;
+      this.refreshQuestNotices();
+      this.checkObjectives();
       this.game.events.emit('gwg-cycle-done');
     });
 
