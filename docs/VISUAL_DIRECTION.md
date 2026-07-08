@@ -17,6 +17,16 @@ A **cozy, colorful top-down / 2.5D pixel fantasy town**:
 - small-scale charm (Stardew-adjacent), not gritty or realistic
 - satire tone carried by animation and signage, not UI text walls
 
+Current prototype priorities:
+
+- keep the town readable at 1280x720 without zoom
+- preserve the map-first design: the town is the interface
+- use only small HUD elements, compact tooltips, and short speech bubbles
+- no dashboard panels, admin screens, tabs, or card layouts
+- keep all Golden Whale economy jokes fictional and in-game only
+- upgrade/progression visuals should be small map changes, pulses, glow, signs,
+  or particles rather than management UI
+
 ## Asset-replaceable architecture
 
 All important game objects resolve their texture at runtime through
@@ -57,3 +67,12 @@ The station must remain **the strongest visual identity in the scene**, in
 placeholder and final art alike: gold/glowing, whale signage, coin particles,
 red carpet + VIP rope, suspiciously premium. If a visual pass makes another
 building compete with it for attention, the pass is wrong.
+
+Future Golden Whale assets should exaggerate:
+
+- cursed-profit glow
+- whale iconography
+- premium rope/carpet entrance
+- coin/sparkle particles
+- nearby poor-hero queue and refund denial signage
+- a tone of "technically optional, obviously unfair"

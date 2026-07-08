@@ -13,6 +13,12 @@ import {
   THREAT_REACTIONS,
   WHALE_REACTIONS,
 } from '../data/dialogue.js';
+import {
+  getUpgradeCost,
+  getUpgradeDef,
+  getUpgradeEffect,
+  getUpgradeFlavor,
+} from '../data/upgrades.js';
 import { loadAssets, ensureFallbacks, resolveTexture, buildingTexture, heroTexture } from '../assets.js';
 
 const WIDTH = 1280;
@@ -43,6 +49,7 @@ export default class TownScene extends Phaser.Scene {
 
     this.day = 1;
     this.resources = { gold: 500, trust: 50, corruption: 10, morale: 60, threat: 20 };
+    this.upgradeLevels = {};
     this.cycleRunning = false;
 
     this.buildTerrain();
@@ -117,13 +124,16 @@ export default class TownScene extends Phaser.Scene {
   buildBuildings() {
     this.doorSpots = [];
     this.buildingById = {};
+    this.placeSpriteById = {};
 
     for (const b of BUILDINGS) {
       this.buildingById[b.id] = b;
+      this.add.ellipse(b.x, b.y - 8, b.w * 0.8, 26, 0x10151d, 0.22).setDepth(b.y - 2);
       const img = this.add.image(b.x, b.y, buildingTexture(this, b))
         .setOrigin(0.5, 1)
         .setDepth(b.y)
         .setInteractive({ useHandCursor: true });
+      this.placeSpriteById[b.id] = img;
 
       // hover/click feedback: tint plus a small grow pop
       img.on('pointerover', () => {
@@ -169,9 +179,12 @@ export default class TownScene extends Phaser.Scene {
       const key = resolveTexture(this, d.assetKey, d.fallbackKey);
       if (!key) continue;
 
+      this.add.ellipse(d.x, d.y - 5, (d.w || 42) * 0.72, 15, 0x10151d, 0.16)
+        .setDepth(d.y - 2);
       const img = this.add.image(d.x, d.y, key)
         .setOrigin(0.5, 1)
         .setDepth(d.y + (d.depthOffset || 0));
+      this.placeSpriteById[d.id] = img;
 
       if (d.scale) img.setScale(d.scale);
 
@@ -317,23 +330,75 @@ export default class TownScene extends Phaser.Scene {
       wordWrap: { width: 300 },
       lineSpacing: 4,
     }).setDepth(5001);
+    this.tooltipButton = this.add.rectangle(0, 0, 156, 28, 0x8a5a2b, 1)
+      .setOrigin(0, 0)
+      .setStrokeStyle(2, 0xf6c945)
+      .setDepth(5001)
+      .setInteractive({ useHandCursor: true });
+    this.tooltipButtonLabel = this.add.text(0, 0, '', {
+      fontFamily: '"Courier New", monospace',
+      fontSize: '13px',
+      fontStyle: 'bold',
+      color: '#fff6dc',
+      stroke: '#0c1118',
+      strokeThickness: 2,
+    }).setOrigin(0.5).setDepth(5002);
+    this.tooltipButton.on('pointerover', () => this.tooltipButton.setFillStyle(0xa66f38));
+    this.tooltipButton.on('pointerout', () => this.tooltipButton.setFillStyle(0x8a5a2b));
+    this.tooltipButton.on('pointerup', () => this.tryUpgradeTooltipTarget());
     this.hideTooltip();
 
     // clicking empty ground dismisses the tooltip
     this.input.on('pointerdown', (pointer, over) => {
-      if (over.length === 0) this.hideTooltip();
+      const b = this.tooltipBounds;
+      const insideTooltip = b
+        && pointer.x >= b.x && pointer.x <= b.x + b.w
+        && pointer.y >= b.y && pointer.y <= b.y + b.h;
+      if (over.length === 0 && !insideTooltip) this.hideTooltip();
     });
   }
 
+  getPlaceLevel(place) {
+    if (!place) return 1;
+    if (this.upgradeLevels[place.id]) return this.upgradeLevels[place.id];
+    const parsed = Number(place.level);
+    return Number.isFinite(parsed) ? parsed : 1;
+  }
+
+  getUpgradeInfo(place) {
+    const def = getUpgradeDef(place.id);
+    const level = this.getPlaceLevel(place);
+    const cost = def ? getUpgradeCost(def, level) : (place.upgradeCost ?? null);
+    const flavor = def ? getUpgradeFlavor(def, level) : (place.upgradeFlavor || place.upgrade || null);
+    const effect = def ? getUpgradeEffect(def, level) : place.effect;
+    const maxed = def ? level >= def.maxLevel : !cost;
+    return { def, level, cost, flavor, effect, maxed };
+  }
+
   showTooltip(b) {
-    const level = b.level !== undefined ? `Level: ${b.level}` : null;
-    const effect = b.effect ? `Effect: ${b.effect}` : null;
-    const upgrade = b.upgrade ? `Upgrade: ${b.upgrade}` : 'Upgrade: decorative, probably';
+    this.tooltipTarget = b;
+    const info = this.getUpgradeInfo(b);
+    const level = `Level: ${info.level}${info.maxed ? ' (max)' : ''}`;
+    const effect = info.effect ? `Effect: ${info.effect}` : null;
+    const detailLines = [b.description, ...(b.tooltipLines || [])].filter(Boolean).slice(0, 4);
+    const upgradeText = info.maxed
+      ? 'Upgrade: maxed, allegedly balanced'
+      : `Upgrade: ${info.cost}g - ${info.flavor || 'questionable improvements'}`;
 
     this.tooltipTitle.setText(b.name);
-    this.tooltipText.setText(b.description || 'A suspiciously undocumented town object.');
+    this.tooltipText.setText(detailLines.join('\n'));
     this.tooltipEffects.setText([level, effect].filter(Boolean).join('\n'));
-    this.tooltipUpgrade.setText(upgrade);
+    this.tooltipUpgrade.setText(upgradeText);
+
+    const canUpgrade = Boolean(info.cost && !info.maxed);
+    const canAfford = canUpgrade && this.resources.gold >= info.cost;
+    this.tooltipButton.setVisible(canUpgrade);
+    this.tooltipButtonLabel.setVisible(canUpgrade);
+    if (canUpgrade) {
+      this.tooltipButtonLabel.setText(canAfford ? `Upgrade ${info.cost}g` : `Need ${info.cost}g`);
+      this.tooltipButton.setAlpha(canAfford ? 1 : 0.62);
+      this.tooltipButtonLabel.setAlpha(canAfford ? 1 : 0.72);
+    }
 
     const pad = 12;
     const gap = 7;
@@ -343,17 +408,21 @@ export default class TownScene extends Phaser.Scene {
       this.tooltipText.width,
       this.tooltipEffects.width,
       this.tooltipUpgrade.width,
+      canUpgrade ? this.tooltipButton.width : 0,
     );
     const tw = Math.min(340, contentW + pad * 2);
     const effectsH = this.tooltipEffects.text ? this.tooltipEffects.height + gap : 0;
+    const buttonH = canUpgrade ? this.tooltipButton.height + gap : 0;
     const th = pad
       + this.tooltipTitle.height + gap
       + this.tooltipText.height + gap
       + effectsH
       + this.tooltipUpgrade.height
+      + buttonH
       + pad;
     const x = Phaser.Math.Clamp(b.x - tw / 2, 8, WIDTH - tw - 8);
     const y = Phaser.Math.Clamp(b.y - (b.h || 60) - th - 10, 48, HEIGHT - th - 52);
+    this.tooltipBounds = { x, y, w: tw, h: th };
 
     if (this.tooltipPanel) {
       this.tooltipPanel.setPosition(x, y).setDisplaySize(tw, th).setVisible(true);
@@ -376,9 +445,14 @@ export default class TownScene extends Phaser.Scene {
     this.tooltipEffects.setPosition(x + pad, ty).setVisible(Boolean(this.tooltipEffects.text));
     ty += effectsH;
     this.tooltipUpgrade.setPosition(x + pad, ty).setVisible(true);
+    ty += this.tooltipUpgrade.height + gap;
+    if (canUpgrade) {
+      this.tooltipButton.setPosition(x + pad, ty).setVisible(true);
+      this.tooltipButtonLabel.setPosition(x + pad + this.tooltipButton.width / 2, ty + this.tooltipButton.height / 2).setVisible(true);
+    }
 
     if (this.tooltipTimer) this.tooltipTimer.remove();
-    this.tooltipTimer = this.time.delayedCall(5200, () => this.hideTooltip());
+    this.tooltipTimer = this.time.delayedCall(6500, () => this.hideTooltip());
   }
 
   hideTooltip() {
@@ -388,6 +462,63 @@ export default class TownScene extends Phaser.Scene {
     this.tooltipText.setVisible(false);
     this.tooltipEffects.setVisible(false);
     this.tooltipUpgrade.setVisible(false);
+    this.tooltipButton.setVisible(false);
+    this.tooltipButtonLabel.setVisible(false);
+    this.tooltipTarget = null;
+    this.tooltipBounds = null;
+  }
+
+  tryUpgradeTooltipTarget() {
+    const place = this.tooltipTarget;
+    if (!place) return;
+
+    const info = this.getUpgradeInfo(place);
+    if (!info.cost || info.maxed) {
+      this.game.events.emit('gwg-event', `${place.name} is already as questionable as allowed.`);
+      return;
+    }
+    if (this.resources.gold < info.cost) {
+      this.floatText(place.x, place.y - (place.h || 50) - 8, 'NOT ENOUGH GOLD', '#f0938f');
+      this.game.events.emit('gwg-event', `${place.name} demanded ${info.cost}g. The treasury coughed politely.`);
+      return;
+    }
+
+    const bonus = info.def?.deltas || {};
+    const deltas = {
+      ...bonus,
+      gold: -info.cost + (bonus.gold || 0),
+    };
+    this.applyDeltas(deltas);
+    const nextLevel = info.level + 1;
+    this.upgradeLevels[place.id] = nextLevel;
+
+    const sprite = this.placeSpriteById[place.id];
+    if (sprite) {
+      const baseScaleX = sprite.scaleX;
+      const baseScaleY = sprite.scaleY;
+      this.tweens.add({
+        targets: sprite,
+        scaleX: baseScaleX * 1.08,
+        scaleY: baseScaleY * 1.08,
+        duration: 140,
+        yoyo: true,
+        ease: 'Back.easeOut',
+      });
+      sprite.setTint(0xfff3c0);
+      this.time.delayedCall(220, () => sprite.clearTint());
+    }
+
+    if (place.id === 'whale') {
+      this.coinBurst.explode(64);
+      this.triggerWhaleReaction();
+    }
+
+    this.floatDeltas(place.x, place.y - (place.h || 58) - 10, deltas);
+    const eventText = info.def?.event
+      ? info.def.event(place.name, nextLevel)
+      : `${place.name} upgraded. The town pretends this was wise.`;
+    this.game.events.emit('gwg-event', `${eventText} Level ${nextLevel}.`);
+    this.showTooltip(place);
   }
 
   // --- heroes -------------------------------------------------------------
@@ -523,6 +654,13 @@ export default class TownScene extends Phaser.Scene {
         return;
       }
     }
+    if ((spot.id === 'whale' || spot.id === 'vip_rope_entrance') && hero.def.personality === 'Noble Whale') {
+      if (Math.random() < 0.85) {
+        this.say(hero, 'Premium pathing.', true);
+        this.enterBuilding(hero);
+        return;
+      }
+    }
 
     if (Math.random() < 0.55) {
       this.enterBuilding(hero);
@@ -597,11 +735,11 @@ export default class TownScene extends Phaser.Scene {
   floatText(x, y, str, color) {
     const t = this.add.text(x, y, str, {
       fontFamily: '"Courier New", monospace',
-      fontSize: '13px',
+      fontSize: '14px',
       fontStyle: 'bold',
       color,
       stroke: '#141a24',
-      strokeThickness: 3,
+      strokeThickness: 4,
     }).setOrigin(0.5).setDepth(4000);
     this.tweens.add({
       targets: t, y: y - 38, alpha: 0,
@@ -712,8 +850,13 @@ export default class TownScene extends Phaser.Scene {
     steps.push(() => {
       const whale = this.buildingById.whale;
       const whaleCount = this.heroes.filter((h) => h.def.personality === 'Noble Whale').length;
-      const income = 300 + whaleCount * 180 + Phaser.Math.Between(0, 160);
-      const d = { gold: income, trust: -Phaser.Math.Between(3, 6), corruption: Phaser.Math.Between(4, 8) };
+      const whaleLevel = this.getPlaceLevel(whale);
+      const income = 240 + whaleLevel * 90 + whaleCount * 180 + Phaser.Math.Between(0, 160);
+      const d = {
+        gold: income,
+        trust: -Phaser.Math.Between(3, 5 + whaleLevel),
+        corruption: Phaser.Math.Between(3 + whaleLevel, 7 + whaleLevel),
+      };
       this.applyDeltas(d);
       this.coinBurst.explode(42);
       this.floatDeltas(whale.x, whale.y - whale.h - 10, d);
@@ -736,7 +879,8 @@ export default class TownScene extends Phaser.Scene {
     }
 
     // a handful of heroes act out their day: walk to the building, then speak
-    const actors = Phaser.Utils.Array.Shuffle([...this.heroes]).slice(0, 7);
+    const actorCount = Phaser.Math.Clamp(5 + this.getPlaceLevel(this.buildingById.guildhall), 6, 10);
+    const actors = Phaser.Utils.Array.Shuffle([...this.heroes]).slice(0, actorCount);
     for (const hero of actors) {
       const ev = rollHeroEvent(hero.def);
       steps.push(() => {
@@ -747,7 +891,7 @@ export default class TownScene extends Phaser.Scene {
         this.game.events.emit('gwg-event', ev.text);
 
         // satire stat bookkeeping
-        if (ev.building === 'training') hero.stats.power += 1;
+        if (ev.building === 'training') hero.stats.power += this.getPlaceLevel(this.buildingById.training);
         if (ev.d.gold > 0) hero.stats.spent += ev.d.gold;
 
         this.walkTo(hero, spot, () => {
@@ -760,7 +904,16 @@ export default class TownScene extends Phaser.Scene {
     // world pressure
     steps.push(() => {
       const R = this.resources;
-      this.applyDeltas({ threat: Phaser.Math.Between(2, 5) });
+      const passive = {
+        gold: this.getPlaceLevel(this.buildingById.market) * 8,
+        morale: Math.max(0, this.getPlaceLevel(this.buildingById.tavern) - 1),
+        threat: Phaser.Math.Between(2, 5) - Math.floor(this.getPlaceLevel(this.buildingById.dungeon) / 2),
+      };
+      this.applyDeltas(passive);
+      this.floatDeltas(PLAZA.x, PLAZA.y - 64, passive);
+      if (passive.gold || passive.morale) {
+        this.game.events.emit('gwg-event', `Town upgrades paid off: +${passive.gold}g, +${passive.morale} Morale.`);
+      }
       if (R.corruption >= 60) {
         this.applyDeltas({ morale: -3 });
         this.game.events.emit('gwg-event', 'Rumors of rigged loot tables spread through town. Morale -3.');

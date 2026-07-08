@@ -5,7 +5,8 @@
 //              the manifest path and it replaces the placeholder automatically.
 // fallback  -> TEMPORARY debug-art generator used while the asset is missing;
 //              it draws texture `ph-<id>` from wall/roof/style below.
-// level/effect/upgrade are tooltip placeholders for the future economy pass.
+// tooltipLines, upgradeCost, upgradeFlavor, preferredNpcTypes, and
+// eventPoolCategory keep town content data-driven instead of scene-hardcoded.
 import { makeBuildingPlaceholder } from '../textures.js';
 
 export const BUILDINGS = [
@@ -18,6 +19,15 @@ export const BUILDINGS = [
     fallback: makeBuildingPlaceholder,
     wall: 0x9c6a3f, roof: 0xb0413c, style: 'house',
     level: 1, effect: 'Morale +1 per rowdy evening', upgrade: '250g',
+    tooltipLines: [
+      'A warm place to complain about cold balance.',
+      'The chairs have heard every patch note theory.',
+      'Now serving ale, regret, and suspicious optimism.',
+    ],
+    upgradeCost: 250,
+    upgradeFlavor: 'Adds more chairs for heroes to complain in.',
+    preferredNpcTypes: ['Veteran', 'Angry Veteran', 'Ragequitter', 'Balance Refugee', 'Bankrupt Bard'],
+    eventPoolCategory: 'veteranComplaints',
   },
   {
     id: 'blacksmith',
@@ -28,6 +38,15 @@ export const BUILDINGS = [
     fallback: makeBuildingPlaceholder,
     wall: 0x6e6a72, roof: 0x4a4650, style: 'house',
     level: 1, effect: 'Gear quality +5%', upgrade: '300g',
+    tooltipLines: [
+      'Honest steel for heroes who cannot afford destiny.',
+      'The blacksmith now sells hope separately.',
+      'Every hammer strike says "try anyway."',
+    ],
+    upgradeCost: 300,
+    upgradeFlavor: 'Now sells swords sharp enough to cut through denial.',
+    preferredNpcTypes: ['Honest Grinder', 'Disillusioned Blacksmith', 'Free Trial Paladin'],
+    eventPoolCategory: 'honestTraining',
   },
   {
     id: 'guildhall',
@@ -38,6 +57,15 @@ export const BUILDINGS = [
     fallback: makeBuildingPlaceholder,
     wall: 0xb99c6b, roof: 0x3e6db5, style: 'house',
     level: 2, effect: 'Posts 5 hero actions per cycle', upgrade: '400g',
+    tooltipLines: [
+      'The guild says this is a player-driven economy.',
+      'The players disagree, but in triplicate.',
+      'Fairness is in early access.',
+    ],
+    upgradeCost: 400,
+    upgradeFlavor: 'Improves quest paperwork and official excuses.',
+    preferredNpcTypes: ['Guild Clerk', 'Quest Intern', 'Patch Notes Prophet', 'Honest Grinder'],
+    eventPoolCategory: 'clericalWork',
   },
   {
     id: 'market',
@@ -48,6 +76,15 @@ export const BUILDINGS = [
     fallback: makeBuildingPlaceholder,
     wall: 0xc2a06a, roof: 0xd85b4a, style: 'stall',
     level: 1, effect: 'Raffle odds: rigged (favorably?)', upgrade: '200g',
+    tooltipLines: [
+      'Fresh potions, dynamic pricing, static suffering.',
+      'The market blamed dragon supply chains.',
+      'No refunds. Pre-emptively.',
+    ],
+    upgradeCost: 220,
+    upgradeFlavor: 'Adds dynamic pricing and static suffering.',
+    preferredNpcTypes: ['Suspicious Merchant', 'Sponsored Hero', 'Debt Goblin', 'Lootbox Philosopher'],
+    eventPoolCategory: 'marketGossip',
   },
   {
     id: 'training',
@@ -58,16 +95,37 @@ export const BUILDINGS = [
     fallback: makeBuildingPlaceholder,
     wall: 0x8a7a52, roof: 0x6d8a3f, style: 'house',
     level: 1, effect: '+1 power per honest visit', upgrade: '350g',
+    tooltipLines: [
+      'For heroes still pretending effort scales.',
+      'Sweat is free, which makes it suspicious.',
+      'The dummy fears receipts more than swords.',
+    ],
+    upgradeCost: 350,
+    upgradeFlavor: 'For heroes still pretending effort scales.',
+    preferredNpcTypes: ['Honest Grinder', 'Broke Optimist', 'Free Trial Paladin', 'Tutorial Goblin'],
+    eventPoolCategory: 'honestTraining',
   },
   {
     id: 'whale',
     name: 'Golden Whale Milking Station',
-    description: 'Gold glow, velvet rope, cursed margins. Trust sold separately by the thimble.',
+    description: 'Totally optional. Unless you enjoy winning.',
     x: 1035, y: 300, w: 200, h: 150,
     assetKey: 'building_golden_whale',
     fallback: makeBuildingPlaceholder,
     wall: 0xf2c744, roof: 0xd99a1f, style: 'whale',
-    level: 'MAX (paid)', effect: 'Prints gold; blocks poor hope; Trust -, Corruption +', upgrade: 'Your dignity',
+    level: 1,
+    effect: '+Gold, +Corruption, -Trust. Blocks poor hope.',
+    upgrade: '650g',
+    tooltipLines: [
+      'A sacred facility where fairness enters through the front door and exits as quarterly growth.',
+      'Every hero has equal opportunity to watch someone richer skip progression.',
+      'The Station does not sell power. It sells convenience shaped exactly like power.',
+      'The whale smiles. The economy does not.',
+    ],
+    upgradeCost: 650,
+    upgradeFlavor: 'Increases revenue, glow intensity, and moral distance.',
+    preferredNpcTypes: ['Noble Whale', 'Whale Apprentice', 'Suspicious Merchant', 'Premium Monk', 'Overleveled Toddler'],
+    eventPoolCategory: 'goldenWhalePurchases',
   },
   {
     id: 'dungeon',
@@ -78,5 +136,14 @@ export const BUILDINGS = [
     fallback: makeBuildingPlaceholder,
     wall: 0x5c5f6e, roof: 0x3a3d49, style: 'gate',
     level: '???', effect: 'Threat -4 per veteran clear', upgrade: 'Sealed by the ancients',
+    tooltipLines: [
+      'The dungeon now recommends a minimum wallet level.',
+      'Threat rises when nobody wants to be affordable bait.',
+      'The boss asked for a nerf and was ignored.',
+    ],
+    upgradeCost: 480,
+    upgradeFlavor: 'Lets danger enter the economy faster.',
+    preferredNpcTypes: ['Veteran', 'Lucky Idiot', 'Free Trial Paladin', 'Overleveled Toddler'],
+    eventPoolCategory: 'dungeonResults',
   },
 ];

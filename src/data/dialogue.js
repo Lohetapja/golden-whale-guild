@@ -8,34 +8,52 @@ export const IDLE_QUIPS = {
     'Earned, not bought.',
     'My starter sword has emotional value.',
     'One rep at a time.',
+    'I trained for three weeks and lost to a receipt.',
+    'I respect the grind. The grind is undecided.',
+    'My damage numbers are historically accurate.',
   ],
   'Noble Whale': [
     'My wallet, my rules.',
     'Is there a golder option?',
     'Chargeback? Never.',
     'I tip in gold bars.',
+    'Personal growth has excellent exchange rates.',
+    'The meta is whatever I fund.',
+    'I prefer my challenge curated.',
   ],
   'Lucky Idiot': [
     'Ooh, shiny!',
     'What does this do?',
     'The dungeon scales with rich people now?',
     'I found a bug! A real one.',
+    'I pressed buy and became folklore.',
+    'Numbers are just vibes with swords.',
+    'I accidentally skipped character development.',
   ],
   Veteran: [
     'I remember when swords had to be earned.',
     'Back in patch 1.0...',
     'Balance is dead.',
+    'They nerfed effort again.',
+    'The meta is now inheritance.',
+    'This is power sprinting.',
   ],
   'Debt Goblin': [
     'I signed nothing. The contract signed me.',
     'Interest? Later.',
     'The VIP rope is just a suggestion, right?',
     'Technically not stealing.',
+    'My debt has a health bar now.',
+    'I am not broke. I am pre-monetized.',
+    'My wallet entered a dungeon and did not return.',
   ],
   Ragequitter: [
     "I'm SO done.",
     'One more day. ONE.',
     'This town is rigged.',
+    'A level 2 noble crit harder than my life choices.',
+    'They patched skill out of my patience.',
+    'I am uninstalling my expectations.',
   ],
   'Whale Apprentice': [
     'I only bought one booster. This hour.',
@@ -87,6 +105,62 @@ export const IDLE_QUIPS = {
     'REPENT: hotfix approaches.',
     'It is written: "minor adjustments."',
   ],
+  'Premium Monk': [
+    'Fairness is attachment. Release it.',
+    'Convenience is a sacred shortcut.',
+    'I have transcended the free tier.',
+    'The whale is generous to liquidity.',
+    'Inner peace costs fantasy gold.',
+  ],
+  'Refund Seeker': [
+    'I have a receipt and no leverage.',
+    'The desk denied me preemptively.',
+    'My claim was marked "skill issue."',
+    'No refunds. No guilt. No balance patch.',
+    'I would like to speak to the curse.',
+  ],
+  'Free Trial Paladin': [
+    'My shield has limited-time courage.',
+    'I am brave until the timer ends.',
+    'The dungeon wants my billing address.',
+    'My oath expires at sundown.',
+    'My blessing has a cooldown and a clause.',
+  ],
+  'Overleveled Toddler': [
+    'My sword is taller than consequences.',
+    'I critted the tutorial.',
+    'Bedtime is endgame content.',
+    'The boss called my guardian.',
+    'I bought the Deluxe Nap Removal Bundle.',
+  ],
+  'Lootbox Philosopher': [
+    'Is disappointment random if expected?',
+    'The crate opens us, really.',
+    'Probability has a marketing department.',
+    'I think, therefore I reroll.',
+    'A hat recolor is just fate wearing beige.',
+  ],
+  'Bankrupt Bard': [
+    'My ballad has a payment plan.',
+    'I rhyme with insolvency now.',
+    'The lute is collateral.',
+    'Tip jar accepts apologies.',
+    'My chorus is in collections.',
+  ],
+  'Quest Intern': [
+    'I posted the dragon under "entry level."',
+    'Exposure is not fireproof.',
+    'The quest board says danger is sponsored.',
+    'I filed the boss under deliverables.',
+    'My mentor is a stamp.',
+  ],
+  'Disillusioned Blacksmith': [
+    'I cannot temper a receipt.',
+    'My best sword lost to a coupon.',
+    'Craftsmanship needs a patch.',
+    'Steel is honest. Markets are not.',
+    'I forged effort. They bought numbers.',
+  ],
 };
 
 // What NPCs say when the Golden Whale Milking Station visibly cashes in.
@@ -107,6 +181,14 @@ export const WHALE_REACTIONS = {
   'Tutorial Goblin': ['Lesson 12: this is fine, apparently.', 'New players, look away.'],
   'Balance Refugee': ['It follows me. The imbalance follows me.', 'Same whale, different town.'],
   'Patch Notes Prophet': ['As prophesied: the whale provides and takes.', 'The notes said "economy adjustments."'],
+  'Premium Monk': ['The whale provides convenience-shaped enlightenment.', 'Fairness is only a temporary debuff.'],
+  'Refund Seeker': ['That glow voided another warranty.', 'The receipt is somehow laughing.'],
+  'Free Trial Paladin': ['My trial ended before the loot dropped.', 'The whale skipped my oath cooldown.'],
+  'Overleveled Toddler': ['I bought a nap and got a legendary.', 'Goo goo, great margins.'],
+  'Lootbox Philosopher': ['The whale collapses all outcomes into profit.', 'Ah, ceremonial probability.'],
+  'Bankrupt Bard': ['The Station converted shame into operating revenue.', 'I can sing for coins I will immediately owe.'],
+  'Quest Intern': ['I need to update the quest risk disclosure.', 'Is this deliverable billable?'],
+  'Disillusioned Blacksmith': ['I cannot forge against liquidity.', 'That sword never touched a grindstone.'],
 };
 
 // Generic reactions when the Dungeon Gate rattles (threat very high).
@@ -115,6 +197,10 @@ export const THREAT_REACTIONS = [
   'Someone should really go in there.',
   'Not it.',
   'The dungeon sounds hungry.',
+  'The dungeon now recommends a minimum wallet level.',
+  'A free hero brought skill to a numbers fight.',
+  'The boss asked for a nerf and was ignored.',
+  'Someone tell the dungeon this is a prototype.',
 ];
 
 // What the whale-station doorman communicates to the insufficiently wealthy.
@@ -124,6 +210,9 @@ export const DENIED_LINES = [
   'Rope says no.',
   'Insufficient wallet.',
   'Come back richer.',
+  'Liquidity check failed.',
+  'Please acquire more destiny.',
+  'Fairness is temporarily unavailable.',
 ];
 
 // Muttered by poor NPCs waiting at the Poor Hero Queue sign.
@@ -132,4 +221,8 @@ export const QUEUE_LINES = [
   'Estimated wait: yes.',
   'I can see the gold from here.',
   'One day. One glorious day.',
+  'The queue builds character and resentment.',
+  'My budget-friendly build is spiritually damaged.',
+  'I am economically authentic.',
+  'The line has lore now.',
 ];

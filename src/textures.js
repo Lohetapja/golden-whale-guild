@@ -295,6 +295,72 @@ function makeProps(scene) {
   g.fillRect(28, 43, 36, 5);
   g.generateTexture('ethics_fountain', 92, 56);
   g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x4a2f1b);
+  g.fillRect(6, 26, 92, 10);
+  for (const px of [10, 34, 58, 82]) {
+    g.fillStyle(0x8a5a2b);
+    g.fillRect(px, 18, 7, 26);
+    g.fillStyle(0xd99a1f);
+    g.fillCircle(px + 3, 17, 4);
+  }
+  g.fillStyle(0xf2ead8);
+  g.fillRect(19, 4, 66, 16);
+  g.lineStyle(2, 0x1d2430);
+  g.strokeRect(19, 4, 66, 16);
+  g.fillStyle(0xc0392b);
+  g.fillRect(25, 10, 54, 3);
+  g.generateTexture('poor_hero_queue', 104, 50);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x6b4a2b);
+  g.fillRect(8, 12, 54, 36);
+  g.lineStyle(2, 0x3f2612);
+  g.strokeRect(8, 12, 54, 36);
+  g.fillStyle(0xf6c945);
+  g.fillRect(14, 18, 42, 6);
+  g.fillStyle(0xfff6dc);
+  g.fillRect(14, 28, 18, 12);
+  g.fillRect(36, 28, 14, 10);
+  g.fillStyle(0x6b4a2b);
+  g.fillRect(16, 48, 6, 16);
+  g.fillRect(48, 48, 6, 16);
+  g.generateTexture('sponsored_quest_board', 70, 66);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x6f747d);
+  g.fillRect(15, 14, 26, 26);
+  g.fillStyle(0x8a8f98);
+  g.fillRect(11, 10, 34, 8);
+  g.fillRect(9, 38, 38, 6);
+  g.fillStyle(0xf2ead8);
+  g.fillRect(19, 23, 18, 3);
+  g.fillRect(22, 29, 12, 3);
+  g.fillStyle(0xe86a92);
+  g.fillRect(4, 35, 4, 4);
+  g.fillStyle(0xffffff);
+  g.fillRect(48, 35, 4, 4);
+  g.generateTexture('balance_memorial', 56, 46);
+  g.destroy();
+
+  g = scene.add.graphics();
+  g.fillStyle(0x5a3825);
+  g.fillRect(6, 22, 62, 24);
+  g.fillStyle(0x7a4a24);
+  g.fillRect(2, 16, 70, 10);
+  g.fillStyle(0xf2ead8);
+  g.fillRect(16, 4, 42, 16);
+  g.lineStyle(2, 0x1d1414);
+  g.strokeRect(16, 4, 42, 16);
+  g.fillStyle(0xc0392b);
+  g.fillRect(23, 10, 28, 3);
+  g.fillStyle(0x2c2a2a);
+  g.fillRect(46, 28, 12, 5);
+  g.generateTexture('refund_denial_desk', 74, 54);
+  g.destroy();
 }
 
 // --- icon placeholders -------------------------------------------------------

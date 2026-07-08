@@ -283,6 +283,195 @@ export const EVENT_POOLS = {
       d: { trust: 1 },
     },
   ],
+
+  refundDenials: [
+    {
+      text: (n) => `${n} presented a receipt. The Refund Denial Desk presented a smaller desk.`,
+      bubble: 'Denied recursively.',
+      building: 'refund_denial_desk',
+      d: { trust: -1, corruption: 1 },
+    },
+    {
+      text: (n) => `${n} asked for a refund and received a lore explanation instead.`,
+      bubble: 'That is not gold.',
+      building: 'refund_denial_desk',
+      d: { morale: -1, trust: -1 },
+    },
+    {
+      text: (n) => `${n} learned "working as designed" is a complete sentence.`,
+      bubble: 'Designed by who?',
+      building: 'refund_denial_desk',
+      d: { trust: -2 },
+    },
+    {
+      text: (n) => `${n} filed a complaint so polite it was denied with manners.`,
+      bubble: 'At least polite.',
+      building: 'complaint_barrel',
+      d: { trust: 1, morale: -1 },
+    },
+  ],
+
+  premiumPilgrimage: [
+    {
+      text: (n) => `${n} meditated on the whale glow and called it balance.`,
+      bubble: 'Fairness is attachment.',
+      building: 'ethics_fountain',
+      d: { corruption: 2 },
+    },
+    {
+      text: (n) => `${n} donated fantasy gold to the sacred margin.`,
+      bubble: 'Convenience blesses.',
+      building: 'whale',
+      d: { gold: 150, trust: -1, corruption: 2 },
+    },
+    {
+      text: (n) => `${n} achieved enlightenment by skipping the grind respectfully.`,
+      bubble: 'I release effort.',
+      building: 'vip_rope_entrance',
+      d: { gold: 90, corruption: 2 },
+    },
+    {
+      text: (n) => `${n} declared fairness a worldly attachment and bought better numbers.`,
+      bubble: 'Numbers are dust.',
+      building: 'whale',
+      d: { gold: 175, trust: -2, corruption: 3 },
+    },
+  ],
+
+  trialTroubles: [
+    {
+      text: (n) => `${n} blocked heroically until the free trial expired.`,
+      bubble: 'Trial ended.',
+      building: 'dungeon',
+      d: { threat: 1, morale: -1 },
+    },
+    {
+      text: (n) => `${n} trained honestly but the tooltip said "upgrade unavailable."`,
+      bubble: 'Unavailable?',
+      building: 'training',
+      d: { morale: 1, trust: 1 },
+    },
+    {
+      text: (n) => `${n} brought skill to a numbers fight and learned math is rude.`,
+      bubble: 'Math parried me.',
+      building: 'dungeon',
+      d: { trust: -1, morale: -1 },
+    },
+    {
+      text: (n) => `${n} stood in the Poor Hero Queue and gained lore.`,
+      bubble: '+1 lore?',
+      building: 'poor_hero_queue',
+      d: { morale: -1 },
+    },
+  ],
+
+  lootboxPhilosophy: [
+    {
+      text: (n) => `${n} asked whether a hat recolor can perceive suffering.`,
+      bubble: 'The hat knows.',
+      building: 'market',
+      d: { corruption: 1 },
+    },
+    {
+      text: (n) => `${n} concluded every mystery barrel is a mirror with splinters.`,
+      bubble: 'Profound. Ouch.',
+      building: 'market',
+      d: { morale: 1 },
+    },
+    {
+      text: (n) => `${n} opened no crate and still felt statistically disappointed.`,
+      bubble: 'Expected value.',
+      building: 'ethics_fountain',
+      d: { morale: -1, corruption: 1 },
+    },
+    {
+      text: (n) => `${n} proved probability has a marketing department.`,
+      bubble: 'Peer reviewed.',
+      building: 'notice_board',
+      d: { trust: -1 },
+    },
+  ],
+
+  bardDebt: [
+    {
+      text: (n) => `${n} performed a ballad titled "Owed To Joy."`,
+      bubble: 'Please tip.',
+      building: 'tavern',
+      d: { gold: 8, morale: 1 },
+    },
+    {
+      text: (n) => `${n} sang for debt relief and got exposure to interest.`,
+      bubble: 'Exposure hurts.',
+      building: 'debt_collector_booth',
+      d: { morale: -1, corruption: 1 },
+    },
+    {
+      text: (n) => `${n} pawned a chorus and kept the bridge.`,
+      bubble: 'The bridge slaps.',
+      building: 'market',
+      d: { gold: 18, trust: -1 },
+    },
+    {
+      text: (n) => `${n} played a premium lament outside the VIP rope.`,
+      bubble: 'Sad in major key.',
+      building: 'poor_hero_queue',
+      d: { morale: 1, trust: -1 },
+    },
+  ],
+
+  internErrors: [
+    {
+      text: (n) => `${n} posted a dragon quest under "beginner friendly."`,
+      bubble: 'Growth role!',
+      building: 'sponsored_quest_board',
+      d: { threat: 2, gold: 20 },
+    },
+    {
+      text: (n) => `${n} alphabetized danger by sponsor friendliness.`,
+      bubble: 'Very tidy.',
+      building: 'notice_board',
+      d: { trust: -1 },
+    },
+    {
+      text: (n) => `${n} learned exposure is not fireproof.`,
+      bubble: 'Noted.',
+      building: 'guildhall',
+      d: { morale: -1, trust: 1 },
+    },
+    {
+      text: (n) => `${n} put "defeat the economy" on the quest board. It was rejected as too hard.`,
+      bubble: 'Too hard.',
+      building: 'guildhall',
+      d: { trust: -1 },
+    },
+  ],
+
+  blacksmithDisillusion: [
+    {
+      text: (n) => `${n} forged honest steel for a dishonest meta.`,
+      bubble: 'Steel tried.',
+      building: 'blacksmith',
+      d: { trust: 1, morale: 1 },
+    },
+    {
+      text: (n) => `${n} watched a coupon outscale craftsmanship.`,
+      bubble: 'That hurt.',
+      building: 'balance_memorial',
+      d: { morale: -1, trust: -1 },
+    },
+    {
+      text: (n) => `${n} sharpened a sword until denial split cleanly in half.`,
+      bubble: 'Clean edge.',
+      building: 'blacksmith',
+      d: { trust: 2 },
+    },
+    {
+      text: (n) => `${n} added "anti-receipt" runes. Results pending.`,
+      bubble: 'Maybe this time.',
+      building: 'training',
+      d: { morale: 1 },
+    },
+  ],
 };
 
 export const PERSONALITY_POOLS = {
@@ -302,6 +491,14 @@ export const PERSONALITY_POOLS = {
   'Tutorial Goblin': ['poorHeroFrustration', 'honestTraining', 'marketGossip'],
   'Balance Refugee': ['veteranComplaints', 'poorHeroFrustration', 'dungeonResults'],
   'Patch Notes Prophet': ['marketGossip', 'trustLoss', 'corruptionGain'],
+  'Premium Monk': ['premiumPilgrimage', 'goldenWhalePurchases', 'corruptionGain'],
+  'Refund Seeker': ['refundDenials', 'trustLoss', 'poorHeroFrustration'],
+  'Free Trial Paladin': ['trialTroubles', 'honestTraining', 'dungeonResults'],
+  'Overleveled Toddler': ['ridiculousWhaleSuccessStories', 'dungeonResults', 'goldenWhalePurchases'],
+  'Lootbox Philosopher': ['lootboxPhilosophy', 'marketGossip', 'corruptionGain'],
+  'Bankrupt Bard': ['bardDebt', 'debtEvents', 'poorHeroFrustration'],
+  'Quest Intern': ['internErrors', 'clericalWork', 'sponsoredHeroics'],
+  'Disillusioned Blacksmith': ['blacksmithDisillusion', 'honestTraining', 'veteranComplaints'],
 };
 
 export const WHALE_STATION_EVENTS = [
@@ -313,6 +510,16 @@ export const WHALE_STATION_EVENTS = [
   { text: 'A bard was hired to sing about "surprise mechanics."', d: { corruption: 1, morale: -1 } },
   { text: 'The whale sign blinked PROFIT in a language nobody admitted reading.', d: { corruption: 1 } },
   { text: 'A starter pack became a finishing pack through aggressive accounting.', d: { gold: 90, trust: -1 } },
+  { text: 'Someone paid extra to skip the part where games are played.', d: { gold: 120, trust: -2, corruption: 2 } },
+  { text: 'The Station converted shame into operating revenue.', d: { gold: 110, corruption: 2 } },
+  { text: 'A lucky idiot unlocked the ancient technique of having better numbers.', d: { gold: 80, trust: -1 } },
+  { text: 'The balance team was seen leaving town with packed bags.', d: { trust: -2, morale: -1 } },
+  { text: 'A hero purchased the Deluxe Struggle Removal Bundle.', d: { gold: 160, corruption: 3, trust: -2 } },
+  { text: 'A whale bought a legendary sword and called it personal growth.', d: { gold: 180, corruption: 2 } },
+  { text: 'The ethics disclaimer gained another paragraph and no one read it.', d: { corruption: 1 } },
+  { text: 'A VIP hero skipped the tutorial, the grind, and several moral lessons.', d: { gold: 140, trust: -2, corruption: 2 } },
+  { text: 'Fairness has been moved to the cosmetics tab.', d: { trust: -2, corruption: 1 } },
+  { text: 'Premium access was offered to everyone selected by destiny and liquidity.', d: { gold: 100, corruption: 2 } },
 ];
 
 function pick(items) {
