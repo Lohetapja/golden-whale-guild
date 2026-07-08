@@ -3,10 +3,10 @@
 // district membership, path routing, labels, and interaction footprints.
 
 export const TOWN_WORLD = {
-  width: 1520,
-  height: 900,
-  plaza: { x: 690, y: 445 },
-  cameraStart: { x: 80, y: 70 },
+  width: 1460,
+  height: 840,
+  plaza: { x: 675, y: 435 },
+  cameraStart: { x: 140, y: 78 },
   centerNode: 'plaza-center',
 };
 
@@ -18,21 +18,21 @@ export const LAYOUT_CONSTANTS = {
   LABEL_FONT_SIZE: 10,
   SMALL_LABEL_FONT_SIZE: 8,
   DISTRICT_SPACING: 150,
-  ROAD_WIDTH: 34,
+  ROAD_WIDTH: 28,
 };
 
 export const DISTRICTS = [
-  { id: 'social', name: 'Social District', x: 245, y: 410, w: 260, h: 230, color: 0x8f6a46, alpha: 0.08 },
-  { id: 'guild', name: 'Guild District', x: 520, y: 345, w: 330, h: 260, color: 0x3e6db5, alpha: 0.07 },
-  { id: 'market', name: 'Market District', x: 650, y: 640, w: 360, h: 220, color: 0xd9bc85, alpha: 0.08 },
-  { id: 'training', name: 'Fair Progress District', x: 945, y: 610, w: 320, h: 230, color: 0x7fdc93, alpha: 0.06 },
-  { id: 'premium', name: 'Premium District', x: 1115, y: 405, w: 380, h: 330, color: 0xf6c945, alpha: 0.07 },
+  { id: 'social', name: 'Social District', x: 270, y: 410, w: 250, h: 220, color: 0x8f6a46, alpha: 0.08 },
+  { id: 'guild', name: 'Guild District', x: 525, y: 345, w: 320, h: 250, color: 0x3e6db5, alpha: 0.07 },
+  { id: 'market', name: 'Market District', x: 640, y: 625, w: 340, h: 210, color: 0xd9bc85, alpha: 0.08 },
+  { id: 'training', name: 'Fair Progress District', x: 920, y: 600, w: 300, h: 220, color: 0x7fdc93, alpha: 0.06 },
+  { id: 'premium', name: 'Premium District', x: 1085, y: 400, w: 350, h: 315, color: 0xf6c945, alpha: 0.07 },
 ];
 
 export const BUILDING_LAYOUT = {
   tavern: {
     district: 'social',
-    x: 240,
+    x: 255,
     y: 365,
     w: 122,
     h: 92,
@@ -44,8 +44,8 @@ export const BUILDING_LAYOUT = {
   },
   blacksmith: {
     district: 'market',
-    x: 535,
-    y: 650,
+    x: 515,
+    y: 635,
     w: 116,
     h: 90,
     visualScale: 0.76,
@@ -56,7 +56,7 @@ export const BUILDING_LAYOUT = {
   },
   guildhall: {
     district: 'guild',
-    x: 475,
+    x: 500,
     y: 285,
     w: 146,
     h: 116,
@@ -68,8 +68,8 @@ export const BUILDING_LAYOUT = {
   },
   market: {
     district: 'market',
-    x: 705,
-    y: 650,
+    x: 680,
+    y: 635,
     w: 118,
     h: 82,
     visualScale: 0.78,
@@ -80,8 +80,8 @@ export const BUILDING_LAYOUT = {
   },
   training: {
     district: 'training',
-    x: 940,
-    y: 655,
+    x: 918,
+    y: 640,
     w: 112,
     h: 82,
     visualScale: 0.78,
@@ -92,7 +92,7 @@ export const BUILDING_LAYOUT = {
   },
   whale: {
     district: 'premium',
-    x: 1090,
+    x: 1065,
     y: 315,
     w: 152,
     h: 112,
@@ -107,7 +107,7 @@ export const BUILDING_LAYOUT = {
   },
   dungeon: {
     district: 'guild',
-    x: 760,
+    x: 735,
     y: 270,
     w: 132,
     h: 100,
@@ -121,55 +121,55 @@ export const BUILDING_LAYOUT = {
 
 export const DECORATION_LAYOUT = {
   ethics_fountain: {
-    district: 'premium', x: 955, y: 410, w: 84, h: 52, visualScale: 0.9,
+    district: 'premium', x: 932, y: 405, w: 84, h: 52, visualScale: 0.9,
     shortLabel: 'Ethics Fountain', pathNode: 'premium-gate', interactionW: 124, interactionH: 86,
   },
   vip_rope_entrance: {
-    district: 'premium', x: 1088, y: 390, w: 100, h: 38, visualScale: 0.88,
+    district: 'premium', x: 1062, y: 386, w: 100, h: 38, visualScale: 0.88,
     shortLabel: 'VIP Rope', pathNode: 'premium-gate', interactionW: 138, interactionH: 68,
   },
   complaint_barrel: {
-    district: 'training', x: 850, y: 545, w: 38, h: 44, visualScale: 0.94,
+    district: 'training', x: 830, y: 535, w: 38, h: 44, visualScale: 0.94,
     shortLabel: 'Complaint Barrel', pathNode: 'training-yard', interactionW: 96, interactionH: 72,
   },
   debt_collector_booth: {
-    district: 'premium', x: 1215, y: 505, w: 72, h: 62, visualScale: 0.9,
+    district: 'premium', x: 1168, y: 500, w: 72, h: 62, visualScale: 0.9,
     shortLabel: 'Debt Booth', pathNode: 'premium-south', interactionW: 116, interactionH: 92,
   },
   notice_board: {
-    district: 'guild', x: 560, y: 365, w: 58, h: 58, visualScale: 0.92,
+    district: 'guild', x: 550, y: 360, w: 58, h: 58, visualScale: 0.92,
     shortLabel: 'Notice Board', pathNode: 'guild-square', interactionW: 120, interactionH: 90,
   },
   poor_hero_queue: {
-    district: 'premium', x: 985, y: 455, w: 96, h: 44, visualScale: 0.84,
+    district: 'premium', x: 958, y: 448, w: 96, h: 44, visualScale: 0.84,
     shortLabel: 'Poor Queue', pathNode: 'premium-gate', interactionW: 132, interactionH: 72,
   },
   sponsored_quest_board: {
-    district: 'guild', x: 380, y: 370, w: 66, h: 60, visualScale: 0.9,
+    district: 'guild', x: 400, y: 370, w: 66, h: 60, visualScale: 0.9,
     shortLabel: 'Sponsored Board', pathNode: 'guild-west', interactionW: 124, interactionH: 90,
   },
   balance_memorial: {
-    district: 'training', x: 915, y: 525, w: 54, h: 42, visualScale: 0.92,
+    district: 'training', x: 895, y: 515, w: 54, h: 42, visualScale: 0.92,
     shortLabel: 'Balance Memorial', pathNode: 'training-yard', interactionW: 108, interactionH: 72,
   },
   refund_denial_desk: {
-    district: 'premium', x: 1270, y: 390, w: 70, h: 52, visualScale: 0.9,
+    district: 'premium', x: 1215, y: 385, w: 70, h: 52, visualScale: 0.9,
     shortLabel: 'Refund Desk', pathNode: 'premium-east', interactionW: 116, interactionH: 78,
   },
   ethics_laundromat: {
-    district: 'market', x: 780, y: 595, w: 72, h: 54, visualScale: 0.9,
+    district: 'market', x: 755, y: 585, w: 72, h: 54, visualScale: 0.9,
     shortLabel: 'Ethics Wash', pathNode: 'market-square', interactionW: 112, interactionH: 82,
   },
   premium_temple: {
-    district: 'premium', x: 1235, y: 250, w: 86, h: 70, visualScale: 0.9,
+    district: 'premium', x: 1178, y: 250, w: 86, h: 70, visualScale: 0.9,
     shortLabel: 'Premium Temple', pathNode: 'premium-north', interactionW: 124, interactionH: 96,
   },
   patch_notes_shrine: {
-    district: 'guild', x: 470, y: 405, w: 56, h: 56, visualScale: 0.9,
+    district: 'guild', x: 485, y: 398, w: 56, h: 56, visualScale: 0.9,
     shortLabel: 'Patch Shrine', pathNode: 'guild-square', interactionW: 110, interactionH: 84,
   },
   hero_union_tent: {
-    district: 'training', x: 1015, y: 545, w: 84, h: 54, visualScale: 0.9,
+    district: 'training', x: 990, y: 535, w: 84, h: 54, visualScale: 0.9,
     shortLabel: 'Union Tent', pathNode: 'training-east', interactionW: 126, interactionH: 84,
   },
 
@@ -230,22 +230,30 @@ export const DECORATION_LAYOUT = {
   'sign-dungeon': { district: 'guild', x: 820, y: 330, visualScale: 0.82 },
   'sign-market': { district: 'market', x: 610, y: 610, visualScale: 0.82 },
   'sign-training': { district: 'training', x: 1015, y: 650, visualScale: 0.82 },
+
+  'bench-social-1': { district: 'social', x: 205, y: 455, visualScale: 0.68 },
+  'table-social-1': { district: 'social', x: 315, y: 432, visualScale: 0.64 },
+  'coin-pile-whale-1': { district: 'premium', x: 1132, y: 374, visualScale: 0.58 },
+  'contracts-premium-1': { district: 'premium', x: 1178, y: 468, visualScale: 0.58 },
+  'anvil-blacksmith-1': { district: 'market', x: 585, y: 640, visualScale: 0.62 },
+  'dummy-training-1': { district: 'training', x: 858, y: 650, visualScale: 0.62 },
+  'target-training-1': { district: 'training', x: 982, y: 635, visualScale: 0.56 },
 };
 
 export const TOWN_PATH_NODES = [
-  { id: 'plaza-center', x: 690, y: 445 },
-  { id: 'social-cross', x: 310, y: 430 },
-  { id: 'guild-west', x: 400, y: 405 },
-  { id: 'guild-square', x: 535, y: 365 },
-  { id: 'dungeon-approach', x: 745, y: 340 },
-  { id: 'market-west', x: 535, y: 585 },
-  { id: 'market-square', x: 690, y: 575 },
-  { id: 'training-yard', x: 925, y: 570 },
-  { id: 'training-east', x: 1030, y: 555 },
-  { id: 'premium-gate', x: 1065, y: 420 },
-  { id: 'premium-north', x: 1190, y: 330 },
-  { id: 'premium-east', x: 1250, y: 430 },
-  { id: 'premium-south', x: 1205, y: 560 },
+  { id: 'plaza-center', x: 675, y: 435 },
+  { id: 'social-cross', x: 320, y: 425 },
+  { id: 'guild-west', x: 415, y: 400 },
+  { id: 'guild-square', x: 528, y: 360 },
+  { id: 'dungeon-approach', x: 725, y: 335 },
+  { id: 'market-west', x: 520, y: 570 },
+  { id: 'market-square', x: 670, y: 560 },
+  { id: 'training-yard', x: 905, y: 558 },
+  { id: 'training-east', x: 1005, y: 548 },
+  { id: 'premium-gate', x: 1038, y: 414 },
+  { id: 'premium-north', x: 1148, y: 330 },
+  { id: 'premium-east', x: 1195, y: 425 },
+  { id: 'premium-south', x: 1158, y: 552 },
 ];
 
 export const TOWN_PATH_LINKS = [

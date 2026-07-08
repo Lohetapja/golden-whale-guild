@@ -271,7 +271,7 @@ export default class UIScene extends Phaser.Scene {
       color: '#fff6dc',
       stroke: '#0c1118',
       strokeThickness: 2,
-      wordWrap: { width: WIDTH - 205 },
+      wordWrap: { width: WIDTH - 32 },
       lineSpacing: 3,
     }).setOrigin(0, 0.5);
     this.tickerText.setMaxLines(2);
@@ -310,14 +310,14 @@ export default class UIScene extends Phaser.Scene {
   // "Open Gates" is the town-cycle trigger; internally still a day tick.
 
   buildEndDayButton() {
-    const x = WIDTH - 90;
-    const y = HEIGHT - 62;
+    const x = WIDTH - 104;
+    const y = HEIGHT - 64;
 
     // ui_button asset replaces the drawn rectangle when present
     const useAsset = this.textures.exists('ui_button');
     if (useAsset) {
       this.cycleBg = this.add.image(x, y, 'ui_button')
-        .setDisplaySize(154, 42)
+        .setDisplaySize(168, 44)
         .setInteractive({ useHandCursor: true });
       this.styleButton = (state) => {
         if (state === 'hover') this.cycleBg.setTint(0xffe6b0);
@@ -325,7 +325,7 @@ export default class UIScene extends Phaser.Scene {
         else this.cycleBg.clearTint();
       };
     } else {
-      this.cycleBg = this.add.rectangle(x, y, 150, 40, 0x8a5a2b)
+      this.cycleBg = this.add.rectangle(x, y, 168, 44, 0x8a5a2b)
         .setStrokeStyle(2, 0xf2c744)
         .setInteractive({ useHandCursor: true });
       this.styleButton = (state) => {
@@ -335,7 +335,7 @@ export default class UIScene extends Phaser.Scene {
       };
     }
     this.cycleLabel = this.add.text(x, y, 'Open Gates >', {
-      fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: '#fff6dc',
+      fontFamily: FONT, fontSize: '16px', fontStyle: 'bold', color: '#fff6dc',
     }).setOrigin(0.5);
 
     this.cycleBg.on('pointerover', () => this.styleButton('hover'));
@@ -357,14 +357,16 @@ export default class UIScene extends Phaser.Scene {
   }
 
   buildUtilityButtons() {
-    this.makeUtilityButton(WIDTH - 205, HEIGHT - 62, 'Save', 'gwg-save');
-    this.makeUtilityButton(WIDTH - 275, HEIGHT - 62, 'Reset', 'gwg-reset');
+    this.add.rectangle(274, HEIGHT - 64, 500, 38, 0x0f1521, 0.5)
+      .setStrokeStyle(1, 0x273244, 0.8);
+    this.makeUtilityButton(386, HEIGHT - 64, 'Save', 'gwg-save');
+    this.makeUtilityButton(466, HEIGHT - 64, 'Reset', 'gwg-reset', 70);
   }
 
   buildTownLedgerButton() {
-    this.makeUtilityButton(WIDTH - 374, HEIGHT - 62, 'Town Ledger', 'gwg-open-ledger', 122);
-    this.makeUtilityButton(WIDTH - 508, HEIGHT - 62, 'Town Log', 'gwg-open-town-log', 100);
-    this.makeUtilityButton(WIDTH - 598, HEIGHT - 62, 'Help', 'gwg-open-help', 72);
+    this.makeUtilityButton(58, HEIGHT - 64, 'Help', 'gwg-open-help', 72);
+    this.makeUtilityButton(154, HEIGHT - 64, 'Town Log', 'gwg-open-town-log', 100);
+    this.makeUtilityButton(278, HEIGHT - 64, 'Town Ledger', 'gwg-open-ledger', 122);
   }
 
   makeUtilityButton(x, y, label, eventName, width = 64) {

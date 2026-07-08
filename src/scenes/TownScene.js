@@ -51,6 +51,12 @@ const COIN_BURST_COOLDOWN_MS = 450;
 const SAVE_KEY = 'golden-whale-guild-save-v2';
 const SAVE_VERSION = 4;
 const TAP_MOVE_THRESHOLD = 14;
+const HERO_LABEL_DEFAULT_ALPHA = 0;
+const HERO_LABEL_FOCUS_ALPHA = 0.96;
+const HERO_LABEL_EVENT_ALPHA = 0.82;
+const PRIMARY_LABEL_IDS = new Set(['whale', 'guildhall', 'dungeon']);
+const DEFAULT_SPECIAL_LABEL_IDS = new Set(['notice_board', 'complaint_barrel']);
+const COMPACT_SPECIAL_LABEL_IDS = new Set(['notice_board']);
 
 const RESOURCE_THRESHOLDS = {
   trustWarning: 34,
@@ -1382,8 +1388,10 @@ export default class TownScene extends Phaser.Scene {
     }
 
     const path = this.add.graphics();
-    path.fillStyle(0xd9bc85);
-    path.fillCircle(PLAZA.x, PLAZA.y, ROAD_WIDTH * 1.45);
+    path.fillStyle(0xbf9a61, 0.34);
+    path.fillCircle(PLAZA.x, PLAZA.y + 1, ROAD_WIDTH * 1.22);
+    path.fillStyle(0xd9bc85, 0.94);
+    path.fillCircle(PLAZA.x, PLAZA.y, ROAD_WIDTH * 0.96);
 
     for (const [from, to] of this.pathLinks) {
       const a = this.pathNodeById[from];
@@ -1404,26 +1412,27 @@ export default class TownScene extends Phaser.Scene {
   }
 
   stampPath(g, x1, y1, x2, y2, radius = 10) {
-    // Stamped circles keep the road organic without needing a full tilemap yet.
+    // Clean strokes keep the road intentional without needing a full tilemap yet.
     const dist = Phaser.Math.Distance.Between(x1, y1, x2, y2);
-    const steps = Math.ceil(dist / Math.max(7, radius * 0.62));
+    g.lineStyle(radius * 2.05, 0xbf9a61, 0.32);
+    g.beginPath();
+    g.moveTo(x1, y1 + 1);
+    g.lineTo(x2, y2 + 1);
+    g.strokePath();
+    g.lineStyle(radius * 1.58, 0xd9bc85, 0.96);
+    g.beginPath();
+    g.moveTo(x1, y1);
+    g.lineTo(x2, y2);
+    g.strokePath();
+
+    const steps = Math.max(1, Math.ceil(dist / Math.max(18, radius * 1.25)));
     for (let i = 0; i <= steps; i += 1) {
       const t = i / steps;
-      const jitter = Math.max(1, Math.floor(radius * 0.18));
+      const jitter = Math.max(1, Math.floor(radius * 0.35));
       const x = Phaser.Math.Linear(x1, x2, t) + Phaser.Math.Between(-jitter, jitter);
       const y = Phaser.Math.Linear(y1, y2, t) + Phaser.Math.Between(-jitter, jitter);
-      g.fillStyle(0xbf9a61, 0.28);
-      g.fillCircle(x, y + 1, radius * 1.12);
-      g.fillStyle(Math.random() < 0.15 ? 0xc3a76f : 0xd9bc85);
-      g.fillCircle(x, y, radius);
-      if (Math.random() < 0.22) {
-        g.fillStyle(Math.random() < 0.5 ? 0xf0d49a : 0xa98252, 0.34);
-        g.fillCircle(
-          x + Phaser.Math.Between(-Math.floor(radius * 0.35), Math.floor(radius * 0.35)),
-          y + Phaser.Math.Between(-Math.floor(radius * 0.28), Math.floor(radius * 0.28)),
-          Math.max(2, radius * 0.18),
-        );
-      }
+      g.fillStyle(Math.random() < 0.55 ? 0xf0d49a : 0xa98252, 0.34);
+      g.fillCircle(x, y, Math.max(2, radius * 0.14));
     }
   }
 
@@ -1441,7 +1450,51 @@ export default class TownScene extends Phaser.Scene {
     return place.shortLabel || place.name || place.id;
   }
 
+  isCompactView() {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia?.('(max-width: 760px)').matches
+      || (this.sys.game.device.input.touch && window.innerWidth < 900);
+  }
+
+  getPlaceLabelPriority(place) {
+    if (!place) return 5;
+    if (PRIMARY_LABEL_IDS.has(place.id)) return 1;
+    if (this.buildingById?.[place.id]) return 2;
+    if (place.interactive) return 3;
+    return 5;
+  }
+
+  getDefaultPlaceLabelAlpha(place) {
+    const priority = this.getPlaceLabelPriority(place);
+    if (priority <= 1) return 0.96;
+    if (priority === 2) return this.isCompactView() ? 0.78 : 0.88;
+    if (priority === 3) {
+      const visibleIds = this.isCompactView() ? COMPACT_SPECIAL_LABEL_IDS : DEFAULT_SPECIAL_LABEL_IDS;
+      return visibleIds.has(place.id) && this.isLocationUnlocked(place.id) ? 0.74 : 0;
+    }
+    return 0;
+  }
+
+  showPlaceLabel(place, alpha = 1) {
+    const label = this.placeLabelsById?.[place?.id];
+    if (!label) return;
+    label.setAlpha(alpha);
+    label.setDepth(4700);
+  }
+
+  resetPlaceLabel(place) {
+    const label = this.placeLabelsById?.[place?.id];
+    if (!label) return;
+    label.setAlpha(this.getDefaultPlaceLabelAlpha(place));
+    label.setDepth(2000);
+  }
+
+  resetAllPlaceLabels() {
+    for (const place of Object.values(this.placeById || {})) this.resetPlaceLabel(place);
+  }
+
   addPlaceLabel(place, fontSize = LABEL_FONT_SIZE) {
+    const priority = this.getPlaceLabelPriority(place);
     const label = this.add.text(
       place.x + (place.labelOffsetX || 0),
       place.y + (place.labelOffsetY ?? 4),
@@ -1450,16 +1503,19 @@ export default class TownScene extends Phaser.Scene {
         fontFamily: '"Courier New", monospace',
         fontSize: `${fontSize}px`,
         fontStyle: 'bold',
-        color: '#fff6dc',
+        color: place.id === 'whale' ? '#ffe08a' : '#fff6dc',
         stroke: '#0c1118',
         strokeThickness: 2,
-        backgroundColor: '#0f1521cc',
-        padding: { x: 4, y: 2 },
+        backgroundColor: priority <= 2 ? '#0f1521c4' : '#0f152199',
+        padding: { x: priority <= 2 ? 4 : 3, y: 2 },
         align: 'center',
-        wordWrap: { width: place.labelWidth || Math.max(86, (place.w || 80) + 34) },
+        wordWrap: { width: place.labelWidth || Math.max(priority <= 2 ? 82 : 74, (place.w || 80) + 20) },
       },
     ).setOrigin(0.5, 0).setDepth(2000);
     label.setMaxLines(2);
+    label.setData('isPlaceLabel', true);
+    label.setData('placeId', place.id);
+    label.setAlpha(this.getDefaultPlaceLabelAlpha(place));
     return label;
   }
 
@@ -1491,6 +1547,7 @@ export default class TownScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     hit.on('pointerover', () => {
       if (img?.setTint) img.setTint(this.isLocationUnlocked(place.id) ? 0xfff3c0 : 0x9aa3b5);
+      this.showPlaceLabel(place);
       if (img && this.tweens) {
         const restX = img.getData('restScaleX') || img.getData('baseScaleX') || 1;
         const restY = img.getData('restScaleY') || img.getData('baseScaleY') || 1;
@@ -1500,6 +1557,7 @@ export default class TownScene extends Phaser.Scene {
     hit.on('pointerout', () => {
       if (img?.clearTint && this.isLocationUnlocked(place.id)) img.clearTint();
       else if (img?.setTint) img.setTint(0x6f7787);
+      if (this.selectedPlaceId !== place.id) this.resetPlaceLabel(place);
       if (img && this.tweens) {
         this.tweens.add({
           targets: img,
@@ -1520,6 +1578,7 @@ export default class TownScene extends Phaser.Scene {
     this.doorSpots = [];
     this.buildingById = {};
     this.placeSpriteById = {};
+    this.placeLabelsById = {};
 
     for (const b of this.buildings) {
       this.buildingById[b.id] = b;
@@ -1541,7 +1600,7 @@ export default class TownScene extends Phaser.Scene {
       });
 
       // name plate under each building keeps the map readable
-      this.addPlaceLabel(b);
+      this.placeLabelsById[b.id] = this.addPlaceLabel(b);
 
       this.doorSpots.push(this.getDoorSpotForPlace(b));
     }
@@ -1609,6 +1668,7 @@ export default class TownScene extends Phaser.Scene {
 
       if (d.label) {
         const label = this.addPlaceLabel(d, d.labelFontSize || SMALL_LABEL_FONT_SIZE);
+        this.placeLabelsById[d.id] = label;
         this.decorationObjectsById[d.id].push(label);
       }
 
@@ -1623,8 +1683,13 @@ export default class TownScene extends Phaser.Scene {
     const objects = this.decorationObjectsById?.[id];
     if (!objects) return;
     const unlocked = this.isLocationUnlocked(id);
+    const place = this.decorationById?.[id];
     for (const obj of objects) {
-      obj.setAlpha(unlocked ? 1 : 0.34);
+      if (obj.getData?.('isPlaceLabel')) {
+        obj.setAlpha(unlocked ? this.getDefaultPlaceLabelAlpha(place) : 0);
+      } else {
+        obj.setAlpha(unlocked ? 1 : 0.34);
+      }
       if (obj.setTint) {
         if (unlocked) obj.clearTint?.();
         else obj.setTint(0x6f7787);
@@ -1642,34 +1707,40 @@ export default class TownScene extends Phaser.Scene {
     this.questNoticeContainers = [];
 
     const board = this.decorationById.notice_board || this.buildingById.guildhall;
-    const x = board.x + 22;
-    const y = board.y - (board.h || 60) - 36;
-    const w = 144;
-    const h = 42;
+    const x = board.x + 26;
+    const y = board.y - (board.h || 60) - 18;
+    const w = 116;
+    const h = 32;
     const container = this.add.container(x, y).setDepth(3600);
     const bg = this.add.graphics();
     const drawBg = (hover = false) => {
       bg.clear();
-      bg.fillStyle(hover ? 0xfff1c4 : 0x141a24, hover ? 0.98 : 0.92);
+      bg.fillStyle(hover ? 0xfff1c4 : 0x141a24, hover ? 0.98 : 0.9);
       bg.fillRoundedRect(0, 0, w, h, 5);
-      bg.lineStyle(2, 0xf6c945, 0.94);
+      bg.fillStyle(0x6b4a2b, 0.35);
+      bg.fillRect(8, h - 6, w - 16, 3);
+      bg.lineStyle(1.5, 0xf6c945, 0.94);
       bg.strokeRoundedRect(0, 0, w, h, 5);
     };
     drawBg();
     const postedCount = this.postedQuests.length;
-    const text = this.add.text(w / 2, h / 2, postedCount > 0
-      ? `${postedCount} Posted / ${this.availableQuests.length} Quests`
-      : `${this.availableQuests.length} Quests Available`, {
+    const iconKey = resolveTexture(this, 'icon_quest');
+    const icon = iconKey
+      ? this.add.image(16, h / 2, iconKey).setScale(this.getTextureScaleForMaxDimension(iconKey, 15, 1))
+      : null;
+    const text = this.add.text(icon ? 31 : w / 2, h / 2, postedCount > 0
+      ? `${postedCount}/${this.availableQuests.length} Posted`
+      : `${this.availableQuests.length} Quests`, {
         fontFamily: '"Courier New", monospace',
-        fontSize: '12px',
+        fontSize: '11px',
         fontStyle: 'bold',
         color: '#ffe08a',
         stroke: '#0c1118',
         strokeThickness: 2,
-        align: 'center',
-        wordWrap: { width: w - 14 },
-      }).setOrigin(0.5);
-    container.add([bg, text]);
+        align: icon ? 'left' : 'center',
+        wordWrap: { width: icon ? w - 38 : w - 14 },
+      }).setOrigin(icon ? 0 : 0.5, 0.5);
+    container.add([bg, ...(icon ? [icon] : []), text]);
     container.setSize(w, h);
     container.setInteractive(new Phaser.Geom.Rectangle(0, 0, w, h), Phaser.Geom.Rectangle.Contains);
     container.on('pointerover', () => drawBg(true));
@@ -2304,6 +2375,8 @@ export default class TownScene extends Phaser.Scene {
 
   selectPlace(place) {
     this.clearSelection(false);
+    this.selectedPlaceId = place.id;
+    this.showPlaceLabel(place);
     const marker = this.add.graphics().setDepth(4990);
     marker.lineStyle(3, place.id === 'whale' ? 0xf6c945 : 0x7fdc93, 0.95);
     marker.strokeEllipse(place.x, place.y - (place.h || 60) / 2, (place.w || 70) + 26, (place.h || 60) + 22);
@@ -2315,6 +2388,7 @@ export default class TownScene extends Phaser.Scene {
 
   selectHero(hero) {
     this.clearSelection(false);
+    this.selectedHeroId = hero.def.id;
     const marker = this.add.graphics();
     marker.lineStyle(3, 0xf6c945, 0.95);
     marker.strokeCircle(0, -31, 34);
@@ -2322,7 +2396,7 @@ export default class TownScene extends Phaser.Scene {
     marker.fillCircle(0, -31, 34);
     hero.container.add(marker);
     this.selectionMarker = marker;
-    hero.label?.setAlpha(1);
+    this.setHeroLabelFocus(hero, true);
     this.tweens.add({ targets: marker, alpha: 0.45, duration: 620, yoyo: true, repeat: -1 });
   }
 
@@ -2331,7 +2405,10 @@ export default class TownScene extends Phaser.Scene {
       this.selectionMarker.destroy();
       this.selectionMarker = null;
     }
-    for (const hero of this.heroes || []) hero.label?.setAlpha(0.52);
+    this.selectedPlaceId = null;
+    this.selectedHeroId = null;
+    this.resetAllPlaceLabels();
+    for (const hero of this.heroes || []) this.setHeroLabelFocus(hero, false);
     if (clearInspector) {
       this.tooltipTarget = null;
       this.heroTooltipTarget = null;
@@ -2786,6 +2863,22 @@ export default class TownScene extends Phaser.Scene {
 
   // --- heroes -------------------------------------------------------------
 
+  setHeroLabelFocus(hero, focused = false, alpha = HERO_LABEL_FOCUS_ALPHA) {
+    if (!hero?.label) return;
+    const heldForEvent = hero.labelUntil && hero.labelUntil > this.time.now;
+    const isSelected = this.selectedHeroId === hero.def.id || this.heroTooltipTarget === hero;
+    hero.label.setAlpha((focused || heldForEvent || isSelected) ? alpha : HERO_LABEL_DEFAULT_ALPHA);
+  }
+
+  showHeroLabelBriefly(hero, duration = 2600) {
+    if (!hero?.label) return;
+    hero.labelUntil = this.time.now + duration;
+    this.setHeroLabelFocus(hero, true, HERO_LABEL_EVENT_ALPHA);
+    this.time.delayedCall(duration + 40, () => {
+      if ((hero.labelUntil || 0) <= this.time.now) this.setHeroLabelFocus(hero, false);
+    });
+  }
+
   buildHeroes() {
     this.heroes = HEROES.map((def, i) => {
       const spot = this.getInitialHeroSpot(def, i);
@@ -2806,7 +2899,7 @@ export default class TownScene extends Phaser.Scene {
         strokeThickness: 2,
         backgroundColor: '#0f1521cc',
         padding: { x: 4, y: 2 },
-      }).setOrigin(0.5, 1).setAlpha(0.52);
+      }).setOrigin(0.5, 1).setAlpha(HERO_LABEL_DEFAULT_ALPHA);
 
       const container = this.add.container(x, y, [sprite, label]).setDepth(y);
       const savedStats = this.savedHeroStats?.[def.id] || {};
@@ -2870,11 +2963,11 @@ export default class TownScene extends Phaser.Scene {
       hero.hit = hit;
       hit.on('pointerover', () => {
         sprite.setTint(0xfff3c0);
-        label.setAlpha(1);
+        this.setHeroLabelFocus(hero, true);
       });
       hit.on('pointerout', () => {
         this.applyHeroTint(hero);
-        if (this.heroTooltipTarget !== hero) label.setAlpha(0.52);
+        this.setHeroLabelFocus(hero, false);
       });
       hit.on('pointerup', (pointer) => {
         if (this.wasDragGesture(pointer)) return;
@@ -3390,6 +3483,7 @@ export default class TownScene extends Phaser.Scene {
 
     this.clearHeroBubble(hero);
     hero.container.setAlpha(1);
+    if (important) this.showHeroLabelBriefly(hero, 3400);
 
     const txt = this.add.text(0, -4, text, {
       fontFamily: '"Courier New", monospace',
