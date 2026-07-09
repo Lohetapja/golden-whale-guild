@@ -27,15 +27,17 @@ npm.cmd run dev
 The first session is guided by small in-game hints, not a long tutorial. If you
 skip them, use **Help** to reopen the short rules.
 
-1. Click the Guild Hall / Notice Board and post a quest.
-2. Press **Open Gates** to resolve hero actions, quest results, town nonsense,
-   and consequences.
-3. Use **Town Ledger** to compare upgrades. Fair buildings stabilize Trust and
+1. Open **Roads** and extend the dirt entrance, then use **Build** to place a
+   service beside it. Buildings snap to the grid and require road access.
+2. Click the Guild Camp / Notice Board and post a quest.
+3. Let the town clock run at 1x, 2x, or 4x, or press **Skip Day** to resolve
+   hero actions, quest results, town nonsense, and consequences immediately.
+4. Use **Town Ledger** to compare upgrades. Fair buildings stabilize Trust and
    Morale; Golden Whale upgrades pay faster and make the town worse in funnier
    ways.
-4. Click NPC heroes to inspect power, morale, debt, loyalty, whale access,
-   resentment, history, and their current thought.
-5. Watch Gold, Trust, Corruption, Morale, and Threat. Warning icons mean the
+5. Click NPC heroes to inspect power, inventory, morale, debt, loyalty, whale
+   access, envy, resentment, history, and their current thought.
+6. Watch Gold, Trust, Corruption, Morale, and Threat. Warning icons mean the
    town is drifting toward protests, scandals, ragequits, or dungeon visits.
 
 - Click buildings for tooltips.
@@ -51,12 +53,13 @@ skip them, use **Help** to reopen the short rules.
   town cycle.
 - Open **Town Ledger** to compare all upgradeable buildings and special
   locations in one in-game planning board.
-- Read the compact **Day Report** after Open Gates to see resource deltas,
+- Read the compact **Day Report** after each town cycle to see resource deltas,
   quest results, unlocks, warnings, NPC changes, and suspicious accountant
   notes.
 - Use **Town Log** to review important past upgrades, stage changes, quest
   results, policies, crises, unlocks, and hero spirals.
-- Press **Open Gates** (bottom right) to run the daily simulation - watch the
+- Press **Skip Day** (bottom right) to run the daily simulation immediately -
+  otherwise the real-time clock advances it automatically. Watch the
   resource bar (Gold / Trust / Corruption / Morale / Threat) and the event
   ticker at the bottom.
 - Drag the map with mouse/touch, or use WASD/arrow keys on desktop.
@@ -66,10 +69,12 @@ skip them, use **Help** to reopen the short rules.
 
 ## Current gameplay loop
 
-Earn fictional gold, choose between fair infrastructure upgrades and faster
-Golden Whale profits, post safe or risky quests, then open the gates and watch
-heroes react. Trust, Corruption, Morale, and Threat now affect hero behaviour,
-quest results, protests, debt events, and town attacks.
+Start with mostly empty land, place grid roads and connected buildings, earn
+fictional gold, and choose between fair infrastructure and faster Golden Whale
+profits. Tavern capacity limits population growth, buildings track visits and
+organic upgrade progress, and larger towns attract more Threat. Trust,
+Corruption, Morale, and Threat affect hero behaviour, quest results, protests,
+debt events, item envy, and town attacks.
 
 Current features include responsive browser play, first-time onboarding, compact
 Help, resource explainers, early objective chains, quest posting, building
@@ -88,9 +93,10 @@ or Left Town based on what the economy does to them. Heroes can also form light
 rivalries or mentorships when the town economy makes someone impossible to
 ignore.
 
-Local saves include versioned progression state, building levels, unlocked
-locations, objectives, town log entries, crises, achievements, and NPC evolution
-data. Reset clears that localStorage progress.
+Local saves include versioned progression state, placed roads/buildings,
+unlocked land, building usage, simulation speed, building levels, objectives,
+town log entries, crises, achievements, and NPC evolution/inventory data. Older
+saves load as legacy pre-built towns; new/reset saves use city-builder mode.
 
 The canvas uses Phaser Scale Manager `FIT` mode against a stable 1280x720
 logical game size, with mobile-safe page CSS to prevent accidental scrolling
@@ -128,7 +134,7 @@ Phaser 3 + Vite, plain JavaScript, 1280x720 canvas. The game is map-first with
 minimal UI: top resources, compact goal hints, fixed inspector panel, Town
 Ledger, bottom ticker, and no dashboard.
 
-All current art is runtime-generated placeholder/debug pixel graphics - drop
-real sprites into `public/assets/**` at the paths listed in
-`src/data/assetManifest.js` and they replace the placeholders automatically.
-See `docs/VISUAL_DIRECTION.md` for the art direction and rules.
+PixelLab sprites in `public/assets/**` are routed through
+`src/data/assetManifest.js`; runtime-generated placeholder/debug art remains as
+a fallback when an asset is missing. See `docs/VISUAL_DIRECTION.md` and
+`docs/ASSET_STYLE_GUIDE.md` for the art direction and replacement rules.

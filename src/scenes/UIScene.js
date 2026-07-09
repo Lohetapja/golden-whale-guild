@@ -1,4 +1,4 @@
-// Minimal HUD overlay: top resource strip, bottom event ticker, Open Gates button.
+// Minimal HUD overlay: top resource strip, bottom event ticker, and city controls.
 // Deliberately small — this is a game scene, not a dashboard.
 import Phaser from 'phaser';
 
@@ -56,6 +56,7 @@ export default class UIScene extends Phaser.Scene {
     this.buildEndDayButton();
     this.buildUtilityButtons();
     this.buildTownLedgerButton();
+    this.buildTimeControls();
     this.buildHtmlPanels();
 
     this.registry.events.on('changedata-resources', (_p, value) => this.updateResources(value));
@@ -70,6 +71,9 @@ export default class UIScene extends Phaser.Scene {
     this.game.events.on('gwg-event', this.queueEvent, this);
     this.game.events.on('gwg-achievement', this.showAchievementToast, this);
     this.game.events.on('gwg-cycle-done', this.enableCycleButton, this);
+    this.game.events.on('gwg-cycle-start', this.lockCycleButton, this);
+    this.game.events.on('gwg-time-changed', this.updateTimeControls, this);
+    this.game.events.on('gwg-build-mode', this.updateBuildMode, this);
     this.game.events.on('gwg-inspector-open', this.showInspectorPanel, this);
     this.game.events.on('gwg-ledger-open', this.showLedgerPanel, this);
     this.game.events.on('gwg-inspector-close', this.closeHtmlPanel, this);
@@ -78,6 +82,9 @@ export default class UIScene extends Phaser.Scene {
       this.game.events.off('gwg-event', this.queueEvent, this);
       this.game.events.off('gwg-achievement', this.showAchievementToast, this);
       this.game.events.off('gwg-cycle-done', this.enableCycleButton, this);
+      this.game.events.off('gwg-cycle-start', this.lockCycleButton, this);
+      this.game.events.off('gwg-time-changed', this.updateTimeControls, this);
+      this.game.events.off('gwg-build-mode', this.updateBuildMode, this);
       this.game.events.off('gwg-inspector-open', this.showInspectorPanel, this);
       this.game.events.off('gwg-ledger-open', this.showLedgerPanel, this);
       this.game.events.off('gwg-inspector-close', this.closeHtmlPanel, this);
@@ -89,6 +96,7 @@ export default class UIScene extends Phaser.Scene {
     this.updateTownHint(this.registry.get('townHint'));
     this.updateTownStage(this.registry.get('townStage'));
     this.dayText.setText(`Day ${this.registry.get('day')}`);
+    this.updateTimeControls(this.registry.get('simulationSpeed') ?? 1);
   }
 
   // --- top resource bar ------------------------------------------------
@@ -245,8 +253,8 @@ export default class UIScene extends Phaser.Scene {
   buildHelperText() {
     const hasTouch = this.sys.game.device.input.touch;
     const text = hasTouch
-      ? 'Drag to pan - Tap buildings/heroes - Post quests - Open Gates'
-      : 'Drag/WASD to pan - Click buildings/heroes - Post quests - Open Gates';
+      ? 'Drag to pan - Build roads/services - Tap heroes - Skip Day'
+      : 'Drag/WASD to pan - Build roads/services - Inspect heroes - Skip Day';
     this.helperText = this.add.text(WIDTH / 2, 54, text, {
       fontFamily: FONT,
       fontSize: '12px',
@@ -307,7 +315,7 @@ export default class UIScene extends Phaser.Scene {
   }
 
   // --- cycle button ---------------------------------------------------------
-  // "Open Gates" is the town-cycle trigger; internally still a day tick.
+  // Skip Day remains the manual cycle trigger while the real-time clock runs.
 
   buildEndDayButton() {
     const x = WIDTH - 104;
@@ -334,7 +342,7 @@ export default class UIScene extends Phaser.Scene {
         else this.cycleBg.setFillStyle(0x8a5a2b);
       };
     }
-    this.cycleLabel = this.add.text(x, y, 'Open Gates >', {
+    this.cycleLabel = this.add.text(x, y, 'Skip Day >', {
       fontFamily: FONT, fontSize: '16px', fontStyle: 'bold', color: '#fff6dc',
     }).setOrigin(0.5);
 
@@ -351,16 +359,18 @@ export default class UIScene extends Phaser.Scene {
       // locked until TownScene reports the cycle playback has finished
       this.cycleBg.disableInteractive();
       this.styleButton('locked');
-      this.cycleLabel.setText('Town stirs...').setAlpha(0.8);
+      this.cycleLabel.setText('Resolving...').setAlpha(0.8);
       this.game.events.emit('gwg-end-day');
     });
   }
 
   buildUtilityButtons() {
-    this.add.rectangle(274, HEIGHT - 64, 500, 38, 0x0f1521, 0.5)
+    this.add.rectangle(410, HEIGHT - 64, 772, 38, 0x0f1521, 0.5)
       .setStrokeStyle(1, 0x273244, 0.8);
     this.makeUtilityButton(386, HEIGHT - 64, 'Save', 'gwg-save');
     this.makeUtilityButton(466, HEIGHT - 64, 'Reset', 'gwg-reset', 70);
+    this.makeUtilityButton(548, HEIGHT - 64, 'Build', 'gwg-open-build', 74);
+    this.makeUtilityButton(626, HEIGHT - 64, 'Roads', 'gwg-open-roads', 70);
   }
 
   buildTownLedgerButton() {
@@ -369,7 +379,44 @@ export default class UIScene extends Phaser.Scene {
     this.makeUtilityButton(278, HEIGHT - 64, 'Town Ledger', 'gwg-open-ledger', 122);
   }
 
-  makeUtilityButton(x, y, label, eventName, width = 64) {
+  buildTimeControls() {
+    const controls = [
+      { x: 704, label: '||', speed: 0, width: 42 },
+      { x: 750, label: '1x', speed: 1, width: 42 },
+      { x: 796, label: '2x', speed: 2, width: 42 },
+      { x: 842, label: '4x', speed: 4, width: 42 },
+    ];
+    this.timeButtons = {};
+    for (const control of controls) {
+      this.timeButtons[control.speed] = this.makeUtilityButton(
+        control.x,
+        HEIGHT - 64,
+        control.label,
+        'gwg-time-speed',
+        control.width,
+        control.speed,
+      );
+    }
+    this.buildModeText = this.add.text(884, HEIGHT - 64, '', {
+      fontFamily: FONT,
+      fontSize: '11px',
+      fontStyle: 'bold',
+      color: '#7fdc93',
+      stroke: '#0c1118',
+      strokeThickness: 2,
+    }).setOrigin(0, 0.5);
+    this.cancelBuildButton = this.makeUtilityButton(
+      1010,
+      HEIGHT - 64,
+      'Cancel',
+      'gwg-cancel-build',
+      72,
+    );
+    this.cancelBuildButton.bg.setVisible(false).disableInteractive();
+    this.cancelBuildButton.text.setVisible(false);
+  }
+
+  makeUtilityButton(x, y, label, eventName, width = 64, eventValue = undefined) {
     const bg = this.add.rectangle(x, y, width, 32, 0x273244, 0.94)
       .setStrokeStyle(1, 0xf6c945)
       .setInteractive({ useHandCursor: true });
@@ -395,8 +442,9 @@ export default class UIScene extends Phaser.Scene {
         this.resetArmUntil = 0;
         text.setText(label);
       }
-      this.game.events.emit(eventName);
+      this.game.events.emit(eventName, eventValue);
     });
+    return { bg, text, label };
   }
 
   buildHtmlPanels() {
@@ -434,6 +482,9 @@ export default class UIScene extends Phaser.Scene {
       const eventName = action.dataset.gwgEvent;
       const id = action.dataset.gwgId || '';
       this.game.events.emit(eventName, id);
+      if (['gwg-select-build', 'gwg-cancel-build'].includes(eventName)) {
+        this.panelEl.classList.add('gwg-hidden');
+      }
     });
   }
 
@@ -516,7 +567,32 @@ export default class UIScene extends Phaser.Scene {
   enableCycleButton() {
     this.cycleBg.setInteractive({ useHandCursor: true });
     this.styleButton('normal');
-    this.cycleLabel.setText('Open Gates >').setAlpha(1);
+    this.cycleLabel.setText('Skip Day >').setAlpha(1);
+  }
+
+  lockCycleButton() {
+    this.cycleBg.disableInteractive();
+    this.styleButton('locked');
+    this.cycleLabel.setText('Resolving...').setAlpha(0.8);
+  }
+
+  updateTimeControls(speed) {
+    if (!this.timeButtons) return;
+    for (const [value, button] of Object.entries(this.timeButtons)) {
+      const active = Number(value) === Number(speed);
+      button.bg.setFillStyle(active ? 0x8a5a2b : 0x273244, 0.98);
+      button.text.setColor(active ? '#ffe08a' : '#fff6dc');
+    }
+  }
+
+  updateBuildMode(state = {}) {
+    if (!this.buildModeText || !this.cancelBuildButton) return;
+    const label = String(state.label || '');
+    this.buildModeText.setText(state.active ? `Build: ${label.length > 13 ? `${label.slice(0, 12)}...` : label}` : '');
+    this.cancelBuildButton.bg.setVisible(Boolean(state.active));
+    this.cancelBuildButton.text.setVisible(Boolean(state.active));
+    if (state.active) this.cancelBuildButton.bg.setInteractive({ useHandCursor: true });
+    else this.cancelBuildButton.bg.disableInteractive();
   }
 
   showAchievementToast(text) {

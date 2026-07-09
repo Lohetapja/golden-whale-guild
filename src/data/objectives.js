@@ -15,7 +15,7 @@ export const OBJECTIVES = [
   },
   {
     id: 'open-gates-once',
-    text: 'Open Gates once',
+    text: 'Complete one town cycle',
     reward: { morale: 3, trust: 1 },
     complete: (state) => has(state, 'post-first-quest') && state.stats.cyclesOpened >= 1,
     event: 'Objective complete: the town survived its first business cycle. +Morale.',
