@@ -82,6 +82,12 @@ upgrades, Town Ledger, fixed inspector panels, evolving NPCs, policy choices,
 soft crises, town identity labels, local achievement toasts, and a capped Town
 Log.
 
+The build catalog also includes unlockable Inns, Hero Hostels, Potion Shops,
+Watchtowers, Mentor Halls, an Arena, a Bank / Debt Office, VIP Lounge, Premium
+Lodge, Lootbox Kiosk, Gem Exchange, and Convenience Office. Their compact
+inspector actions can change resources, hero stats, debt, capacity, service
+quality, premium items, and town stability once per cycle.
+
 The town now has a stronger progression arc: staged growth from **Garage
 Guild** toward **Premium Kingdom Problem**, unlockable locations, soft crises,
 achievement-style milestones, policy choices every few cycles, and a local Town

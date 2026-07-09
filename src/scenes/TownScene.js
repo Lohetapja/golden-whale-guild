@@ -9,6 +9,8 @@ import { rollHeroEvent, WHALE_FLAVOR } from '../data/events.js';
 import { OBJECTIVES } from '../data/objectives.js';
 import { rollQuestNotices } from '../data/quests.js';
 import { BUILDING_CATALOG, getBuildingCatalogEntry } from '../data/buildingCatalog.js';
+import { getItemByName, getRandomPremiumItem } from '../data/itemCatalog.js';
+import { rollMonster } from '../data/monsters.js';
 import {
   createGridState,
   getFootprintCells,
@@ -65,7 +67,7 @@ const BUBBLE_MIN_SPACING = 150;
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
 const SAVE_KEY = 'golden-whale-guild-save-v2';
-const SAVE_VERSION = 5;
+const SAVE_VERSION = 6;
 const TAP_MOVE_THRESHOLD = 14;
 const SIMULATION_DAY_MS = 45000;
 const HERO_LABEL_DEFAULT_ALPHA = 0;
@@ -74,6 +76,9 @@ const HERO_LABEL_EVENT_ALPHA = 0.82;
 const PRIMARY_LABEL_IDS = new Set(['whale', 'guildhall', 'dungeon']);
 const DEFAULT_SPECIAL_LABEL_IDS = new Set(['notice_board', 'complaint_barrel']);
 const COMPACT_SPECIAL_LABEL_IDS = new Set(['notice_board']);
+const LEGACY_BUILDING_IDS = new Set([
+  'tavern', 'blacksmith', 'guildhall', 'market', 'training', 'whale', 'dungeon',
+]);
 
 const RESOURCE_THRESHOLDS = {
   trustWarning: 34,
@@ -410,7 +415,7 @@ export default class TownScene extends Phaser.Scene {
 
     const saved = this.loadSavedState();
     this.cityState = normalizeCityState(saved, () => makeLegacyCityState(
-      BUILDINGS.map((building) => ({
+      BUILDINGS.filter((building) => LEGACY_BUILDING_IDS.has(building.id)).map((building) => ({
         ...building,
         footprint: getBuildingCatalogEntry(building.id)?.footprint,
       })),
@@ -444,6 +449,8 @@ export default class TownScene extends Phaser.Scene {
       shadyUpgrades: 0,
       sponsoredQuests: 0,
       warningEvents: 0,
+      questFailures: 0,
+      premiumActions: 0,
       ...(saved?.stats || {}),
     };
     this.completedObjectives = new Set(saved?.completedObjectives || []);
@@ -537,6 +544,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-cancel-build', this.cancelBuildMode, this);
     this.game.events.on('gwg-time-speed', this.setSimulationSpeed, this);
     this.game.events.on('gwg-expand-land', this.expandLand, this);
+    this.game.events.on('gwg-building-action', this.runBuildingAction, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off('gwg-end-day', this.runCycle, this);
       this.game.events.off('gwg-save', this.saveGame, this);
@@ -558,6 +566,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-cancel-build', this.cancelBuildMode, this);
       this.game.events.off('gwg-time-speed', this.setSimulationSpeed, this);
       this.game.events.off('gwg-expand-land', this.expandLand, this);
+      this.game.events.off('gwg-building-action', this.runBuildingAction, this);
     });
 
     this.game.events.emit(
@@ -669,6 +678,8 @@ export default class TownScene extends Phaser.Scene {
       serviceQuality: level,
       upgradeProgress: 0,
       capacity: id === 'tavern' ? 4 + level * 2 : (catalog?.capacity || 4) + Math.max(0, level - 1) * 2,
+      stock: catalog?.id === 'potion_shop' ? 6 : 0,
+      actionDays: {},
     };
     this.cityState.buildingRuntime[id] = {
       ...defaults,
@@ -676,6 +687,9 @@ export default class TownScene extends Phaser.Scene {
       capacity: id === 'tavern'
         ? 4 + level * 2
         : (this.cityState.buildingRuntime[id]?.capacity || defaults.capacity),
+      actionDays: {
+        ...(this.cityState.buildingRuntime[id]?.actionDays || {}),
+      },
     };
     return this.cityState.buildingRuntime[id];
   }
@@ -1729,6 +1743,42 @@ export default class TownScene extends Phaser.Scene {
     ));
   }
 
+  getAverageHeroPower() {
+    const heroes = this.getActiveHeroes();
+    if (!heroes.length) return 0;
+    return heroes.reduce((sum, hero) => sum + (hero.stats.power || 0), 0) / heroes.length;
+  }
+
+  isCatalogUnlocked(catalog) {
+    if (!catalog?.unlockKey) return true;
+    const activeHeroes = this.getActiveHeroes();
+    const maxDebt = activeHeroes.reduce((max, hero) => Math.max(max, hero.stats.debt || 0), 0);
+    const maxResentment = activeHeroes.reduce((max, hero) => Math.max(max, hero.stats.resentment || 0), 0);
+    const tavernRuntime = this.isBuildingPlaced('tavern') ? this.getBuildingRuntime('tavern') : null;
+    const hasPremiumItem = activeHeroes.some((hero) => hero.stats.inventory?.some((item) => item.premiumSource));
+    switch (catalog.unlockKey) {
+      case 'tavern': return this.isBuildingPlaced('tavern');
+      case 'hostel': return activeHeroes.length >= 6 || Boolean(tavernRuntime && tavernRuntime.visitorsNow >= tavernRuntime.capacity);
+      case 'failedQuest': return (this.stats.questFailures || 0) > 0 || this.day >= 3;
+      case 'watchtower': return this.resources.threat >= 40 || (this.stats.threatEventsSurvived || 0) > 0;
+      case 'bank': return maxDebt > 300 || this.resources.corruption > 30;
+      case 'mentor': return maxResentment > 40 || this.resources.trust > 60;
+      case 'arena': return this.getStageIndex() >= 1 || this.getAverageHeroPower() > 10;
+      case 'whale2':
+        return this.getPlaceLevel(this.buildingById.whale) >= 2
+          || activeHeroes.some((hero) => /Whale/.test(hero.stats.status || hero.def.personality));
+      case 'whale3': return this.getPlaceLevel(this.buildingById.whale) >= 3;
+      case 'lootbox': return this.isBuildingPlaced('whale') || this.resources.corruption > 35;
+      case 'premiumItems': return hasPremiumItem;
+      case 'stage2': return this.getStageIndex() >= 1 || (this.stats.policiesChosen || 0) >= 3;
+      default: return true;
+    }
+  }
+
+  getCatalogLockReason(catalog) {
+    return this.isCatalogUnlocked(catalog) ? null : (catalog.lockReason || 'Locked by suspicious municipal policy.');
+  }
+
   validateBuildPlacement(gridX, gridY) {
     if (!this.buildMode) return { valid: false, reason: 'Choose something to build.' };
     const footprint = this.getBuildFootprint();
@@ -1755,6 +1805,8 @@ export default class TownScene extends Phaser.Scene {
 
     const catalog = getBuildingCatalogEntry(this.buildMode.id);
     if (!catalog) return { valid: false, reason: 'The catalog misplaced that building.' };
+    const lockReason = this.getCatalogLockReason(catalog);
+    if (lockReason) return { valid: false, reason: lockReason };
     if (this.isBuildingPlaced(catalog.id)) {
       return { valid: false, reason: `${catalog.id === 'tavern' ? 'This prototype supports one tavern for now.' : 'Already built.'}` };
     }
@@ -1894,6 +1946,7 @@ export default class TownScene extends Phaser.Scene {
     this.addTownLog(text, id === 'whale' ? 'golden_whale' : 'upgrade');
     this.saveGame(false);
     this.cancelBuildMode();
+    this.time.delayedCall(90, () => this.showPlaceInspector(building));
   }
 
   getBuildMenuPayload(category = null) {
@@ -1912,20 +1965,24 @@ export default class TownScene extends Phaser.Scene {
     const buildingRows = BUILDING_CATALOG.map((catalog) => {
       const place = this.buildingById?.[catalog.id];
       const built = Boolean(place?.isPlaced);
+      const lockReason = this.getCatalogLockReason(catalog);
+      const locked = Boolean(lockReason);
       return {
-        title: place?.name || catalog.id,
-        meta: built ? 'BUILT' : `${catalog.cost}g`,
+        title: catalog.name || place?.name || catalog.id,
+        meta: built ? 'BUILT' : (locked ? 'LOCKED' : `${catalog.cost}g`),
         kind: catalog.kind === 'shady' ? 'shady' : 'fair',
         lines: [
+          `Category: ${catalog.category}`,
           catalog.description,
           `Footprint: ${catalog.footprint.w}x${catalog.footprint.h}${catalog.roadRequired ? ' - road access required' : ''}`,
           catalog.capacity ? `Starting capacity: ${catalog.capacity}` : `Upkeep: ${catalog.upkeep}g`,
+          ...(locked ? [{ text: lockReason, className: 'gwg-bad' }] : []),
         ],
         actions: [{
-          label: built ? 'Built' : (this.resources.gold >= catalog.cost ? 'Place Building' : `Need ${catalog.cost}g`),
+          label: built ? 'Built' : (locked ? 'Locked' : (this.resources.gold >= catalog.cost ? 'Place Building' : `Need ${catalog.cost}g`)),
           event: 'gwg-select-build',
           id: catalog.id,
-          disabled: built || this.resources.gold < catalog.cost,
+          disabled: built || locked || this.resources.gold < catalog.cost,
         }],
       };
     });
@@ -2707,6 +2764,8 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getPlaceKind(place) {
+    const catalogKind = getBuildingCatalogEntry(place?.id)?.kind;
+    if (catalogKind && catalogKind !== 'mixed') return catalogKind;
     if (['whale', 'debt_collector_booth', 'refund_denial_desk', 'ethics_fountain', 'ethics_laundromat', 'premium_temple'].includes(place.id)) return 'shady';
     if (['training', 'blacksmith', 'guildhall', 'tavern', 'complaint_barrel', 'balance_memorial', 'patch_notes_shrine', 'hero_union_tent'].includes(place.id)) return 'fair';
     return '';
@@ -2720,7 +2779,8 @@ export default class TownScene extends Phaser.Scene {
 
   getPlaceInspectorPayload(place) {
     const info = this.getUpgradeInfo(place);
-    const runtime = getBuildingCatalogEntry(place.id) && place.isPlaced
+    const catalog = getBuildingCatalogEntry(place.id);
+    const runtime = catalog && place.isPlaced
       ? this.getBuildingRuntime(place.id)
       : null;
     const canUpgrade = Boolean(info.cost && !info.maxed);
@@ -2740,6 +2800,21 @@ export default class TownScene extends Phaser.Scene {
     }
     if (['notice_board', 'guildhall', 'sponsored_quest_board'].includes(place.id)) {
       actions.push({ label: 'View Quests', event: 'gwg-open-quests', id: place.id });
+    }
+    for (const shopAction of catalog?.actions || []) {
+      const usedToday = runtime?.actionDays?.[shopAction.id] === this.day;
+      const canPay = this.resources.gold >= shopAction.cost;
+      actions.push({
+        label: usedToday
+          ? `${shopAction.label} - Done`
+          : `${shopAction.label}${shopAction.cost ? ` ${shopAction.cost}g` : ''}`,
+        event: 'gwg-building-action',
+        id: `${place.id}:${shopAction.id}`,
+        disabled: usedToday || !canPay,
+        className: place.id.includes('premium') || ['vip_lounge', 'lootbox_kiosk', 'gem_exchange'].includes(place.id)
+          ? 'gwg-whale'
+          : '',
+      });
     }
 
     return {
@@ -2773,6 +2848,12 @@ export default class TownScene extends Phaser.Scene {
               ...(canAfford ? [] : [{ text: 'Not enough gold. Please exploit responsibly.', className: 'gwg-bad' }]),
             ],
         },
+        ...((catalog?.actions || []).length ? [{
+          title: 'Shop Actions',
+          lines: catalog.actions.map((shopAction) => (
+            `${shopAction.label}: ${shopAction.summary}${shopAction.cost ? ` Cost ${shopAction.cost}g.` : ''}`
+          )),
+        }] : []),
       ],
       actions,
     };
@@ -2955,6 +3036,141 @@ export default class TownScene extends Phaser.Scene {
     this.tryUpgradeTooltipTarget();
     if (wasLedger) this.openTownLedger();
     else this.showPlaceInspector(place);
+  }
+
+  applyBuildingHeroEffect(effect, place) {
+    if (!effect) return '';
+    const active = this.getActiveHeroes();
+    const honest = active.filter((hero) => this.isHonestHero(hero.def));
+    const whales = active.filter((hero) => this.isWhaleHero(hero.def) || hero.stats.whaleAccess);
+    const debtHeroes = active.filter((hero) => this.isDebtHero(hero.def) || hero.stats.debt > 0);
+    const adjust = (heroes, key, amount) => {
+      for (const hero of heroes) {
+        hero.stats[key] = key === 'debt'
+          ? Math.max(0, (hero.stats[key] || 0) + amount)
+          : Phaser.Math.Clamp((hero.stats[key] || 0) + amount, 0, key === 'power' ? 999 : 100);
+      }
+    };
+    switch (effect) {
+      case 'capacity':
+        this.getBuildingRuntime(place.id).capacity += 2;
+        return '+2 service capacity.';
+      case 'capacityLarge':
+        this.getBuildingRuntime(place.id).capacity += 3;
+        return '+3 service capacity.';
+      case 'quality':
+        this.getBuildingRuntime(place.id).serviceQuality += 1;
+        return 'Service quality improved.';
+      case 'whaleMorale':
+        adjust(whales, 'morale', 10);
+        adjust(honest, 'envy', 4);
+        return 'Whales recovered; everyone else noticed.';
+      case 'whalePower':
+        adjust(whales, 'power', 2);
+        adjust(honest, 'envy', 8);
+        adjust(honest, 'resentment', 4);
+        return 'Whale Power rose. So did several eyebrows.';
+      case 'healWeak': {
+        const hero = [...active].sort((a, b) => a.stats.morale - b.stats.morale)[0];
+        if (hero) {
+          hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 18, 0, 100);
+          this.addHeroHistory(hero, `Recovered at ${place.name}.`);
+        }
+        return hero ? `${hero.def.name} received suspiciously colorful medicine.` : '';
+      }
+      case 'mentorWeak': {
+        const hero = [...honest].sort((a, b) => a.stats.power - b.stats.power)[0];
+        if (hero) {
+          hero.stats.power += 2;
+          hero.stats.resentment = Math.max(0, (hero.stats.resentment || 0) - 5);
+          this.addHeroHistory(hero, 'Received actual mentoring.');
+        }
+        return hero ? `${hero.def.name} gained 2 honest Power.` : '';
+      }
+      case 'honestPower':
+        adjust(honest, 'power', 1);
+        return 'Honest heroes gained 1 Power.';
+      case 'honestLoyalty':
+        adjust(honest, 'loyalty', 8);
+        adjust(honest, 'resentment', -8);
+        return 'Honest loyalty improved without a receipt.';
+      case 'allPower':
+        adjust(active, 'power', 1);
+        return 'Active heroes gained 1 Power.';
+      case 'championPower': {
+        const champions = [...active].sort((a, b) => b.stats.power - a.stats.power).slice(0, 3);
+        adjust(champions, 'power', 2);
+        return 'The strongest heroes became even less relatable.';
+      }
+      case 'addDebt': {
+        const hero = Phaser.Utils.Array.GetRandom(debtHeroes.length ? debtHeroes : active);
+        if (hero) hero.stats.debt += 120;
+        return hero ? `${hero.def.name} gained 120 Debt.` : '';
+      }
+      case 'addDebtLarge': {
+        const hero = Phaser.Utils.Array.GetRandom(debtHeroes.length ? debtHeroes : active);
+        if (hero) hero.stats.debt += 240;
+        return hero ? `${hero.def.name} gained 240 premium-grade Debt.` : '';
+      }
+      case 'reduceDebt':
+        adjust(debtHeroes, 'debt', -120);
+        return 'Debt heroes briefly saw smaller numbers.';
+      case 'shuffleDebt': {
+        adjust(debtHeroes, 'debt', -30);
+        const hero = Phaser.Utils.Array.GetRandom(debtHeroes);
+        if (hero) hero.stats.debt += 150;
+        return 'Debt was redistributed with administrative confidence.';
+      }
+      case 'premiumItem': {
+        const hero = Phaser.Utils.Array.GetRandom(whales.length ? whales : active);
+        const item = getRandomPremiumItem();
+        if (hero && item) this.grantCatalogItem(hero, item);
+        return hero && item ? `${hero.def.name} received ${item.name}.` : '';
+      }
+      case 'buildingProgress':
+        for (const building of this.buildings.filter((entry) => entry.isPlaced)) {
+          const runtime = this.getBuildingRuntime(building.id);
+          runtime.upgradeProgress = Math.min(100, runtime.upgradeProgress + 8);
+        }
+        return 'Permits accelerated every placed building by 8%.';
+      default:
+        return '';
+    }
+  }
+
+  runBuildingAction(token) {
+    const [placeId, actionId] = String(token || '').split(':');
+    const place = this.buildingById?.[placeId];
+    const catalog = getBuildingCatalogEntry(placeId);
+    const shopAction = catalog?.actions?.find((entry) => entry.id === actionId);
+    if (!place?.isPlaced || !shopAction) return;
+    const runtime = this.getBuildingRuntime(placeId);
+    runtime.actionDays = runtime.actionDays || {};
+    if (runtime.actionDays[actionId] === this.day) {
+      this.game.events.emit('gwg-event', `${shopAction.label} already ran today. The paperwork needs a nap.`);
+      return;
+    }
+    if (this.resources.gold < shopAction.cost) {
+      this.game.events.emit('gwg-event', `Not enough gold for ${shopAction.label}. The clerk recommends cheaper principles.`);
+      return;
+    }
+    const deltas = {
+      ...(shopAction.deltas || {}),
+      gold: (shopAction.deltas?.gold || 0) - shopAction.cost,
+    };
+    runtime.actionDays[actionId] = this.day;
+    this.applyDeltas(deltas);
+    this.getBuildingRuntime(placeId).actionDays[actionId] = this.day;
+    const heroResult = this.applyBuildingHeroEffect(shopAction.heroEffect, place);
+    if (catalog.kind === 'shady') this.stats.premiumActions = (this.stats.premiumActions || 0) + 1;
+    const text = `${place.name}: ${shopAction.label}. ${shopAction.summary} ${heroResult}`.trim();
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, catalog.kind === 'shady' ? 'golden_whale' : 'economy');
+    this.floatDeltas(place.x, place.y - place.h - 10, deltas);
+    this.recordBuildingUse(place.id);
+    this.checkTownIdentity();
+    this.saveGame(false);
+    this.showPlaceInspector(place);
   }
 
   postQuestFromUi(noticeId) {
@@ -3304,7 +3520,13 @@ export default class TownScene extends Phaser.Scene {
         {
           title: 'Inventory',
           lines: inventory.length
-            ? inventory.map((item) => `- ${item.name}${item.premiumSource ? ' (premium)' : ''} +${item.powerBonus || 0}`)
+            ? inventory.map((item) => ({
+              text: `${item.name}${item.premiumSource ? ' (premium)' : ''} +${item.powerBonus || 0}`,
+              icon: item.assetKey && this.textures.exists(item.assetKey)
+                ? `${import.meta.env.BASE_URL}assets/items/${item.assetKey}.png`
+                : null,
+              className: item.premiumSource ? 'gwg-whale' : '',
+            }))
             : ['- Empty. Even the lint was repossessed.'],
         },
         {
@@ -3571,6 +3793,9 @@ export default class TownScene extends Phaser.Scene {
         hero.container.setVisible(false);
         hero.currentAction = 'Left town';
       }
+      if (hero.stats.active && hero.stats.inventory.length === 0 && !hero.stats.whaleAccess) {
+        this.grantCatalogItem(hero, getItemByName('Starter Sword'));
+      }
 
       // clicking/tapping a hero shows their compact detail sheet; the invisible
       // hit rectangle is larger than the placeholder sprite for mobile fingers.
@@ -3799,11 +4024,11 @@ export default class TownScene extends Phaser.Scene {
 
   maybeInviteArrival() {
     const activeCount = this.heroes.filter((hero) => hero.stats.active !== false).length;
-    const tavernCapacity = this.isBuildingPlaced('tavern')
-      ? this.getBuildingRuntime('tavern').capacity
-      : 0;
+    const lodgingCapacity = ['tavern', 'inn', 'hero_hostel', 'premium_lodge']
+      .filter((id) => this.isBuildingPlaced(id))
+      .reduce((sum, id) => sum + this.getBuildingRuntime(id).capacity, 0);
     const guildCapacity = 3 + Math.max(0, this.getPlaceLevel(this.buildingById.guildhall) - 1);
-    const townCapacity = Math.min(16, guildCapacity + tavernCapacity);
+    const townCapacity = Math.min(28, guildCapacity + lodgingCapacity);
     if (activeCount >= townCapacity) return;
     const arrivalChance = Phaser.Math.Clamp(
       0.3 + this.resources.trust / 250 + this.getPlaceLevel(this.buildingById.guildhall) * 0.04,
@@ -3870,6 +4095,18 @@ export default class TownScene extends Phaser.Scene {
   }
 
   pickAmbientSpot(hero) {
+    const serviceIds = [];
+    if (hero.stats.morale < 48) serviceIds.push('tavern', 'inn', 'hero_hostel', 'potion_shop');
+    if (this.isHonestHero(hero.def)) serviceIds.push('mentor_hall', 'arena');
+    if (this.isWhaleHero(hero.def) || hero.stats.whaleAccess) serviceIds.push('vip_lounge', 'premium_lodge', 'lootbox_kiosk');
+    if (this.isDebtHero(hero.def) || hero.stats.debt > 250) serviceIds.push('bank_debt_office', 'gem_exchange');
+    const serviceSpots = serviceIds
+      .map((id) => this.doorById[id])
+      .filter((spot) => spot && spot.id !== hero.at);
+    if (serviceSpots.length > 0 && Math.random() < 0.48) {
+      return Phaser.Utils.Array.GetRandom(serviceSpots);
+    }
+
     const preferredIds = hero.def.preferredDestinations || [hero.def.prefers].filter(Boolean);
     const preferredSpots = preferredIds
       .map((id) => this.doorById[id])
@@ -4131,7 +4368,8 @@ export default class TownScene extends Phaser.Scene {
   // hero slips inside the building for a moment, then pops back out
   enterBuilding(hero) {
     const runtime = this.isBuildingPlaced(hero.at) ? this.getBuildingRuntime(hero.at) : null;
-    if (hero.at === 'tavern' && runtime && runtime.visitorsNow >= runtime.capacity) {
+    const catalog = getBuildingCatalogEntry(hero.at);
+    if (catalog?.capacity && runtime && runtime.visitorsNow >= runtime.capacity) {
       hero.stats.morale = Math.max(0, hero.stats.morale - 4);
       this.say(hero, 'Indoors is full.', true);
       this.game.events.emit('gwg-event', `${hero.def.name} discovered the premium feature called indoors.`);
@@ -4292,6 +4530,28 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
+  showMonsterAttack(monster, gate) {
+    if (!monster || !gate) return;
+    const textureKey = this.textures.exists(monster.assetKey)
+      ? monster.assetKey
+      : resolveTexture(this, 'icon_warning', 'chevron');
+    if (!textureKey) return;
+    const source = this.textures.get(textureKey)?.getSourceImage?.();
+    const scale = source?.height ? Phaser.Math.Clamp(42 / source.height, 0.35, 1.4) : 1;
+    const sprite = this.add.image(gate.x, gate.y - 28, textureKey)
+      .setScale(scale)
+      .setDepth(5200);
+    this.tweens.add({
+      targets: sprite,
+      x: Phaser.Math.Linear(gate.x, PLAZA.x, 0.35),
+      y: Phaser.Math.Linear(gate.y, PLAZA.y, 0.35),
+      alpha: 0,
+      duration: 1800,
+      ease: 'Sine.easeIn',
+      onComplete: () => sprite.destroy(),
+    });
+  }
+
   // --- ambient chatter -------------------------------------------------------
 
   startIdleChatter() {
@@ -4436,7 +4696,10 @@ export default class TownScene extends Phaser.Scene {
     const training = this.getPlaceLevel(this.buildingById.training);
     const guildhall = this.getPlaceLevel(this.buildingById.guildhall);
     const whale = this.getPlaceLevel(this.buildingById.whale);
-    const honestBonus = this.isHonestHero(hero.def) ? training * 4 : 0;
+    const potion = this.getPlaceLevel(this.buildingById.potion_shop);
+    const mentor = this.getPlaceLevel(this.buildingById.mentor_hall);
+    const arena = this.getPlaceLevel(this.buildingById.arena);
+    const honestBonus = this.isHonestHero(hero.def) ? training * 4 + mentor * 4 : 0;
     const whaleBonus = this.isWhaleHero(hero.def) ? whale * 6 : 0;
     const corruptionBias = quest.type === 'fair' ? -R.corruption * 0.08 : R.corruption * 0.06;
 
@@ -4447,6 +4710,8 @@ export default class TownScene extends Phaser.Scene {
       + R.trust * 0.12
       + blacksmith * 5
       + guildhall * 4
+      + potion * 3
+      + arena * 4
       + honestBonus
       + whaleBonus
       + corruptionBias
@@ -4542,11 +4807,13 @@ export default class TownScene extends Phaser.Scene {
       const debtGain = quest.risk * 8;
       text = `${hero.def.name} (${heroRole}) failed ${quest.name} and gained ${debtGain} debt. ${quest.failure}`;
       bubble = 'This scaled badly.';
-      hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - quest.risk * 4, 0, 100);
+      const potionProtection = this.getPlaceLevel(this.buildingById.potion_shop) * 2;
+      hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - Math.max(2, quest.risk * 4 - potionProtection), 0, 100);
       hero.stats.debt += debtGain;
       hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty - quest.risk, 0, 100);
       hero.stats.resentment = Phaser.Math.Clamp((hero.stats.resentment || 0) + quest.risk * 4, 0, 100);
       this.addHeroHistory(hero, `Failed ${quest.name}.`);
+      this.stats.questFailures = (this.stats.questFailures || 0) + 1;
     }
 
     this.applyDeltas(deltas);
@@ -4579,22 +4846,34 @@ export default class TownScene extends Phaser.Scene {
     this.floatText(hero.container.x, hero.container.y - 36, 'LEFT TOWN', '#f0938f');
   }
 
-  grantPremiumItem(hero, name, powerBonus = 2) {
-    if (!hero?.stats) return;
+  grantCatalogItem(hero, itemDef, powerOverride = null) {
+    if (!hero?.stats || !itemDef) return null;
     hero.stats.inventory = Array.isArray(hero.stats.inventory) ? hero.stats.inventory : [];
     const item = {
       id: `${hero.def.id}-${this.day}-${Math.floor(Math.random() * 100000)}`,
-      name,
-      rarity: powerBonus >= 5 ? 'legendary' : 'premium',
-      powerBonus,
-      premiumSource: true,
-      envyValue: 12 + powerBonus * 4,
-      destroyChance: 0.5,
+      catalogId: itemDef.id,
+      assetKey: itemDef.assetKey,
+      name: itemDef.name,
+      rarity: itemDef.rarity,
+      type: itemDef.type,
+      powerBonus: powerOverride ?? itemDef.powerBonus,
+      moraleEffect: itemDef.moraleEffect || 0,
+      debtEffect: itemDef.debtEffect || 0,
+      corruptionEffect: itemDef.corruptionEffect || 0,
+      premiumSource: Boolean(itemDef.premiumSource),
+      envyValue: itemDef.envyValue,
+      canBeStolen: itemDef.canBeStolen,
+      destroyChance: itemDef.destroyChance,
       ownerId: hero.def.id,
     };
     hero.stats.inventory.unshift(item);
     hero.stats.inventory = hero.stats.inventory.slice(0, 3);
     return item;
+  }
+
+  grantPremiumItem(hero, name, powerBonus = 2) {
+    const itemDef = getItemByName(name) || getRandomPremiumItem();
+    return this.grantCatalogItem(hero, itemDef, powerBonus);
   }
 
   maybeResolveItemConflict() {
@@ -4605,7 +4884,7 @@ export default class TownScene extends Phaser.Scene {
     if (!jealous.length || Math.random() > 0.1) return;
     const instigator = Phaser.Utils.Array.GetRandom(jealous);
     const target = this.heroes.find((hero) => hero.def.id === instigator.stats.resentmentTargetId);
-    const premiumItems = target?.stats?.inventory?.filter((item) => item.premiumSource) || [];
+    const premiumItems = target?.stats?.inventory?.filter((item) => item.premiumSource && item.canBeStolen !== false) || [];
     if (!target || !premiumItems.length) return;
     const item = Phaser.Utils.Array.GetRandom(premiumItems);
     target.stats.inventory = target.stats.inventory.filter((owned) => owned.id !== item.id);
@@ -4865,20 +5144,49 @@ export default class TownScene extends Phaser.Scene {
       const dungeonLevel = this.getPlaceLevel(this.buildingById.dungeon);
       const complaintLevel = this.getPlaceLevel(this.decorationById.complaint_barrel);
       const debtLevel = this.getPlaceLevel(this.decorationById.debt_collector_booth);
+      const innLevel = this.getPlaceLevel(this.buildingById.inn);
+      const hostelLevel = this.getPlaceLevel(this.buildingById.hero_hostel);
+      const potionLevel = this.getPlaceLevel(this.buildingById.potion_shop);
+      const watchtowerLevel = this.getPlaceLevel(this.buildingById.watchtower);
+      const bankLevel = this.getPlaceLevel(this.buildingById.bank_debt_office);
+      const mentorLevel = this.getPlaceLevel(this.buildingById.mentor_hall);
+      const arenaLevel = this.getPlaceLevel(this.buildingById.arena);
+      const vipLevel = this.getPlaceLevel(this.buildingById.vip_lounge);
+      const lodgeLevel = this.getPlaceLevel(this.buildingById.premium_lodge);
+      const lootboxLevel = this.getPlaceLevel(this.buildingById.lootbox_kiosk);
+      const gemLevel = this.getPlaceLevel(this.buildingById.gem_exchange);
+      const convenienceLevel = this.getPlaceLevel(this.buildingById.convenience_office);
       const townSizePressure = this.isBuilderCity
         ? Math.max(0, this.cityState.placedBuildings.length - 2)
           + Math.max(0, this.cityState.unlockedZones.length - 1) * 2
         : 0;
       const passive = {
-        gold: marketLevel * 18 + this.getPlaceLevel(this.buildingById.guildhall) * 6,
-        morale: Math.max(0, tavernLevel + complaintLevel - 2),
-        corruption: marketLevel >= 4 ? 1 : 0,
+        gold: marketLevel * 18
+          + this.getPlaceLevel(this.buildingById.guildhall) * 6
+          + bankLevel * 28
+          + vipLevel * 30
+          + lodgeLevel * 38
+          + lootboxLevel * 24
+          + gemLevel * 20
+          + convenienceLevel * 24,
+        trust: mentorLevel - Math.floor((vipLevel + lodgeLevel + lootboxLevel + gemLevel + convenienceLevel) / 2),
+        morale: Math.max(0, tavernLevel + innLevel * 2 + hostelLevel + potionLevel + mentorLevel * 2 + complaintLevel - 2),
+        corruption: (marketLevel >= 4 ? 1 : 0)
+          + bankLevel
+          + vipLevel
+          + lodgeLevel
+          + lootboxLevel
+          + gemLevel
+          + convenienceLevel,
         threat: Phaser.Math.Between(...BALANCE.passiveThreatBase)
           + dungeonLevel
           + townSizePressure
+          + Math.floor(arenaLevel / 2)
+          - watchtowerLevel * 2
           - Math.floor(complaintLevel / 2),
       };
       this.applyDeltas(passive);
+      if (mentorLevel > 0) this.coolResentment(mentorLevel, 'Mentor Hall translated resentment into homework.');
       this.floatDeltas(PLAZA.x, PLAZA.y - 64, passive);
       if (passive.gold || passive.morale) {
         this.game.events.emit('gwg-event', `Town upgrades paid off: +${passive.gold}g, +${passive.morale} Morale.`);
@@ -4918,12 +5226,23 @@ export default class TownScene extends Phaser.Scene {
       }
       if (R.threat >= 80) {
         const gate = this.getOperationalPlace('dungeon');
-        const d = { gold: -Math.min(260, Math.floor(R.gold * 0.16)), trust: -4, morale: -5, threat: -22 };
+        const defenseFactor = Phaser.Math.Clamp(1 - watchtowerLevel * 0.16, 0.35, 1);
+        const monster = rollMonster();
+        const d = {
+          gold: -Math.ceil(Math.min(260, Math.floor(R.gold * 0.16)) * defenseFactor),
+          trust: -Math.max(1, 4 - watchtowerLevel),
+          morale: -Math.max(2, 5 - watchtowerLevel),
+          threat: -22 - watchtowerLevel * 3,
+        };
         this.applyDeltas(d);
         this.floatDeltas(gate.x, gate.y - gate.h - 14, d);
         this.floatText(gate.x, gate.y - gate.h - 34, 'TOWN ATTACK', '#e74c3c');
         this.stats.threatEventsSurvived += 1;
-        this.game.events.emit('gwg-event', 'The dungeon sent a complaint in person.');
+        this.showMonsterAttack(monster, gate);
+        this.game.events.emit(
+          'gwg-event',
+          `${monster.name} attacked. ${monster.flavour}${watchtowerLevel ? ` Watchtowers reduced losses by ${Math.round((1 - defenseFactor) * 100)}%.` : ''}`,
+        );
         const candidates = this.heroes.filter((h) => h.state !== 'inside' && !h.bubble);
         if (candidates.length > 0) {
           this.say(

@@ -15,6 +15,18 @@ Generated assets are optional and must stay routed through
 | `building_market` | `public/assets/buildings/building_market.png` | Market | New PixelLab asset |
 | `building_training_yard` | `public/assets/buildings/building_training_yard.png` | Training Yard | New PixelLab asset |
 | `building_dungeon_gate` | `public/assets/buildings/building_dungeon_gate.png` | Dungeon Gate | New PixelLab asset |
+| `building_inn` | `public/assets/buildings/building_inn.png` | Buildable Inn | PixelLab asset, integrated |
+| `building_hero_hostel` | `public/assets/buildings/building_hero_hostel.png` | Buildable Hero Hostel | PixelLab asset, integrated |
+| `building_potion_shop` | `public/assets/buildings/building_potion_shop.png` | Buildable Potion Shop | PixelLab asset, integrated |
+| `building_watchtower` | `public/assets/buildings/building_watchtower.png` | Buildable Watchtower | PixelLab asset, integrated |
+| `building_bank_debt_office` | `public/assets/buildings/building_bank_debt_office.png` | Buildable Bank / Debt Office | Manifest slot; generated job was not retained, fallback active |
+| `building_mentor_hall` | `public/assets/buildings/building_mentor_hall.png` | Buildable Mentor Hall | Manifest slot; generated job was not retained, fallback active |
+| `building_arena` | `public/assets/buildings/building_arena.png` | Buildable Arena | Manifest slot; generated job was not retained, fallback active |
+| `building_vip_lounge` | `public/assets/buildings/building_vip_lounge.png` | Buildable VIP Lounge | Manifest slot; generated job was not retained, fallback active |
+| `building_premium_lodge` | `public/assets/buildings/building_premium_lodge.png` | Buildable Premium Lodge | Manifest slot; fallback active |
+| `building_lootbox_kiosk` | `public/assets/buildings/building_lootbox_kiosk.png` | Buildable Lootbox Kiosk | Manifest slot; fallback active |
+| `building_gem_exchange` | `public/assets/buildings/building_gem_exchange.png` | Buildable Gem Exchange | Manifest slot; fallback active |
+| `building_convenience_office` | `public/assets/buildings/building_convenience_office.png` | Buildable Convenience Office | Manifest slot; fallback active |
 
 ## Special Locations
 
@@ -104,6 +116,24 @@ Generated assets are optional and must stay routed through
 | `icon_protest` | `public/assets/icons/icon_warning.png` | Protest icon alias | Uses warning icon until a dedicated protest icon is generated |
 | `icon_locked` | `public/assets/icons/icon_warning.png` | Locked icon alias | Uses warning icon until a dedicated lock icon is generated |
 | `icon_max` | `public/assets/icons/icon_upgrade.png` | Max-level icon alias | Uses upgrade icon until a dedicated max icon is generated |
+
+## Inventory Items
+
+The 16 item definitions live in `src/data/itemCatalog.js`. Every row below has
+a manifest slot and a text fallback in the hero inspector. Dedicated PixelLab
+icon generation was deferred after the controlled building batch hit the local
+download limit.
+
+| Asset keys | Folder | Where used | Notes |
+| --- | --- | --- | --- |
+| `item_starter_sword` through `item_shame_coin_pouch` | `public/assets/items/` | Hero inventory, premium shops, item conflicts | Manifest-ready; text fallback active until PNG exists |
+
+## Monsters And Construction
+
+| Asset keys | Folder | Where used | Notes |
+| --- | --- | --- | --- |
+| `monster_goblin_raider` through `monster_refund_ghost` | `public/assets/monsters/` | Threat attack animation | Manifest-ready; warning-icon fallback active |
+| `object_build_marker`, `object_locked_land_marker`, `object_expansion_sign`, `object_construction_site` | `public/assets/objects/` | Build mode and expansion | Manifest-ready; generated Phaser grid graphics remain active |
 
 ## Tiles And UI
 

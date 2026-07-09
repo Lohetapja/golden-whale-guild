@@ -18,6 +18,8 @@ premium-economy edge. New assets should match the first PixelLab reference set:
 - Standalone buildings, objects, characters, and icons should use transparent
   backgrounds.
 - Buildings should stay readable around 80-170 px wide in-game.
+- Grid buildings should use clear 1x1, 2x2, 3x2, or 3x3 silhouettes and keep
+  their entrance visually near the bottom edge for road access.
 - Small locations and props should stay readable around 32-90 px wide in-game.
 - NPCs should remain readable around 24-48 px tall in-game.
 - Icons should read clearly at HUD size, usually 14-24 px in-game.

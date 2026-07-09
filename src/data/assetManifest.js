@@ -23,6 +23,18 @@ export const ASSET_MANIFEST = [
   { key: 'building_market', path: 'assets/buildings/building_market.png', type: 'image', fallback: 'generated ph-market' },
   { key: 'building_golden_whale', path: 'assets/buildings/building_golden_whale.png', type: 'image', fallback: 'generated ph-whale' },
   { key: 'building_dungeon_gate', path: 'assets/buildings/building_dungeon_gate.png', type: 'image', fallback: 'generated ph-dungeon' },
+  { key: 'building_inn', path: 'assets/buildings/building_inn.png', type: 'image', fallback: 'generated ph-inn' },
+  { key: 'building_hero_hostel', path: 'assets/buildings/building_hero_hostel.png', type: 'image', fallback: 'generated ph-hero_hostel' },
+  { key: 'building_potion_shop', path: 'assets/buildings/building_potion_shop.png', type: 'image', fallback: 'generated ph-potion_shop' },
+  { key: 'building_watchtower', path: 'assets/buildings/building_watchtower.png', type: 'image', fallback: 'generated ph-watchtower' },
+  { key: 'building_bank_debt_office', path: 'assets/buildings/building_bank_debt_office.png', type: 'image', fallback: 'generated ph-bank_debt_office' },
+  { key: 'building_mentor_hall', path: 'assets/buildings/building_mentor_hall.png', type: 'image', fallback: 'generated ph-mentor_hall' },
+  { key: 'building_arena', path: 'assets/buildings/building_arena.png', type: 'image', fallback: 'generated ph-arena' },
+  { key: 'building_vip_lounge', path: 'assets/buildings/building_vip_lounge.png', type: 'image', fallback: 'generated ph-vip_lounge' },
+  { key: 'building_premium_lodge', path: 'assets/buildings/building_premium_lodge.png', type: 'image', fallback: 'generated ph-premium_lodge' },
+  { key: 'building_lootbox_kiosk', path: 'assets/buildings/building_lootbox_kiosk.png', type: 'image', fallback: 'generated ph-lootbox_kiosk' },
+  { key: 'building_gem_exchange', path: 'assets/buildings/building_gem_exchange.png', type: 'image', fallback: 'generated ph-gem_exchange' },
+  { key: 'building_convenience_office', path: 'assets/buildings/building_convenience_office.png', type: 'image', fallback: 'generated ph-convenience_office' },
 
   // --- characters ----------------------------------------------------------
   // hero_default is the shared stand-in used when a personality sheet is
@@ -84,6 +96,37 @@ export const ASSET_MANIFEST = [
   { key: 'object_anvil', path: 'assets/objects/object_anvil.png', type: 'image', fallback: 'generated anvil prop' },
   { key: 'object_training_dummy', path: 'assets/objects/object_training_dummy.png', type: 'image', fallback: 'generated training dummy prop' },
   { key: 'object_target', path: 'assets/objects/object_target.png', type: 'image', fallback: 'generated target prop' },
+  { key: 'object_build_marker', path: 'assets/objects/object_build_marker.png', type: 'image', fallback: 'generated build preview graphics' },
+  { key: 'object_locked_land_marker', path: 'assets/objects/object_locked_land_marker.png', type: 'image', fallback: 'generated locked land tint' },
+  { key: 'object_expansion_sign', path: 'assets/objects/object_expansion_sign.png', type: 'image', fallback: 'Build Menu expansion action' },
+  { key: 'object_construction_site', path: 'assets/objects/object_construction_site.png', type: 'image', fallback: 'generated build preview graphics' },
+
+  // --- hero inventory items -----------------------------------------------
+  { key: 'item_starter_sword', path: 'assets/items/item_starter_sword.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_bent_sword', path: 'assets/items/item_bent_sword.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_basic_armor', path: 'assets/items/item_basic_armor.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_sponsored_armor', path: 'assets/items/item_sponsored_armor.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_premium_knees', path: 'assets/items/item_premium_knees.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_legendary_receipt', path: 'assets/items/item_legendary_receipt.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_queue_skip_relic', path: 'assets/items/item_queue_skip_relic.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_sword_unfair_advantage', path: 'assets/items/item_sword_unfair_advantage.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_revive_insurance_scroll', path: 'assets/items/item_revive_insurance_scroll.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_loot_priority_blessing', path: 'assets/items/item_loot_priority_blessing.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_confidence_booster_soup', path: 'assets/items/item_confidence_booster_soup.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_dragon_mount_trial', path: 'assets/items/item_dragon_mount_trial.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_deluxe_struggle_bundle', path: 'assets/items/item_deluxe_struggle_bundle.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_premium_dust', path: 'assets/items/item_premium_dust.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_whale_token_pack', path: 'assets/items/item_whale_token_pack.png', type: 'image', fallback: 'inventory text' },
+  { key: 'item_shame_coin_pouch', path: 'assets/items/item_shame_coin_pouch.png', type: 'image', fallback: 'inventory text' },
+
+  // --- monster event sprites ----------------------------------------------
+  { key: 'monster_goblin_raider', path: 'assets/monsters/monster_goblin_raider.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_skeleton_attacker', path: 'assets/monsters/monster_skeleton_attacker.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_slime', path: 'assets/monsters/monster_slime.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_dungeon_bat', path: 'assets/monsters/monster_dungeon_bat.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_premium_goblin', path: 'assets/monsters/monster_premium_goblin.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_debt_wraith', path: 'assets/monsters/monster_debt_wraith.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_refund_ghost', path: 'assets/monsters/monster_refund_ghost.png', type: 'image', fallback: 'event text and warning marker' },
 
   // --- icons ---------------------------------------------------------------
   { key: 'icon_coin', path: 'assets/icons/icon_coin.png', type: 'image', fallback: 'generated ph-icon_coin' },

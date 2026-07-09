@@ -500,7 +500,10 @@ export default class UIScene extends Phaser.Scene {
   renderLine(line) {
     if (typeof line === 'string') return `<p>${this.escapeHtml(line)}</p>`;
     const cls = line.className ? ` class="${this.escapeHtml(line.className)}"` : '';
-    return `<p${cls}>${this.escapeHtml(line.text)}</p>`;
+    const icon = line.icon
+      ? `<img class="gwg-inline-icon" src="${this.escapeHtml(line.icon)}" alt="" />`
+      : '';
+    return `<p${cls}>${icon}${this.escapeHtml(line.text)}</p>`;
   }
 
   renderAction(action) {
