@@ -474,6 +474,8 @@ export default class UIScene extends Phaser.Scene {
       escapeHtml: this.escapeHtml.bind(this),
       renderAction: this.renderAction.bind(this),
     });
+    this.currentHtmlPanelType = null;
+    this.townLedgerScrollTop = 0;
 
     this.panelEl.addEventListener('pointerdown', (event) => {
       event.stopPropagation();
@@ -596,6 +598,51 @@ export default class UIScene extends Phaser.Scene {
     return `${tabs}${sections}${rows}${actions}`;
   }
 
+  renderTownLedger(payload = {}) {
+    const rows = (payload.rows || []).map((row) => {
+      const preview = row.preview
+        ? `<img class="gwg-ledger-preview" src="${this.escapeHtml(row.preview)}" alt="" />`
+        : `<span class="gwg-ledger-preview fallback" aria-hidden="true">${this.escapeHtml(row.title?.charAt(0) || '+')}</span>`;
+      return `
+        <article class="gwg-ledger-item ${this.escapeHtml(row.kind || '')} ${this.escapeHtml(row.state || '')}">
+          ${preview}
+          <div class="gwg-ledger-copy">
+            <div class="gwg-ledger-title">
+              <div>
+                <h3>${this.escapeHtml(row.title)}</h3>
+                <span>${this.escapeHtml(row.levelLabel)}</span>
+              </div>
+              <span class="gwg-state-badge ${this.escapeHtml(row.state || '')}">${this.escapeHtml(row.stateLabel)}</span>
+            </div>
+            <div class="gwg-ledger-effects">
+              <p><strong>Current</strong>${this.escapeHtml(row.current)}</p>
+              <p><strong>Next</strong>${this.escapeHtml(row.next)}</p>
+            </div>
+            <p class="gwg-ledger-flavor">"${this.escapeHtml(row.flavor)}"</p>
+          </div>
+          <div class="gwg-ledger-decision">
+            <strong>${this.escapeHtml(row.costLabel)}</strong>
+            <span>${this.escapeHtml(row.consequence)}</span>
+            ${row.actions?.length ? row.actions.map((action) => this.renderAction(action)).join('') : ''}
+          </div>
+        </article>
+      `;
+    }).join('');
+    return `
+      <div class="gwg-ledger-summary">
+        <div class="fair">
+          <strong>Fair growth</strong>
+          <span>Morale, trust, and heroes who still make eye contact.</span>
+        </div>
+        <div class="shady">
+          <strong>Shady growth</strong>
+          <span>Fast gold, premium glow, and invoices from ethics.</span>
+        </div>
+      </div>
+      <div class="gwg-ledger-list">${rows}</div>
+    `;
+  }
+
   showInspectorPanel(payload) {
     this.showHtmlPanel(payload, false);
   }
@@ -607,22 +654,32 @@ export default class UIScene extends Phaser.Scene {
   showHtmlPanel(payload = {}, ledger = false) {
     if (!this.panelEl) return;
     const isBuildCatalog = payload.panelType === 'build-catalog';
+    const isTownLedger = payload.panelType === 'town-ledger';
+    if (this.currentHtmlPanelType === 'town-ledger') {
+      this.townLedgerScrollTop = this.panelBodyEl.scrollTop;
+    }
     this.setWorldInputBlocked(isBuildCatalog || ledger);
-    this.panelEl.className = `gwg-panel${ledger ? ' gwg-ledger' : ''}${isBuildCatalog ? ' gwg-build-catalog' : ''}`;
+    this.panelEl.className = `gwg-panel${ledger ? ' gwg-ledger' : ''}${isBuildCatalog ? ' gwg-build-catalog' : ''}${isTownLedger ? ' gwg-town-ledger' : ''}`;
     this.panelTitleEl.textContent = payload.title || 'Inspector';
     this.panelSubtitleEl.textContent = payload.subtitle || '';
+    this.currentHtmlPanelType = payload.panelType || (ledger ? 'ledger' : 'inspector');
     if (isBuildCatalog) {
       this.buildMenuPanel.show(payload);
       return;
     }
     this.buildMenuPanel.clear();
-    this.panelBodyEl.innerHTML = this.renderPanelPayload(payload);
-    this.panelBodyEl.scrollTop = 0;
+    this.panelBodyEl.innerHTML = isTownLedger
+      ? this.renderTownLedger(payload)
+      : this.renderPanelPayload(payload);
+    this.panelBodyEl.scrollTop = isTownLedger ? this.townLedgerScrollTop : 0;
   }
 
   closeHtmlPanel() {
     if (!this.panelEl) return;
     this.buildMenuPanel?.capture();
+    if (this.currentHtmlPanelType === 'town-ledger') {
+      this.townLedgerScrollTop = this.panelBodyEl.scrollTop;
+    }
     this.panelEl.classList.add('gwg-hidden');
     this.setWorldInputBlocked(false);
     this.game.events.emit('gwg-selection-clear');

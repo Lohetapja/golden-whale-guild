@@ -2106,7 +2106,8 @@ export default class TownScene extends Phaser.Scene {
         id: place.id,
         itemType: 'location',
         title: place.name,
-        costLabel: this.isLocationUnlocked(place.id) ? 'ON MAP' : 'LOCKED',
+        costLabel: 'Town unlock',
+        stateLabel: this.isLocationUnlocked(place.id) ? 'ON MAP' : 'LOCKED',
         kind: this.getPlaceKind(place),
         preview: this.getAssetPreviewUrl(place.assetKey),
         description: place.description || 'A municipal object with a suspiciously specific purpose.',
@@ -2142,7 +2143,8 @@ export default class TownScene extends Phaser.Scene {
       id: assetKey,
       itemType: 'decoration',
       title,
-      costLabel: 'AUTO',
+      costLabel: 'District dressing',
+      stateLabel: 'PLACED',
       preview: this.getAssetPreviewUrl(assetKey),
       description,
       footprintLabel: 'Non-blocking',
@@ -2170,6 +2172,7 @@ export default class TownScene extends Phaser.Scene {
       title: road.name,
       cost: road.cost,
       costLabel: `${road.cost}g / tile`,
+      stateLabel: this.resources.gold >= road.cost ? 'READY' : 'SHORT',
       kind: road.id === 'premium' ? 'shady' : 'fair',
       swatch: `#${road.color.toString(16).padStart(6, '0')}`,
       description: road.description,
@@ -2203,7 +2206,8 @@ export default class TownScene extends Phaser.Scene {
         itemType: 'building',
         title: catalog.name || place?.name || catalog.id,
         cost: catalog.cost,
-        costLabel: built ? 'BUILT' : (locked ? 'LOCKED' : `${catalog.cost}g`),
+        costLabel: `${catalog.cost}g`,
+        stateLabel: built ? 'BUILT' : locked ? 'LOCKED' : affordable ? 'READY' : 'SHORT',
         kind: catalog.kind === 'shady' ? 'shady' : 'fair',
         preview: this.getAssetPreviewUrl(place?.assetKey || catalog.assetKey),
         description: catalog.description,
@@ -2254,6 +2258,11 @@ export default class TownScene extends Phaser.Scene {
       tabs: BUILD_MENU_CATEGORIES.map((entry) => ({
         id: entry.id,
         label: entry.label,
+        count: entry.id === 'roads'
+          ? Object.keys(ROAD_TYPES).length
+          : entry.id === 'decorations'
+            ? this.getBuildMenuDecorationRows().length
+            : entry.buildingIds.length + this.getBuildMenuLocationRows(entry.id).length,
         event: 'gwg-build-category',
         active: entry.id === category.id,
       })),
@@ -3329,42 +3338,37 @@ export default class TownScene extends Phaser.Scene {
       const canUpgrade = Boolean(info.cost && !info.maxed && !locked);
       const canAfford = canUpgrade && this.resources.gold >= info.cost;
       const maxLevel = info.def?.maxLevel || 3;
+      const state = locked ? 'locked' : info.maxed ? 'maxed' : canAfford ? 'affordable' : 'unaffordable';
       return {
-        place,
-        affordable: canAfford,
-        maxed: info.maxed,
-        locked,
-        row: {
-          title: place.name,
-          meta: locked ? 'LOCKED' : `Level ${info.level}/${maxLevel}`,
-          kind: this.getPlaceKind(place),
-          lines: locked
-            ? [lockReason]
-            : [
-              `Current: ${info.effect || place.effect || 'decorative trouble'}`,
-              info.maxed ? 'Next: MAX' : `Next: ${info.nextEffect || 'more questionable improvements'}`,
-              info.maxed ? 'Cost: MAX' : `Cost: ${info.cost}g - ${canAfford ? 'Can afford' : 'Cannot afford'}`,
-              info.flavor || place.upgradeFlavor || 'The upgrade clerk smiles without context.',
-              { text: this.getConsequenceLine(place), className: place.id === 'whale' ? 'gwg-whale' : 'gwg-muted' },
-            ],
-          actions: locked
-            ? []
-            : [{
-              label: info.maxed ? 'MAX' : (canAfford ? 'Upgrade' : `Need ${info.cost}g`),
-              event: 'gwg-upgrade-place',
-              id: place.id,
-              disabled: info.maxed || !canAfford,
-            }],
-        },
+        id: place.id,
+        title: place.name,
+        preview: this.getAssetPreviewUrl(place.assetKey),
+        kind: this.getPlaceKind(place),
+        state,
+        stateLabel: locked ? 'LOCKED' : info.maxed ? 'MAX' : canAfford ? 'READY' : 'SHORT',
+        levelLabel: `Level ${info.level}/${maxLevel}`,
+        current: info.effect || place.effect || 'Decorative trouble with municipal recognition.',
+        next: locked
+          ? lockReason
+          : info.maxed
+            ? 'Maximum level reached. The paperwork has achieved final form.'
+            : info.nextEffect || 'More questionable improvements.',
+        costLabel: locked ? 'Unavailable' : info.maxed ? 'MAX' : `${info.cost}g`,
+        flavor: info.flavor || place.upgradeFlavor || 'The upgrade clerk smiles without context.',
+        consequence: this.getConsequenceLine(place),
+        actions: locked
+          ? []
+          : [{
+            label: info.maxed ? 'MAX' : (canAfford ? 'Upgrade' : `Need ${info.cost}g`),
+            event: 'gwg-upgrade-place',
+            id: place.id,
+            disabled: info.maxed || !canAfford,
+          }],
       };
-    }).sort((a, b) => {
-      if (a.locked !== b.locked) return a.locked ? 1 : -1;
-      if (a.maxed !== b.maxed) return a.maxed ? 1 : -1;
-      if (a.affordable !== b.affordable) return a.affordable ? -1 : 1;
-      return a.place.name.localeCompare(b.place.name);
     });
 
     return {
+      panelType: 'town-ledger',
       title: 'Town Ledger',
       subtitle: `Upgrade planning board - ${this.resources.gold}g available`,
       sections: [{
@@ -3375,7 +3379,7 @@ export default class TownScene extends Phaser.Scene {
           ...((this.getOnboardingStep()?.id === 'npc') ? [{ text: 'Tip: choose one upgrade path, then inspect a hero to see who has opinions.', className: 'gwg-good' }] : []),
         ],
       }],
-      rows: rows.map((entry) => entry.row),
+      rows,
     };
   }
 

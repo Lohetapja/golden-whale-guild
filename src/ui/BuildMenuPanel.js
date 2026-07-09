@@ -52,7 +52,10 @@ export default class BuildMenuPanel {
         data-gwg-event="${this.escapeHtml(tab.event)}"
         data-gwg-id="${this.escapeHtml(tab.id)}"
         aria-pressed="${tab.active ? 'true' : 'false'}"
-      >${this.escapeHtml(tab.label)}</button>
+      >
+        <span>${this.escapeHtml(tab.label)}</span>
+        <small>${this.escapeHtml(tab.count ?? '')}</small>
+      </button>
     `).join('');
     const cards = (payload.rows || []).map((row) => this.renderCard(row)).join('');
     return `
@@ -60,14 +63,25 @@ export default class BuildMenuPanel {
         <nav class="gwg-build-categories" aria-label="Build categories">${tabs}</nav>
         <div class="gwg-build-content">
           <div class="gwg-build-category-copy">
-            <strong>${this.escapeHtml(payload.catalog?.label || '')}</strong>
+            <div>
+              <strong>${this.escapeHtml(payload.catalog?.label || '')}</strong>
+              <small>${this.escapeHtml(payload.rows?.length || 0)} plans</small>
+            </div>
             <span>${this.escapeHtml(payload.catalog?.description || '')}</span>
           </div>
           <div class="gwg-build-workspace">
             <div class="gwg-build-grid" data-gwg-category="${this.escapeHtml(payload.catalog?.categoryId || '')}">
               ${cards || '<p class="gwg-muted">Nothing in this category has survived procurement.</p>'}
             </div>
-            <aside class="gwg-build-detail">${this.renderDetail(payload.detail)}</aside>
+            <aside class="gwg-build-detail">
+              <details class="gwg-build-detail-fold" open>
+                <summary>
+                  <span>Selected plan</span>
+                  <strong class="gwg-build-detail-summary-title">${this.escapeHtml(payload.detail?.title || 'Choose a plan')}</strong>
+                </summary>
+                <div class="gwg-build-detail-content">${this.renderDetail(payload.detail)}</div>
+              </details>
+            </aside>
           </div>
           <div class="gwg-build-footer">
             ${(payload.actions || []).map((action) => this.renderAction(action)).join('')}
@@ -105,7 +119,10 @@ export default class BuildMenuPanel {
           ${this.renderPreview(row)}
           <span class="gwg-build-card-heading">
             <strong>${this.escapeHtml(row.title)}</strong>
-            <span class="gwg-build-card-cost">${this.escapeHtml(row.costLabel)}</span>
+            <span class="gwg-build-card-meta">
+              <span class="gwg-build-card-cost">${this.escapeHtml(row.costLabel)}</span>
+              <span class="gwg-state-badge ${this.escapeHtml(row.state || '')}">${this.escapeHtml(row.stateLabel)}</span>
+            </span>
           </span>
         </button>
         <dl class="gwg-build-card-facts">
@@ -141,11 +158,16 @@ export default class BuildMenuPanel {
       <div class="gwg-build-detail-head">
         ${this.renderPreview(item, true)}
         <div>
+          <span class="gwg-detail-kicker">Selected plan</span>
           <h3>${this.escapeHtml(item.title)}</h3>
-          <strong class="gwg-build-detail-cost">${this.escapeHtml(item.costLabel)}</strong>
+          <div class="gwg-build-detail-meta">
+            <strong class="gwg-build-detail-cost">${this.escapeHtml(item.costLabel)}</strong>
+            <span class="gwg-state-badge ${this.escapeHtml(item.state || '')}">${this.escapeHtml(item.stateLabel)}</span>
+          </div>
         </div>
       </div>
       <p>${this.escapeHtml(item.description)}</p>
+      <h4>Requirements & effect</h4>
       <dl class="gwg-build-detail-facts">
         <div><dt>Footprint</dt><dd>${this.escapeHtml(item.footprintLabel)}</dd></div>
         <div><dt>Road access</dt><dd>${this.escapeHtml(item.roadLabel)}</dd></div>
@@ -165,9 +187,14 @@ export default class BuildMenuPanel {
       if (!row) continue;
       card.className = `gwg-build-card ${row.kind || ''} ${row.state || ''}${row.selected ? ' selected' : ''}`;
       const cost = card.querySelector('.gwg-build-card-cost');
+      const badge = card.querySelector('.gwg-state-badge');
       const status = card.querySelector('.gwg-build-card-status');
       const action = card.querySelector('[data-gwg-primary]');
       if (cost) cost.textContent = row.costLabel;
+      if (badge) {
+        badge.textContent = row.stateLabel;
+        badge.className = `gwg-state-badge ${row.state || ''}`;
+      }
       if (status) {
         status.textContent = row.status;
         status.className = `gwg-build-card-status ${row.state === 'affordable' ? 'gwg-good' : 'gwg-muted'}`;
@@ -177,8 +204,10 @@ export default class BuildMenuPanel {
         action.disabled = Boolean(row.actions[0].disabled);
       }
     }
-    const detail = this.host.querySelector('.gwg-build-detail');
+    const detail = this.host.querySelector('.gwg-build-detail-content');
     if (detail) detail.innerHTML = this.renderDetail(payload.detail);
+    const detailTitle = this.host.querySelector('.gwg-build-detail-summary-title');
+    if (detailTitle) detailTitle.textContent = payload.detail?.title || 'Choose a plan';
     const footer = this.host.querySelector('.gwg-build-footer');
     if (footer) {
       footer.innerHTML = (payload.actions || []).map((action) => this.renderAction(action)).join('');
