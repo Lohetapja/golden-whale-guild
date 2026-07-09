@@ -37,7 +37,6 @@ const core = (
 
 export const BUILDING_CATALOG = [
   core('guildhall', 'Guild Hall', 'Core Buildings', 420, { w: 3, h: 3 }, 'Posts quests and produces heroic paperwork.', {
-    roadRequired: false,
     capacity: 6,
   }),
   core('tavern', 'Tavern', 'Rest / Housing', 260, { w: 2, h: 2 }, 'Beds, morale, and chairs reinforced for patch-note discourse.', {
@@ -205,13 +204,65 @@ export const CATALOG_BY_ID = Object.fromEntries(BUILDING_CATALOG.map((entry) => 
 
 export const BUILD_CATEGORIES = [
   'Roads',
-  'Core Buildings',
+  'Core',
   'Rest / Housing',
-  'Recovery / Support',
+  'Economy / Shops',
   'Defense / Missions',
-  'Economy / Shady',
-  'Premium',
+  'Premium / Shady',
+  'Public Order / Social',
   'Decorations',
+];
+
+export const BUILD_MENU_CATEGORIES = [
+  {
+    id: 'roads',
+    label: 'Roads',
+    description: 'Access first. Heroic ankles second.',
+    buildingIds: [],
+  },
+  {
+    id: 'core',
+    label: 'Core',
+    description: 'The services that make this collection of liabilities resemble a town.',
+    buildingIds: ['guildhall', 'tavern', 'blacksmith', 'market', 'training', 'dungeon'],
+  },
+  {
+    id: 'rest',
+    label: 'Rest / Housing',
+    description: 'Beds, blankets, and places to process quest trauma.',
+    buildingIds: ['inn', 'hero_hostel', 'premium_lodge'],
+  },
+  {
+    id: 'economy',
+    label: 'Economy / Shops',
+    description: 'Useful commerce, dynamic suffering, and paperwork with margins.',
+    buildingIds: ['potion_shop', 'bank_debt_office', 'gem_exchange', 'convenience_office'],
+  },
+  {
+    id: 'defense',
+    label: 'Defense / Missions',
+    description: 'Places for noticing danger and charging admission to it.',
+    buildingIds: ['watchtower', 'arena'],
+  },
+  {
+    id: 'premium',
+    label: 'Premium / Shady',
+    description: 'Fast growth with a complimentary moral distance.',
+    buildingIds: ['whale', 'vip_lounge', 'lootbox_kiosk'],
+  },
+  {
+    id: 'social',
+    label: 'Public Order / Social',
+    description: 'Fair progress, mentoring, and officially approved dissent.',
+    buildingIds: ['mentor_hall'],
+  },
+  {
+    id: 'decorations',
+    label: 'Decorations',
+    description: 'Benches, trees, lamps, and other evidence of municipal confidence.',
+    buildingIds: [],
+    informational: true,
+  },
 ];
 
 export function getBuildingCatalogEntry(id) {

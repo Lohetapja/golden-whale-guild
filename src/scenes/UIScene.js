@@ -520,6 +520,17 @@ export default class UIScene extends Phaser.Scene {
   }
 
   renderPanelPayload(payload = {}) {
+    const tabs = payload.tabs?.length
+      ? `<nav class="gwg-tabs" aria-label="Build categories">${payload.tabs.map((tab) => `
+        <button
+          class="gwg-tab${tab.active ? ' active' : ''}"
+          type="button"
+          data-gwg-event="${this.escapeHtml(tab.event)}"
+          data-gwg-id="${this.escapeHtml(tab.id)}"
+          aria-pressed="${tab.active ? 'true' : 'false'}"
+        >${this.escapeHtml(tab.label)}</button>
+      `).join('')}</nav>`
+      : '';
     const sections = (payload.sections || []).map((section) => `
       <section class="gwg-section">
         ${section.title ? `<h3>${this.escapeHtml(section.title)}</h3>` : ''}
@@ -529,19 +540,28 @@ export default class UIScene extends Phaser.Scene {
 
     const rows = (payload.rows || []).map((row) => `
       <div class="gwg-row ${this.escapeHtml(row.kind || '')}">
-        <div class="gwg-row-title">
-          <span>${this.escapeHtml(row.title)}</span>
-          <span>${this.escapeHtml(row.meta || '')}</span>
+        <div class="gwg-row-layout">
+          ${row.preview
+            ? `<img class="gwg-build-preview" src="${this.escapeHtml(row.preview)}" alt="" />`
+            : row.swatch
+              ? `<span class="gwg-road-swatch" style="--gwg-swatch:${this.escapeHtml(row.swatch)}" aria-hidden="true"></span>`
+              : '<span class="gwg-build-preview gwg-build-preview-fallback" aria-hidden="true">+</span>'}
+          <div class="gwg-row-content">
+            <div class="gwg-row-title">
+              <span>${this.escapeHtml(row.title)}</span>
+              <span>${this.escapeHtml(row.meta || '')}</span>
+            </div>
+            ${(row.lines || []).map((line) => this.renderLine(line)).join('')}
+            ${row.actions?.length ? `<div class="gwg-actions">${row.actions.map((action) => this.renderAction(action)).join('')}</div>` : ''}
+          </div>
         </div>
-        ${(row.lines || []).map((line) => this.renderLine(line)).join('')}
-        ${row.actions?.length ? `<div class="gwg-actions">${row.actions.map((action) => this.renderAction(action)).join('')}</div>` : ''}
       </div>
     `).join('');
 
     const actions = payload.actions?.length
       ? `<div class="gwg-actions">${payload.actions.map((action) => this.renderAction(action)).join('')}</div>`
       : '';
-    return `${sections}${rows}${actions}`;
+    return `${tabs}${sections}${rows}${actions}`;
   }
 
   showInspectorPanel(payload) {
@@ -591,7 +611,11 @@ export default class UIScene extends Phaser.Scene {
   updateBuildMode(state = {}) {
     if (!this.buildModeText || !this.cancelBuildButton) return;
     const label = String(state.label || '');
-    this.buildModeText.setText(state.active ? `Build: ${label.length > 13 ? `${label.slice(0, 12)}...` : label}` : '');
+    const compactLabel = label.length > 10 ? `${label.slice(0, 9)}...` : label;
+    const cost = Number.isFinite(state.cost) ? ` ${state.cost}g` : '';
+    this.buildModeText
+      .setText(state.active ? `${compactLabel}${cost}` : '')
+      .setColor(state.valid === false ? '#f0938f' : '#7fdc93');
     this.cancelBuildButton.bg.setVisible(Boolean(state.active));
     this.cancelBuildButton.text.setVisible(Boolean(state.active));
     if (state.active) this.cancelBuildButton.bg.setInteractive({ useHandCursor: true });

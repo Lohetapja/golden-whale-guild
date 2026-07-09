@@ -8,7 +8,12 @@ import { HEROES } from '../data/heroes.js';
 import { rollHeroEvent, WHALE_FLAVOR } from '../data/events.js';
 import { OBJECTIVES } from '../data/objectives.js';
 import { rollQuestNotices } from '../data/quests.js';
-import { BUILDING_CATALOG, getBuildingCatalogEntry } from '../data/buildingCatalog.js';
+import {
+  BUILDING_CATALOG,
+  BUILD_MENU_CATEGORIES,
+  getBuildingCatalogEntry,
+} from '../data/buildingCatalog.js';
+import { ASSET_MANIFEST } from '../data/assetManifest.js';
 import { getItemByName, getRandomPremiumItem } from '../data/itemCatalog.js';
 import { rollMonster } from '../data/monsters.js';
 import {
@@ -50,6 +55,12 @@ import {
   getUpgradeFlavor,
 } from '../data/upgrades.js';
 import { loadAssets, ensureFallbacks, resolveTexture, buildingTexture, heroTexture } from '../assets.js';
+import {
+  getRoadMask,
+  getRoadSurfaceRect,
+  getRoadVariant,
+  isRoadPlazaTile,
+} from '../systems/roadRenderer.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -486,6 +497,7 @@ export default class TownScene extends Phaser.Scene {
     this.simulationElapsedMs = this.cityState.simulation.elapsedMs;
     this.buildMode = null;
     this.buildPreviewCell = null;
+    this.buildMenuCategory = 'core';
 
     this.buildings = this.applyBuildingPlacements(applyTownLayout(BUILDINGS, BUILDING_LAYOUT));
     this.decorations = this.applyBuilderDecorationState(applyTownLayout(DECORATIONS, DECORATION_LAYOUT));
@@ -541,6 +553,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-open-build', this.openBuildMenu, this);
     this.game.events.on('gwg-open-roads', this.openRoadMenu, this);
     this.game.events.on('gwg-select-build', this.selectBuildItem, this);
+    this.game.events.on('gwg-build-category', this.selectBuildCategory, this);
     this.game.events.on('gwg-cancel-build', this.cancelBuildMode, this);
     this.game.events.on('gwg-time-speed', this.setSimulationSpeed, this);
     this.game.events.on('gwg-expand-land', this.expandLand, this);
@@ -563,6 +576,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-open-build', this.openBuildMenu, this);
       this.game.events.off('gwg-open-roads', this.openRoadMenu, this);
       this.game.events.off('gwg-select-build', this.selectBuildItem, this);
+      this.game.events.off('gwg-build-category', this.selectBuildCategory, this);
       this.game.events.off('gwg-cancel-build', this.cancelBuildMode, this);
       this.game.events.off('gwg-time-speed', this.setSimulationSpeed, this);
       this.game.events.off('gwg-expand-land', this.expandLand, this);
@@ -1606,6 +1620,19 @@ export default class TownScene extends Phaser.Scene {
     this.lockedLandGraphics = this.add.graphics().setDepth(60);
     this.gridGraphics = this.add.graphics().setDepth(4800).setVisible(false);
     this.buildPreviewGraphics = this.add.graphics().setDepth(4850).setVisible(false);
+    this.buildPreviewLabel = this.add.text(0, 0, '', {
+      fontFamily: '"Courier New", monospace',
+      fontSize: '13px',
+      fontStyle: 'bold',
+      color: '#fff6dc',
+      stroke: '#0c1118',
+      strokeThickness: 3,
+      align: 'center',
+      backgroundColor: '#101721e8',
+      padding: { x: 7, y: 5 },
+      wordWrap: { width: 260 },
+    }).setOrigin(0.5, 1).setDepth(4860).setVisible(false);
+    this.buildPreviewGhost = null;
     this.redrawLockedLand();
     this.redrawBuildGrid();
   }
@@ -1662,36 +1689,29 @@ export default class TownScene extends Phaser.Scene {
     for (const road of this.cityState.roads) {
       const type = ROAD_TYPES[road.type] || ROAD_TYPES.dirt;
       const center = gridToWorld(road.x, road.y);
-      const cx = center.x;
-      const cy = center.y - GRID_CONFIG.tileSize / 2;
-      const hasRoad = (x, y) => Boolean(this.gridCells.get(gridKey(x, y))?.road);
+      const left = center.x - GRID_CONFIG.tileSize / 2;
+      const top = center.y - GRID_CONFIG.tileSize;
+      const mask = getRoadMask(this.gridCells, road.x, road.y);
+      const variant = getRoadVariant(mask);
+      const plaza = isRoadPlazaTile(this.gridCells, road.x, road.y);
+      const edgeRect = getRoadSurfaceRect(left, top, GRID_CONFIG.tileSize, mask, plaza ? 3 : 4);
+      const surfaceRect = getRoadSurfaceRect(left, top, GRID_CONFIG.tileSize, mask, plaza ? 4 : 8);
+
       graphics.fillStyle(type.edgeColor, 0.72);
-      graphics.fillRoundedRect(cx - 15, cy - 15, 30, 30, 6);
+      graphics.fillRect(edgeRect.x, edgeRect.y, edgeRect.width, edgeRect.height);
       graphics.fillStyle(type.color, 0.98);
-      graphics.fillRoundedRect(cx - 11, cy - 11, 22, 22, 5);
-      if (hasRoad(road.x - 1, road.y)) {
-        graphics.fillStyle(type.edgeColor, 0.72);
-        graphics.fillRect(cx - 24, cy - 15, 24, 30);
-        graphics.fillStyle(type.color, 0.98);
-        graphics.fillRect(cx - 24, cy - 11, 24, 22);
-      }
-      if (hasRoad(road.x + 1, road.y)) {
-        graphics.fillStyle(type.edgeColor, 0.72);
-        graphics.fillRect(cx, cy - 15, 24, 30);
-        graphics.fillStyle(type.color, 0.98);
-        graphics.fillRect(cx, cy - 11, 24, 22);
-      }
-      if (hasRoad(road.x, road.y - 1)) {
-        graphics.fillStyle(type.edgeColor, 0.72);
-        graphics.fillRect(cx - 15, cy - 24, 30, 24);
-        graphics.fillStyle(type.color, 0.98);
-        graphics.fillRect(cx - 11, cy - 24, 22, 24);
-      }
-      if (hasRoad(road.x, road.y + 1)) {
-        graphics.fillStyle(type.edgeColor, 0.72);
-        graphics.fillRect(cx - 15, cy, 30, 24);
-        graphics.fillStyle(type.color, 0.98);
-        graphics.fillRect(cx - 11, cy, 22, 24);
+      graphics.fillRect(surfaceRect.x, surfaceRect.y, surfaceRect.width, surfaceRect.height);
+
+      const hash = (road.x * 31 + road.y * 17) % 4;
+      if (road.type === 'dirt' && hash < 2 && !plaza) {
+        graphics.fillStyle(type.edgeColor, 0.24);
+        graphics.fillCircle(center.x + (hash ? 7 : -8), center.y - 25, 2);
+      } else if (road.type === 'stone' && variant === 'straight') {
+        graphics.lineStyle(1, type.edgeColor, 0.22);
+        graphics.lineBetween(surfaceRect.x + 5, center.y - 24, surfaceRect.x + surfaceRect.width - 5, center.y - 24);
+      } else if (road.type === 'premium') {
+        graphics.fillStyle(0xfff1a6, 0.48);
+        graphics.fillCircle(center.x, center.y - 24, variant === 'crossroad' ? 3 : 2);
       }
     }
   }
@@ -1741,6 +1761,19 @@ export default class TownScene extends Phaser.Scene {
       isInsideGrid(cell.x, cell.y)
       && all.findIndex((item) => item.x === cell.x && item.y === cell.y) === index
     ));
+  }
+
+  getBuildingRoadAccess(place) {
+    const catalog = getBuildingCatalogEntry(place?.id);
+    if (!this.isBuilderCity || !catalog?.roadRequired) {
+      return { connected: true, roadCell: null };
+    }
+    if (!Number.isInteger(place?.gridX) || !Number.isInteger(place?.gridY)) {
+      return { connected: false, roadCell: null };
+    }
+    const roadCell = this.getRoadAccessCells(place.gridX, place.gridY, catalog.footprint)
+      .find((cell) => this.gridCells.get(gridKey(cell.x, cell.y))?.road);
+    return { connected: Boolean(roadCell), roadCell: roadCell || null };
   }
 
   getAverageHeroPower() {
@@ -1846,6 +1879,71 @@ export default class TownScene extends Phaser.Scene {
       this.buildPreviewGraphics.fillRect(left, top, GRID_CONFIG.tileSize - 4, GRID_CONFIG.tileSize - 4);
       this.buildPreviewGraphics.strokeRect(left, top, GRID_CONFIG.tileSize - 4, GRID_CONFIG.tileSize - 4);
     }
+
+    const definition = this.getBuildModeDefinition();
+    const anchor = gridToWorld(cell.x, cell.y, footprint);
+    const name = definition?.name || 'Construction';
+    const cost = result.cost ?? definition?.cost ?? 0;
+    const view = this.getVisibleWorldRect();
+    const labelX = Phaser.Math.Clamp(anchor.x, view.left + 138, view.right - 138);
+    const labelY = Phaser.Math.Clamp(
+      anchor.y - footprint.h * GRID_CONFIG.tileSize - 4,
+      view.top + 82,
+      view.bottom - 54,
+    );
+    this.buildPreviewLabel
+      ?.setText(`${name} - ${cost}g\n${result.valid ? 'Ready to place' : result.reason}`)
+      .setColor(result.valid ? '#d7f3d0' : '#ffd0cc')
+      .setPosition(labelX, labelY)
+      .setVisible(true);
+    this.updateBuildGhost(anchor, footprint, result.valid);
+    this.game.events.emit('gwg-build-mode', {
+      active: true,
+      label: name,
+      cost,
+      valid: result.valid,
+      reason: result.reason,
+    });
+  }
+
+  getBuildModeDefinition() {
+    if (!this.buildMode) return null;
+    if (this.buildMode.kind === 'road') return ROAD_TYPES[this.buildMode.id] || null;
+    const catalog = getBuildingCatalogEntry(this.buildMode.id);
+    const place = this.buildingById?.[this.buildMode.id];
+    return catalog ? { ...catalog, assetKey: place?.assetKey || catalog.assetKey } : null;
+  }
+
+  updateBuildGhost(anchor, footprint, valid) {
+    if (this.buildMode?.kind !== 'building') {
+      this.buildPreviewGhost?.setVisible(false);
+      return;
+    }
+    const definition = this.getBuildModeDefinition();
+    const textureKey = definition?.assetKey;
+    if (!textureKey || !this.textures.exists(textureKey)) {
+      this.buildPreviewGhost?.setVisible(false);
+      return;
+    }
+    if (!this.buildPreviewGhost || this.buildPreviewGhost.texture.key !== textureKey) {
+      this.buildPreviewGhost?.destroy();
+      this.buildPreviewGhost = this.add.image(0, 0, textureKey)
+        .setOrigin(0.5, 1)
+        .setDepth(4855);
+    }
+    const source = this.textures.get(textureKey)?.getSourceImage?.();
+    const targetWidth = Math.max(42, footprint.w * GRID_CONFIG.tileSize - 14);
+    const targetHeight = Math.max(42, footprint.h * GRID_CONFIG.tileSize - 10);
+    const scale = Math.min(
+      targetWidth / Math.max(1, source?.width || targetWidth),
+      targetHeight / Math.max(1, source?.height || targetHeight),
+    );
+    this.buildPreviewGhost
+      .setPosition(anchor.x, anchor.y - 3)
+      .setScale(scale)
+      .setAlpha(0.5)
+      .setTint(valid ? 0x9ef0ae : 0xf4a09a)
+      .setVisible(true);
   }
 
   enterBuildMode(kind, id) {
@@ -1861,9 +1959,11 @@ export default class TownScene extends Phaser.Scene {
     this.gridGraphics.setVisible(true);
     this.buildPreviewGraphics.setVisible(true);
     this.buildInputZone.setVisible(true).setInteractive({ useHandCursor: true });
-    const name = kind === 'road' ? ROAD_TYPES[id].name : this.buildingById[id]?.name;
+    const definition = this.getBuildModeDefinition();
+    const name = definition?.name || id;
+    const cost = definition?.cost || 0;
     this.game.events.emit('gwg-event', `${name} selected. Choose a green grid footprint. Escape or Cancel stops construction.`);
-    this.game.events.emit('gwg-build-mode', { active: true, label: name });
+    this.game.events.emit('gwg-build-mode', { active: true, label: name, cost });
     this.game.events.emit('gwg-inspector-close');
   }
 
@@ -1873,6 +1973,8 @@ export default class TownScene extends Phaser.Scene {
     this.buildPreviewCell = null;
     this.gridGraphics?.setVisible(false);
     this.buildPreviewGraphics?.clear().setVisible(false);
+    this.buildPreviewLabel?.setVisible(false);
+    this.buildPreviewGhost?.setVisible(false);
     this.buildInputZone?.disableInteractive().setVisible(false);
     this.game.events.emit('gwg-build-mode', { active: false, label: '' });
   }
@@ -1949,12 +2051,90 @@ export default class TownScene extends Phaser.Scene {
     this.time.delayedCall(90, () => this.showPlaceInspector(building));
   }
 
-  getBuildMenuPayload(category = null) {
+  getAssetPreviewUrl(assetKey) {
+    if (!assetKey || !this.textures.exists(assetKey)) return '';
+    const entry = ASSET_MANIFEST.find((asset) => asset.key === assetKey);
+    return entry ? new URL(entry.path, document.baseURI).toString() : '';
+  }
+
+  getBuildMenuLocationRows(categoryId) {
+    const idsByCategory = {
+      premium: [
+        'vip_rope_entrance',
+        'debt_collector_booth',
+        'refund_denial_desk',
+        'ethics_fountain',
+        'premium_temple',
+      ],
+      social: ['complaint_barrel', 'balance_memorial', 'hero_union_tent', 'patch_notes_shrine'],
+    };
+    return (idsByCategory[categoryId] || [])
+      .map((id) => this.decorationById?.[id])
+      .filter(Boolean)
+      .map((place) => ({
+        title: place.name,
+        meta: this.isLocationUnlocked(place.id) ? 'ON MAP' : 'TOWN UNLOCK',
+        kind: this.getPlaceKind(place),
+        preview: this.getAssetPreviewUrl(place.assetKey),
+        lines: [
+          place.description || 'A municipal object with a suspiciously specific purpose.',
+          this.isLocationUnlocked(place.id)
+            ? 'Status: unlocked town location.'
+            : `Status: ${this.getLockReason(place.id)}`,
+        ],
+        actions: [{
+          label: this.isLocationUnlocked(place.id) ? 'Unlocked on Map' : 'Town Unlock',
+          event: 'gwg-select-build',
+          id: place.id,
+          disabled: true,
+        }],
+      }));
+  }
+
+  getBuildMenuDecorationRows() {
+    const decorations = [
+      ['Trees', 'prop_tree', 'Grounded edge greenery; non-blocking town dressing.'],
+      ['Rocks', 'prop_rock', 'Small terrain anchors with compact shadows.'],
+      ['Fences', 'prop_fence', 'Tile-edge boundaries for future district editing.'],
+      ['Lamps', 'prop_lamp', 'Roadside light without premium illumination fees.'],
+      ['Benches', 'object_bench', 'Public seating, pending monetization review.'],
+      ['Barrels', 'prop_barrel', 'Storage and approved complaint-adjacent furniture.'],
+      ['Crates', 'prop_crate', 'Market clutter with a municipal permit.'],
+      ['Signs', 'prop_signpost', 'Directions for heroes who reject conceptual access.'],
+    ];
+    return decorations.map(([title, assetKey, description]) => ({
+      title,
+      meta: 'DISTRICT PROP',
+      preview: this.getAssetPreviewUrl(assetKey),
+      lines: [
+        description,
+        'Footprint: decorative / non-blocking',
+        'Status: automatic district dressing',
+      ],
+      actions: [{
+        label: 'Automatic',
+        event: 'gwg-select-build',
+        id: assetKey,
+        disabled: true,
+      }],
+    }));
+  }
+
+  getBuildMenuPayload(categoryId = this.buildMenuCategory || 'core') {
+    const category = BUILD_MENU_CATEGORIES.find((entry) => entry.id === categoryId)
+      || BUILD_MENU_CATEGORIES[1];
+    this.buildMenuCategory = category.id;
     const roadRows = Object.values(ROAD_TYPES).map((road) => ({
       title: road.name,
       meta: `${road.cost}g / tile`,
       kind: road.id === 'premium' ? 'shady' : 'fair',
-      lines: [road.description, 'Footprint: 1x1'],
+      swatch: `#${road.color.toString(16).padStart(6, '0')}`,
+      lines: [
+        road.description,
+        'Footprint: 1x1',
+        'Road access: creates service access and faster movement.',
+        `Status: ${this.resources.gold >= road.cost ? 'Affordable' : 'Insufficient gold'}`,
+      ],
       actions: [{
         label: this.resources.gold >= road.cost ? 'Build Road' : `Need ${road.cost}g`,
         event: 'gwg-select-build',
@@ -1962,7 +2142,10 @@ export default class TownScene extends Phaser.Scene {
         disabled: this.resources.gold < road.cost,
       }],
     }));
-    const buildingRows = BUILDING_CATALOG.map((catalog) => {
+    const buildingRows = category.buildingIds
+      .map((id) => getBuildingCatalogEntry(id))
+      .filter(Boolean)
+      .map((catalog) => {
       const place = this.buildingById?.[catalog.id];
       const built = Boolean(place?.isPlaced);
       const lockReason = this.getCatalogLockReason(catalog);
@@ -1971,11 +2154,13 @@ export default class TownScene extends Phaser.Scene {
         title: catalog.name || place?.name || catalog.id,
         meta: built ? 'BUILT' : (locked ? 'LOCKED' : `${catalog.cost}g`),
         kind: catalog.kind === 'shady' ? 'shady' : 'fair',
+        preview: this.getAssetPreviewUrl(place?.assetKey || catalog.assetKey),
         lines: [
-          `Category: ${catalog.category}`,
           catalog.description,
-          `Footprint: ${catalog.footprint.w}x${catalog.footprint.h}${catalog.roadRequired ? ' - road access required' : ''}`,
-          catalog.capacity ? `Starting capacity: ${catalog.capacity}` : `Upkeep: ${catalog.upkeep}g`,
+          `Footprint: ${catalog.footprint.w}x${catalog.footprint.h}`,
+          `Road: ${catalog.roadRequired ? 'Adjacent access required' : 'Independent access'}`,
+          `Effect: ${catalog.effect}`,
+          `Status: ${built ? 'Already built' : (locked ? lockReason : (this.resources.gold >= catalog.cost ? 'Ready to place' : 'Insufficient gold'))}`,
           ...(locked ? [{ text: lockReason, className: 'gwg-bad' }] : []),
         ],
         actions: [{
@@ -1986,15 +2171,28 @@ export default class TownScene extends Phaser.Scene {
         }],
       };
     });
-    const rows = category === 'roads' ? roadRows : [...roadRows, ...buildingRows];
+    const rows = category.id === 'roads'
+      ? roadRows
+      : [...buildingRows, ...this.getBuildMenuLocationRows(category.id)];
+    if (category.informational) {
+      rows.push(...this.getBuildMenuDecorationRows());
+    }
     return {
-      title: category === 'roads' ? 'Road Works' : 'Build Menu',
-      subtitle: `${this.resources.gold}g available - construction snaps to the town grid`,
+      title: 'Build Menu',
+      subtitle: `${this.resources.gold}g available - ${category.label}`,
+      tabs: BUILD_MENU_CATEGORIES.map((entry) => ({
+        id: entry.id,
+        label: entry.label,
+        event: 'gwg-build-category',
+        active: entry.id === category.id,
+      })),
       sections: [{
-        title: 'City Rules',
+        title: category.label,
         lines: [
-          'Buildings cannot overlap roads or each other.',
-          'Services need an adjacent road. Green fits; red files a complaint.',
+          category.description,
+          category.id === 'roads'
+            ? 'Connected tiles choose their shape automatically. Filled blocks become plazas without hollow centers.'
+            : 'Green footprints fit. Red footprints explain why they do not.',
         ],
       }],
       rows,
@@ -2010,13 +2208,21 @@ export default class TownScene extends Phaser.Scene {
   }
 
   openBuildMenu() {
-    this.activeInspector = { type: 'build' };
-    this.game.events.emit('gwg-ledger-open', this.getBuildMenuPayload());
+    this.activeInspector = { type: 'build', category: this.buildMenuCategory || 'core' };
+    this.game.events.emit('gwg-ledger-open', this.getBuildMenuPayload(this.activeInspector.category));
   }
 
   openRoadMenu() {
-    this.activeInspector = { type: 'roads' };
+    this.buildMenuCategory = 'roads';
+    this.activeInspector = { type: 'roads', category: 'roads' };
     this.game.events.emit('gwg-ledger-open', this.getBuildMenuPayload('roads'));
+  }
+
+  selectBuildCategory(categoryId) {
+    if (!BUILD_MENU_CATEGORIES.some((entry) => entry.id === categoryId)) return;
+    this.buildMenuCategory = categoryId;
+    this.activeInspector = { type: 'build', category: categoryId };
+    this.game.events.emit('gwg-ledger-open', this.getBuildMenuPayload(categoryId));
   }
 
   expandLand() {
@@ -2219,7 +2425,47 @@ export default class TownScene extends Phaser.Scene {
   renderBuilding(b) {
     if (!b?.isPlaced || this.placeSpriteById[b.id]) return;
     this.buildingObjectsById[b.id] = [];
-    const shadow = this.add.ellipse(b.x, b.y - 8, b.w * 0.8, 26, 0x10151d, 0.22).setDepth(b.y - 2);
+    const catalog = getBuildingCatalogEntry(b.id);
+    const access = this.getBuildingRoadAccess(b);
+    if (this.isBuilderCity && Number.isInteger(b.gridX) && Number.isInteger(b.gridY)) {
+      const footprint = catalog?.footprint || b.footprint || { w: 1, h: 1 };
+      const left = GRID_CONFIG.originX + b.gridX * GRID_CONFIG.tileSize;
+      const top = GRID_CONFIG.originY + b.gridY * GRID_CONFIG.tileSize;
+      const width = footprint.w * GRID_CONFIG.tileSize;
+      const height = footprint.h * GRID_CONFIG.tileSize;
+      const foundation = this.add.graphics().setDepth(b.y - 5);
+      if (access.roadCell) {
+        const road = gridToWorld(access.roadCell.x, access.roadCell.y);
+        const roadY = road.y - GRID_CONFIG.tileSize / 2;
+        foundation.lineStyle(13, 0x806b50, 0.34);
+        foundation.lineBetween(b.x, b.y - 12, road.x, roadY);
+        foundation.lineStyle(8, 0xbda477, 0.94);
+        foundation.lineBetween(b.x, b.y - 12, road.x, roadY);
+      }
+      const shady = catalog?.kind === 'shady';
+      foundation.fillStyle(shady ? 0x8a7445 : 0x9a8d70, shady ? 0.34 : 0.27);
+      foundation.fillRoundedRect(left + 4, top + 6, width - 8, height - 10, 7);
+      foundation.lineStyle(1, shady ? 0xd9b94d : 0xd7ccb2, 0.35);
+      foundation.strokeRoundedRect(left + 4, top + 6, width - 8, height - 10, 7);
+      this.buildingObjectsById[b.id].push(foundation);
+
+      if (!access.connected) {
+        const warning = this.add.text(left + width - 7, top + 8, '!', {
+          fontFamily: '"Courier New", monospace',
+          fontSize: '14px',
+          fontStyle: 'bold',
+          color: '#ffd0cc',
+          backgroundColor: '#5b1e25dd',
+          padding: { x: 4, y: 1 },
+        }).setOrigin(1, 0).setDepth(b.y + 3);
+        this.buildingObjectsById[b.id].push(warning);
+      }
+    }
+    const shadowWidth = Math.min(
+      Math.max(54, (catalog?.footprint?.w || 2) * GRID_CONFIG.tileSize * 0.72),
+      b.w * 0.86,
+    );
+    const shadow = this.add.ellipse(b.x, b.y - 8, shadowWidth, 24, 0x10151d, 0.24).setDepth(b.y - 2);
     this.buildingObjectsById[b.id].push(shadow);
     const textureKey = buildingTexture(this, b);
     const img = this.add.image(b.x, b.y, textureKey)
@@ -2262,9 +2508,24 @@ export default class TownScene extends Phaser.Scene {
       if (!key) continue;
 
       this.decorationObjectsById[d.id] = [];
-      const shadow = this.add.ellipse(d.x, d.y - 5, (d.w || 42) * 0.72, 15, 0x10151d, 0.16)
+      const isTree = d.fallbackKey === 'tree';
+      const isRock = d.fallbackKey === 'rock';
+      const shadowWidth = isTree ? 42 : isRock ? 30 : Math.min(38, (d.w || 34) * 0.68);
+      const shadowHeight = isTree ? 14 : isRock ? 9 : 11;
+      const shadow = this.add.ellipse(d.x, d.y - 4, shadowWidth, shadowHeight, 0x10151d, isTree ? 0.2 : 0.15)
         .setDepth(d.y - 2);
       this.decorationObjectsById[d.id].push(shadow);
+      if (isTree || isRock) {
+        const groundPatch = this.add.ellipse(
+          d.x,
+          d.y - 3,
+          shadowWidth * 1.25,
+          shadowHeight * 1.35,
+          isTree ? 0x4f873f : 0x7a855e,
+          0.14,
+        ).setDepth(d.y - 3);
+        this.decorationObjectsById[d.id].push(groundPatch);
+      }
       const img = this.add.image(d.x, d.y, key)
         .setOrigin(0.5, 1)
         .setDepth(d.y + (d.depthOffset || 0));
@@ -2786,6 +3047,7 @@ export default class TownScene extends Phaser.Scene {
     const canUpgrade = Boolean(info.cost && !info.maxed);
     const canAfford = canUpgrade && this.resources.gold >= info.cost;
     const lockReason = this.getLockReason(place.id);
+    const roadAccess = catalog ? this.getBuildingRoadAccess(place) : null;
     const detailLines = [place.description, ...(place.tooltipLines || [])].filter(Boolean).slice(0, 4);
     const actions = [];
 
@@ -2834,6 +3096,10 @@ export default class TownScene extends Phaser.Scene {
               `Use: ${runtime.usageCount} visits - growth ${runtime.upgradeProgress}%`,
               `Capacity: ${runtime.visitorsNow}/${runtime.capacity} - quality ${runtime.serviceQuality}`,
             ] : []),
+            ...(roadAccess ? [{
+              text: `Road access: ${roadAccess.connected ? 'Connected - service active' : 'NO ROAD - service inactive'}`,
+              className: roadAccess.connected ? 'gwg-good' : 'gwg-bad',
+            }] : []),
             { text: this.getConsequenceLine(place), className: place.id === 'whale' ? 'gwg-whale' : 'gwg-muted' },
           ],
         },
@@ -3480,7 +3746,8 @@ export default class TownScene extends Phaser.Scene {
 
   getOperationalPlace(id) {
     const place = this.placeById?.[id];
-    if (place?.isPlaced !== false && this.isLocationUnlocked(id)) return place;
+    const roadAccess = place ? this.getBuildingRoadAccess(place) : { connected: true };
+    if (place?.isPlaced !== false && this.isLocationUnlocked(id) && roadAccess.connected) return place;
     return this.buildingById?.guildhall || place;
   }
 
@@ -4339,11 +4606,12 @@ export default class TownScene extends Phaser.Scene {
 
   recordBuildingUse(id, hero = null) {
     if (!this.isBuildingPlaced(id)) return null;
+    const place = this.buildingById[id];
+    if (!this.getBuildingRoadAccess(place).connected) return null;
     const runtime = this.getBuildingRuntime(id);
     runtime.usageCount += 1;
     runtime.visitorsTotal += 1;
     runtime.upgradeProgress = Math.min(100, runtime.upgradeProgress + 4);
-    const place = this.buildingById[id];
     const sprite = this.placeSpriteById[id];
     if (sprite && !sprite.getData('usagePulse')) {
       sprite.setData('usagePulse', true);
