@@ -62,7 +62,7 @@ export const BUILDING_CATALOG = [
     kind: 'shady',
     flavor: 'Available immediately because temptation tested well.',
     actions: [
-      action('premium_weapon', 'Sell Premium Weapon', '+Gold, whale Power, +Envy.', 0, { gold: 240, corruption: 3, trust: -2 }, 'whalePower', 'item_sword_unfair_advantage'),
+      action('premium_weapon', 'Sell Premium Weapon', '+Gold, whale Power, +Envy.', 0, { gold: 240, corruption: 3, trust: -2 }, 'whalePower', 'item_sword_of_unfair_advantage'),
       action('morale_boost', 'Sell Morale Boost', '+Gold, whale Morale.', 0, { gold: 160, corruption: 2 }, 'whaleMorale', 'item_confidence_booster_soup'),
       action('token_pack', 'Sell Whale Token Pack', 'Large +Gold, +Corruption.', 0, { gold: 300, corruption: 4, trust: -2 }, null, 'item_whale_token_pack'),
       action('optional_bundle', '"Optional" Convenience Bundle', 'Huge +Gold, -Trust, whale Power.', 0, { gold: 380, trust: -4, corruption: 5 }, 'whalePower', 'item_deluxe_struggle_bundle'),
@@ -126,7 +126,7 @@ export const BUILDING_CATALOG = [
     actions: [
       action('mentor_weak', 'Mentor Weak Hero', '+Power to weakest honest hero.', 90, { trust: 1 }, 'mentorWeak'),
       action('group_lesson', 'Group Lesson', '+Honest Power, +Morale.', 150, { morale: 2 }, 'honestPower'),
-      action('fair_grant', 'Fair Training Grant', '+Trust, +Loyalty.', 180, { trust: 4 }, 'honestLoyalty'),
+      action('fair_grant', 'Fair Training Grant', '+Trust, +Loyalty.', 180, { trust: 4 }, 'honestLoyalty', 'item_honest_training_scroll'),
     ],
   }),
   core('watchtower', 'Watchtower', 'Defense / Missions', 500, { w: 2, h: 2 }, 'A tall place for noticing consequences before they arrive.', {
@@ -158,8 +158,8 @@ export const BUILDING_CATALOG = [
     effect: 'Generates debt income; increases Corruption and debt events.',
     flavor: 'The contract smiles only after the signature.',
     actions: [
-      action('loan', 'Offer Loan', '+Gold, hero Debt, +Corruption.', 0, { gold: 180, corruption: 2 }, 'addDebt', 'item_contract_bundle'),
-      action('interest', 'Increase Interest', '+Gold, -Trust, -Morale.', 0, { gold: 250, trust: -3, morale: -2 }, 'addDebtLarge', 'item_legendary_receipt'),
+      action('loan', 'Offer Loan', '+Gold, hero Debt, +Corruption.', 0, { gold: 180, corruption: 2 }, 'addDebt', 'item_debt_contract'),
+      action('interest', 'Increase Interest', '+Gold, -Trust, -Morale.', 0, { gold: 250, trust: -3, morale: -2 }, 'addDebtLarge', 'item_interest_rate_totem'),
       action('forgive', 'Forgive Debt', '+Trust, +Morale, costs Gold.', 180, { trust: 4, morale: 3 }, 'reduceDebt', 'item_shame_coin_pouch'),
       action('refinance', 'Refinance Shamefully', '+Gold, rearranged suffering.', 0, { gold: 120, corruption: 3 }, 'shuffleDebt', 'item_cursed_coupon'),
     ],
@@ -173,7 +173,7 @@ export const BUILDING_CATALOG = [
     actions: [
       action('convert', 'Convert Gold to Tokens', '+Premium item chance, costs Gold.', 180, { corruption: 2 }, 'premiumItem', 'item_whale_token_pack'),
       action('dynamic', 'Dynamic Gem Pricing', '+Gold, -Trust.', 0, { gold: 230, trust: -3, corruption: 3 }, null, 'item_gem_bag'),
-      action('best_value', 'Best Value Pack', '+Gold, +Corruption, +Envy.', 0, { gold: 300, corruption: 5, trust: -3 }, 'whalePower', 'item_gem_pack'),
+      action('best_value', 'Best Value Pack', '+Gold, +Corruption, +Envy.', 0, { gold: 300, corruption: 5, trust: -3 }, 'whalePower', 'item_best_value_bundle'),
     ],
   }),
   core('convenience_office', 'Convenience Office', 'Economy / Shady', 650, { w: 2, h: 2 }, 'Urgent stamps and waiting-time removal shaped exactly like power.', {
@@ -185,7 +185,7 @@ export const BUILDING_CATALOG = [
     actions: [
       action('skip_queue', 'Skip Queue', '+Gold, -Trust.', 0, { gold: 170, trust: -2, corruption: 2 }, null, 'item_queue_skip_relic'),
       action('permit', 'Fast Track Permit', '+Building growth, costs Gold.', 120, {}, 'buildingProgress', 'item_convenience_permit'),
-      action('urgent', 'Stamp Urgent Paperwork', '+Gold, +Threat.', 0, { gold: 210, threat: 3 }, null, 'item_contract_bundle'),
+      action('urgent', 'Stamp Urgent Paperwork', '+Gold, +Threat.', 0, { gold: 210, threat: 3 }, null, 'item_refund_denial_stamp'),
     ],
   }),
   core('vip_lounge', 'VIP Lounge', 'Premium', 700, { w: 2, h: 2 }, 'Shiny chairs behind a rope that has never met equality.', {
@@ -209,7 +209,7 @@ export const BUILDING_CATALOG = [
     actions: [
       action('mystery', 'Open Mystery Chest', 'Premium item chance, costs Gold.', 100, { corruption: 2 }, 'premiumItem', 'item_mystery_chest'),
       action('fake_odds', 'Display Fake Odds', '+Gold, -Trust.', 0, { gold: 160, trust: -3, corruption: 3 }, null, 'item_fake_odds_flyer'),
-      action('disappointment', 'Sell Shiny Disappointment', '+Gold, -Morale.', 0, { gold: 210, morale: -2, corruption: 2 }, null, 'item_lootbox'),
+      action('disappointment', 'Sell Shiny Disappointment', '+Gold, -Morale.', 0, { gold: 210, morale: -2, corruption: 2 }, null, 'item_shiny_disappointment_box'),
     ],
   }),
 ];

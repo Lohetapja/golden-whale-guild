@@ -119,14 +119,16 @@ Generated assets are optional and must stay routed through
 
 ## Inventory Items
 
-The 16 item definitions live in `src/data/itemCatalog.js`. Every row below has
-a manifest slot and a text fallback in the hero inspector. Dedicated PixelLab
-icon generation was deferred after the controlled building batch hit the local
-download limit.
+Item definitions live in `src/data/itemCatalog.js`. Every row below has a
+manifest slot and a text fallback in the hero inspector. The July 2026 item pass
+adds focused PixelLab icons for fair gear, premium satire items, and shady
+economy loot.
 
 | Asset keys | Folder | Where used | Notes |
 | --- | --- | --- | --- |
-| `item_starter_sword` through `item_shame_coin_pouch` | `public/assets/items/` | Hero inventory, premium shops, item conflicts | Manifest-ready; text fallback active until PNG exists |
+| `item_starter_sword` through `item_adventurer_boots` | `public/assets/items/` | Fair hero inventory and early shops | PixelLab item icon batch; text fallback remains active |
+| `item_premium_knees` through `item_convenience_permit` | `public/assets/items/` | Golden Whale purchases, premium shops, item conflicts | PixelLab item icon batch; all fictional in-game satire |
+| `item_debt_contract` through `item_shiny_disappointment_box` | `public/assets/items/` | Shady economy hooks, loot boxes, debt/flavour systems | PixelLab item icon batch; no real-payment semantics |
 
 ## Monsters And Construction
 
@@ -173,20 +175,32 @@ menu/tab integration.
 
 ### Shop / Sale Items (`public/assets/items/`, 64px)
 
-Existing manifest keys now backed by real art: `item_starter_sword`,
-`item_bent_sword`, `item_basic_armor`, `item_sponsored_armor`,
-`item_premium_knees`, `item_legendary_receipt`, `item_queue_skip_relic`,
-`item_sword_unfair_advantage`, `item_revive_insurance_scroll`,
-`item_loot_priority_blessing`, `item_confidence_booster_soup`,
-`item_dragon_mount_trial`, `item_deluxe_struggle_bundle`, `item_premium_dust`,
-`item_whale_token_pack`, `item_shame_coin_pouch`.
-New keys: `item_healing_potion`, `item_deluxe_potion`, `item_mystery_chest`,
-`item_gem_bag`, `item_convenience_permit`, `item_luxury_pillow`,
-`item_cursed_coupon`, `item_risky_potion`, `item_herb_bundle`,
-`item_gem_pack`, `item_lootbox`, `item_gold_ingots`, `item_whale_plush`,
-`item_budget_bunk_pass`, `item_fake_odds_flyer`, `item_contract_bundle`.
-Shop actions in `src/data/buildingCatalog.js` reference these via the
-`icon` field and render in the building inspector.
+The item catalog now covers the focused 40-icon batch:
+
+Fair/core: `item_starter_sword`, `item_basic_armor`, `item_healing_potion`,
+`item_morale_stew`, `item_honest_training_scroll`, `item_wooden_shield`,
+`item_iron_sword`, `item_adventurer_boots`.
+
+Premium satire: `item_premium_knees`, `item_sponsored_armor`,
+`item_sword_of_unfair_advantage`, `item_queue_skip_relic`,
+`item_revive_insurance_scroll`, `item_loot_priority_blessing`,
+`item_legendary_receipt`, `item_deluxe_struggle_bundle`,
+`item_confidence_booster_soup`, `item_premium_dust`, `item_whale_token_pack`,
+`item_shame_coin_pouch`, `item_best_value_bundle`, `item_starter_pack_day_7`,
+`item_pity_timer_charm`, `item_rngesus_blessing`, `item_fake_odds_flyer`,
+`item_cursed_coupon`, `item_convenience_permit`.
+
+Shady/economy: `item_debt_contract`, `item_refund_denial_stamp`,
+`item_dynamic_pricing_scroll`, `item_interest_rate_totem`,
+`item_complaint_ticket`, `item_audit_scarecrow`, `item_gem_bag`,
+`item_mystery_chest`, `item_shiny_disappointment_box`.
+
+Support/legacy shop icons retained in the manifest include `item_bent_sword`,
+`item_deluxe_potion`, `item_herb_bundle`, `item_risky_potion`,
+`item_dragon_mount_trial`, `item_contract_bundle`, `item_gem_pack`,
+`item_lootbox`, `item_luxury_pillow`, and `item_budget_bunk_pass`.
+Shop actions in `src/data/buildingCatalog.js` reference item icons via the
+`icon` field and render them in the building inspector.
 
 ### Monsters (`public/assets/monsters/`, 64px)
 
