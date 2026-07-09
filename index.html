@@ -57,6 +57,22 @@
       .gwg-panel.gwg-ledger {
         width: min(560px, calc(100vw - 32px));
       }
+      .gwg-panel.gwg-build-catalog {
+        left: 50%;
+        right: auto;
+        top: 64px;
+        width: min(1040px, calc(100vw - 48px));
+        height: min(650px, calc(100dvh - 118px));
+        max-height: none;
+        transform: translateX(-50%);
+      }
+      .gwg-build-catalog .gwg-panel-body {
+        box-sizing: border-box;
+        height: calc(100% - 61px);
+        max-height: none;
+        overflow: hidden;
+        padding: 0;
+      }
       .gwg-hidden {
         display: none;
       }
@@ -247,6 +263,274 @@
         width: 58px;
         height: 18px;
       }
+      .gwg-build-shell {
+        display: grid;
+        grid-template-columns: 156px minmax(0, 1fr);
+        height: 100%;
+        min-height: 0;
+      }
+      .gwg-build-categories {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 10px;
+        overflow-y: auto;
+        border-right: 1px solid rgba(246, 201, 69, 0.25);
+        background: rgba(20, 26, 36, 0.72);
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+      }
+      .gwg-build-category {
+        flex: 0 0 auto;
+        min-height: 38px;
+        padding: 7px 9px;
+        border: 1px solid rgba(212, 218, 226, 0.25);
+        border-radius: 5px;
+        background: #273244;
+        color: #d4dae2;
+        font-family: "Courier New", monospace;
+        font-size: 12px;
+        font-weight: 700;
+        text-align: left;
+        cursor: pointer;
+      }
+      .gwg-build-category.active {
+        border-color: #f6c945;
+        background: #8a5a2b;
+        color: #fff6dc;
+      }
+      .gwg-build-content {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        min-width: 0;
+        min-height: 0;
+      }
+      .gwg-build-category-copy {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 9px 12px;
+        border-bottom: 1px solid rgba(212, 218, 226, 0.14);
+        background: rgba(255, 246, 220, 0.035);
+      }
+      .gwg-build-category-copy strong {
+        flex: 0 0 auto;
+        color: #ffe08a;
+        font-size: 13px;
+      }
+      .gwg-build-category-copy span {
+        overflow: hidden;
+        color: #d4dae2;
+        font-size: 11px;
+        line-height: 1.25;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .gwg-build-workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 286px;
+        min-height: 0;
+      }
+      .gwg-build-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: min-content;
+        gap: 9px;
+        align-content: start;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 10px;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+      }
+      .gwg-build-card {
+        min-width: 0;
+        padding: 8px;
+        border: 1px solid rgba(212, 218, 226, 0.22);
+        border-radius: 6px;
+        background: rgba(255, 246, 220, 0.05);
+      }
+      .gwg-build-card.shady {
+        border-color: rgba(246, 201, 69, 0.42);
+        background: rgba(246, 201, 69, 0.07);
+      }
+      .gwg-build-card.selected {
+        border-color: #f6c945;
+        box-shadow: inset 0 0 0 1px rgba(246, 201, 69, 0.52);
+      }
+      .gwg-build-card.locked,
+      .gwg-build-card.built {
+        opacity: 0.66;
+      }
+      .gwg-build-card.unaffordable {
+        opacity: 0.78;
+      }
+      .gwg-build-card-summary {
+        display: grid;
+        grid-template-columns: 54px minmax(0, 1fr);
+        gap: 8px;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font-family: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .gwg-catalog-preview {
+        width: 52px;
+        height: 52px;
+        border: 1px solid rgba(255, 246, 220, 0.18);
+        border-radius: 5px;
+        background: rgba(255, 246, 220, 0.04);
+        image-rendering: pixelated;
+        object-fit: contain;
+      }
+      .gwg-catalog-preview.fallback {
+        display: grid;
+        place-items: center;
+        color: rgba(255, 246, 220, 0.3);
+        font-size: 20px;
+      }
+      .gwg-catalog-preview.large {
+        width: 88px;
+        height: 88px;
+      }
+      .gwg-catalog-road {
+        position: relative;
+        display: block;
+        background: rgba(111, 174, 78, 0.32);
+      }
+      .gwg-catalog-road::before,
+      .gwg-catalog-road::after {
+        content: "";
+        position: absolute;
+        background: var(--gwg-swatch);
+      }
+      .gwg-catalog-road::before {
+        left: 18px;
+        top: 0;
+        width: 16px;
+        height: 100%;
+      }
+      .gwg-catalog-road::after {
+        left: 0;
+        top: 18px;
+        width: 100%;
+        height: 16px;
+      }
+      .gwg-catalog-road.large::before {
+        left: 31px;
+        width: 24px;
+      }
+      .gwg-catalog-road.large::after {
+        top: 31px;
+        height: 24px;
+      }
+      .gwg-build-card-heading {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+      .gwg-build-card-heading strong {
+        color: #ffe08a;
+        font-size: 12px;
+        line-height: 1.2;
+      }
+      .gwg-build-card-cost {
+        color: #f6c945;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .gwg-build-card-facts,
+      .gwg-build-detail-facts {
+        margin: 7px 0 0;
+      }
+      .gwg-build-card-facts div,
+      .gwg-build-detail-facts div {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 2px 0;
+      }
+      .gwg-build-card-facts dt,
+      .gwg-build-detail-facts dt {
+        color: #9faaba;
+        font-size: 11px;
+      }
+      .gwg-build-card-facts dd,
+      .gwg-build-detail-facts dd {
+        margin: 0;
+        color: #fff6dc;
+        font-size: 11px;
+        text-align: right;
+      }
+      .gwg-build-card-effect,
+      .gwg-build-card-status {
+        display: -webkit-box;
+        overflow: hidden;
+        margin: 6px 0 0;
+        font-size: 11px;
+        line-height: 1.3;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+      }
+      .gwg-build-card-action {
+        width: 100%;
+        margin-top: 7px;
+      }
+      .gwg-build-detail {
+        min-width: 0;
+        overflow-y: auto;
+        padding: 11px;
+        border-left: 1px solid rgba(246, 201, 69, 0.24);
+        background: rgba(20, 26, 36, 0.6);
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+      }
+      .gwg-build-detail-head {
+        display: grid;
+        grid-template-columns: 90px minmax(0, 1fr);
+        gap: 9px;
+        align-items: center;
+      }
+      .gwg-build-detail h3 {
+        margin: 0 0 6px;
+        color: #ffe08a;
+        font-size: 15px;
+        line-height: 1.2;
+      }
+      .gwg-build-detail p {
+        margin: 8px 0;
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      .gwg-build-detail-cost {
+        color: #f6c945;
+        font-size: 12px;
+      }
+      .gwg-build-flavor {
+        color: #d4dae2;
+        font-style: italic;
+      }
+      .gwg-build-detail-status {
+        font-weight: 700;
+      }
+      .gwg-build-detail-empty {
+        color: #d4dae2;
+        font-size: 12px;
+      }
+      .gwg-build-footer {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        min-height: 40px;
+        padding: 7px 10px;
+        border-top: 1px solid rgba(212, 218, 226, 0.14);
+        background: rgba(20, 26, 36, 0.78);
+      }
       .gwg-actions {
         display: flex;
         flex-wrap: wrap;
@@ -287,6 +571,67 @@
         }
         .gwg-panel-body {
           max-height: calc(58dvh - 58px);
+        }
+        .gwg-panel.gwg-build-catalog {
+          left: 8px;
+          right: 8px;
+          top: auto;
+          bottom: 8px;
+          width: auto;
+          height: 72dvh;
+          max-height: 72dvh;
+          transform: none;
+        }
+        .gwg-build-catalog .gwg-panel-body {
+          height: calc(100% - 61px);
+          max-height: none;
+        }
+        .gwg-build-shell {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto minmax(0, 1fr);
+        }
+        .gwg-build-categories {
+          flex-direction: row;
+          padding: 7px;
+          overflow-x: auto;
+          overflow-y: hidden;
+          border-right: 0;
+          border-bottom: 1px solid rgba(246, 201, 69, 0.25);
+          touch-action: pan-x;
+        }
+        .gwg-build-category {
+          min-height: 38px;
+          text-align: center;
+        }
+        .gwg-build-category-copy {
+          padding: 7px 9px;
+        }
+        .gwg-build-category-copy span {
+          display: none;
+        }
+        .gwg-build-workspace {
+          grid-template-columns: 1fr;
+          grid-template-rows: minmax(180px, 1fr) minmax(126px, 175px);
+        }
+        .gwg-build-grid {
+          grid-template-columns: 1fr;
+          padding: 8px;
+        }
+        .gwg-build-detail {
+          padding: 8px;
+          border-top: 1px solid rgba(246, 201, 69, 0.24);
+          border-left: 0;
+        }
+        .gwg-build-detail-head {
+          grid-template-columns: 58px minmax(0, 1fr);
+        }
+        .gwg-catalog-preview.large {
+          width: 56px;
+          height: 56px;
+        }
+        .gwg-build-flavor,
+        .gwg-build-detail-facts {
+          display: none;
         }
         .gwg-action,
         .gwg-panel-close,

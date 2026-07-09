@@ -1,6 +1,7 @@
 // Minimal HUD overlay: top resource strip, bottom event ticker, and city controls.
 // Deliberately small — this is a game scene, not a dashboard.
 import Phaser from 'phaser';
+import BuildMenuPanel from '../ui/BuildMenuPanel.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -397,16 +398,18 @@ export default class UIScene extends Phaser.Scene {
         control.speed,
       );
     }
-    this.buildModeText = this.add.text(884, HEIGHT - 64, '', {
+    this.buildModeText = this.add.text(874, HEIGHT - 64, '', {
       fontFamily: FONT,
-      fontSize: '11px',
+      fontSize: '10px',
       fontStyle: 'bold',
       color: '#7fdc93',
       stroke: '#0c1118',
       strokeThickness: 2,
+      lineSpacing: 2,
+      wordWrap: { width: 126 },
     }).setOrigin(0, 0.5);
     this.cancelBuildButton = this.makeUtilityButton(
-      1010,
+      1042,
       HEIGHT - 64,
       'Cancel',
       'gwg-cancel-build',
@@ -467,6 +470,10 @@ export default class UIScene extends Phaser.Scene {
     this.panelTitleEl = this.panelEl.querySelector('h2');
     this.panelSubtitleEl = this.panelEl.querySelector('.gwg-panel-title p');
     this.panelBodyEl = this.panelEl.querySelector('.gwg-panel-body');
+    this.buildMenuPanel = new BuildMenuPanel(this.panelBodyEl, {
+      escapeHtml: this.escapeHtml.bind(this),
+      renderAction: this.renderAction.bind(this),
+    });
 
     this.panelEl.addEventListener('pointerdown', (event) => event.stopPropagation());
     this.panelEl.addEventListener('click', (event) => {
@@ -481,11 +488,18 @@ export default class UIScene extends Phaser.Scene {
       if (!action || action.disabled) return;
       const eventName = action.dataset.gwgEvent;
       const id = action.dataset.gwgId || '';
+      if (eventName === 'gwg-build-category') this.buildMenuPanel.capture();
       this.game.events.emit(eventName, id);
       if (['gwg-select-build', 'gwg-cancel-build'].includes(eventName)) {
         this.panelEl.classList.add('gwg-hidden');
+        this.setWorldInputBlocked(false);
       }
     });
+  }
+
+  setWorldInputBlocked(blocked) {
+    const town = this.scene.get('TownScene');
+    if (town?.input) town.input.enabled = !blocked;
   }
 
   escapeHtml(value) {
@@ -574,16 +588,25 @@ export default class UIScene extends Phaser.Scene {
 
   showHtmlPanel(payload = {}, ledger = false) {
     if (!this.panelEl) return;
-    this.panelEl.className = `gwg-panel${ledger ? ' gwg-ledger' : ''}`;
+    this.setWorldInputBlocked(true);
+    const isBuildCatalog = payload.panelType === 'build-catalog';
+    this.panelEl.className = `gwg-panel${ledger ? ' gwg-ledger' : ''}${isBuildCatalog ? ' gwg-build-catalog' : ''}`;
     this.panelTitleEl.textContent = payload.title || 'Inspector';
     this.panelSubtitleEl.textContent = payload.subtitle || '';
+    if (isBuildCatalog) {
+      this.buildMenuPanel.show(payload);
+      return;
+    }
+    this.buildMenuPanel.clear();
     this.panelBodyEl.innerHTML = this.renderPanelPayload(payload);
     this.panelBodyEl.scrollTop = 0;
   }
 
   closeHtmlPanel() {
     if (!this.panelEl) return;
+    this.buildMenuPanel?.capture();
     this.panelEl.classList.add('gwg-hidden');
+    this.setWorldInputBlocked(false);
     this.game.events.emit('gwg-selection-clear');
   }
 
@@ -611,10 +634,11 @@ export default class UIScene extends Phaser.Scene {
   updateBuildMode(state = {}) {
     if (!this.buildModeText || !this.cancelBuildButton) return;
     const label = String(state.label || '');
-    const compactLabel = label.length > 10 ? `${label.slice(0, 9)}...` : label;
-    const cost = Number.isFinite(state.cost) ? ` ${state.cost}g` : '';
+    const compactLabel = label.length > 17 ? `${label.slice(0, 16)}...` : label;
+    const cost = Number.isFinite(state.cost) ? `${state.cost}g` : '';
+    const footprint = state.footprint || '';
     this.buildModeText
-      .setText(state.active ? `${compactLabel}${cost}` : '')
+      .setText(state.active ? `${compactLabel}\n${cost} - ${footprint}` : '')
       .setColor(state.valid === false ? '#f0938f' : '#7fdc93');
     this.cancelBuildButton.bg.setVisible(Boolean(state.active));
     this.cancelBuildButton.text.setVisible(Boolean(state.active));

@@ -498,6 +498,8 @@ export default class TownScene extends Phaser.Scene {
     this.buildMode = null;
     this.buildPreviewCell = null;
     this.buildMenuCategory = 'core';
+    this.buildMenuSelectedItemId = 'guildhall';
+    this.buildMenuSelectionByCategory = { core: 'guildhall' };
 
     this.buildings = this.applyBuildingPlacements(applyTownLayout(BUILDINGS, BUILDING_LAYOUT));
     this.decorations = this.applyBuilderDecorationState(applyTownLayout(DECORATIONS, DECORATION_LAYOUT));
@@ -553,6 +555,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-open-build', this.openBuildMenu, this);
     this.game.events.on('gwg-open-roads', this.openRoadMenu, this);
     this.game.events.on('gwg-select-build', this.selectBuildItem, this);
+    this.game.events.on('gwg-preview-build', this.previewBuildItem, this);
     this.game.events.on('gwg-build-category', this.selectBuildCategory, this);
     this.game.events.on('gwg-cancel-build', this.cancelBuildMode, this);
     this.game.events.on('gwg-time-speed', this.setSimulationSpeed, this);
@@ -576,6 +579,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-open-build', this.openBuildMenu, this);
       this.game.events.off('gwg-open-roads', this.openRoadMenu, this);
       this.game.events.off('gwg-select-build', this.selectBuildItem, this);
+      this.game.events.off('gwg-preview-build', this.previewBuildItem, this);
       this.game.events.off('gwg-build-category', this.selectBuildCategory, this);
       this.game.events.off('gwg-cancel-build', this.cancelBuildMode, this);
       this.game.events.off('gwg-time-speed', this.setSimulationSpeed, this);
@@ -1901,6 +1905,7 @@ export default class TownScene extends Phaser.Scene {
       active: true,
       label: name,
       cost,
+      footprint: `${footprint.w}x${footprint.h}`,
       valid: result.valid,
       reason: result.reason,
     });
@@ -1962,8 +1967,14 @@ export default class TownScene extends Phaser.Scene {
     const definition = this.getBuildModeDefinition();
     const name = definition?.name || id;
     const cost = definition?.cost || 0;
+    const footprint = this.getBuildFootprint();
     this.game.events.emit('gwg-event', `${name} selected. Choose a green grid footprint. Escape or Cancel stops construction.`);
-    this.game.events.emit('gwg-build-mode', { active: true, label: name, cost });
+    this.game.events.emit('gwg-build-mode', {
+      active: true,
+      label: name,
+      cost,
+      footprint: `${footprint.w}x${footprint.h}`,
+    });
     this.game.events.emit('gwg-inspector-close');
   }
 
@@ -1980,8 +1991,18 @@ export default class TownScene extends Phaser.Scene {
   }
 
   selectBuildItem(id) {
+    this.buildMenuSelectedItemId = id;
+    this.buildMenuSelectionByCategory[this.buildMenuCategory] = id;
     if (ROAD_TYPES[id]) this.enterBuildMode('road', id);
     else this.enterBuildMode('building', id);
+  }
+
+  previewBuildItem(id) {
+    this.buildMenuSelectedItemId = id;
+    this.buildMenuSelectionByCategory[this.buildMenuCategory] = id;
+    if (this.activeInspector?.type === 'build' || this.activeInspector?.type === 'roads') {
+      this.game.events.emit('gwg-ledger-open', this.getBuildMenuPayload(this.buildMenuCategory));
+    }
   }
 
   tryPlaceBuildItem(gridX, gridY) {
@@ -2072,16 +2093,21 @@ export default class TownScene extends Phaser.Scene {
       .map((id) => this.decorationById?.[id])
       .filter(Boolean)
       .map((place) => ({
+        id: place.id,
+        itemType: 'location',
         title: place.name,
-        meta: this.isLocationUnlocked(place.id) ? 'ON MAP' : 'TOWN UNLOCK',
+        costLabel: this.isLocationUnlocked(place.id) ? 'ON MAP' : 'LOCKED',
         kind: this.getPlaceKind(place),
         preview: this.getAssetPreviewUrl(place.assetKey),
-        lines: [
-          place.description || 'A municipal object with a suspiciously specific purpose.',
-          this.isLocationUnlocked(place.id)
-            ? 'Status: unlocked town location.'
-            : `Status: ${this.getLockReason(place.id)}`,
-        ],
+        description: place.description || 'A municipal object with a suspiciously specific purpose.',
+        footprintLabel: 'Town location',
+        roadLabel: 'Placed by unlock',
+        effect: place.effect || 'Affects the town when unlocked.',
+        flavor: place.tooltipLines?.[0] || '',
+        status: this.isLocationUnlocked(place.id)
+          ? 'Unlocked and visible on the map.'
+          : this.getLockReason(place.id),
+        state: this.isLocationUnlocked(place.id) ? 'built' : 'locked',
         actions: [{
           label: this.isLocationUnlocked(place.id) ? 'Unlocked on Map' : 'Town Unlock',
           event: 'gwg-select-build',
@@ -2103,14 +2129,18 @@ export default class TownScene extends Phaser.Scene {
       ['Signs', 'prop_signpost', 'Directions for heroes who reject conceptual access.'],
     ];
     return decorations.map(([title, assetKey, description]) => ({
+      id: assetKey,
+      itemType: 'decoration',
       title,
-      meta: 'DISTRICT PROP',
+      costLabel: 'AUTO',
       preview: this.getAssetPreviewUrl(assetKey),
-      lines: [
-        description,
-        'Footprint: decorative / non-blocking',
-        'Status: automatic district dressing',
-      ],
+      description,
+      footprintLabel: 'Non-blocking',
+      roadLabel: 'District dressing',
+      effect: 'Improves visual district identity.',
+      flavor: 'Procurement currently places these with restrained confidence.',
+      status: 'Automatic district dressing.',
+      state: 'built',
       actions: [{
         label: 'Automatic',
         event: 'gwg-select-build',
@@ -2125,18 +2155,24 @@ export default class TownScene extends Phaser.Scene {
       || BUILD_MENU_CATEGORIES[1];
     this.buildMenuCategory = category.id;
     const roadRows = Object.values(ROAD_TYPES).map((road) => ({
+      id: road.id,
+      itemType: 'road',
       title: road.name,
-      meta: `${road.cost}g / tile`,
+      cost: road.cost,
+      costLabel: `${road.cost}g / tile`,
       kind: road.id === 'premium' ? 'shady' : 'fair',
       swatch: `#${road.color.toString(16).padStart(6, '0')}`,
-      lines: [
-        road.description,
-        'Footprint: 1x1',
-        'Road access: creates service access and faster movement.',
-        `Status: ${this.resources.gold >= road.cost ? 'Affordable' : 'Insufficient gold'}`,
-      ],
+      description: road.description,
+      footprintLabel: '1x1',
+      roadLabel: 'Creates access',
+      effect: `Movement speed x${road.speed}.`,
+      flavor: road.id === 'premium'
+        ? 'Public infrastructure, now with a velvet price point.'
+        : 'Connects services to heroes with somewhere regrettable to be.',
+      status: this.resources.gold >= road.cost ? 'Affordable and ready to place.' : `Need ${road.cost} gold per tile.`,
+      state: this.resources.gold >= road.cost ? 'affordable' : 'unaffordable',
       actions: [{
-        label: this.resources.gold >= road.cost ? 'Build Road' : `Need ${road.cost}g`,
+        label: this.resources.gold >= road.cost ? 'Select Road' : `Need ${road.cost}g`,
         event: 'gwg-select-build',
         id: road.id,
         disabled: this.resources.gold < road.cost,
@@ -2150,24 +2186,34 @@ export default class TownScene extends Phaser.Scene {
       const built = Boolean(place?.isPlaced);
       const lockReason = this.getCatalogLockReason(catalog);
       const locked = Boolean(lockReason);
+      const affordable = this.resources.gold >= catalog.cost;
+      const state = built ? 'built' : locked ? 'locked' : affordable ? 'affordable' : 'unaffordable';
       return {
+        id: catalog.id,
+        itemType: 'building',
         title: catalog.name || place?.name || catalog.id,
-        meta: built ? 'BUILT' : (locked ? 'LOCKED' : `${catalog.cost}g`),
+        cost: catalog.cost,
+        costLabel: built ? 'BUILT' : (locked ? 'LOCKED' : `${catalog.cost}g`),
         kind: catalog.kind === 'shady' ? 'shady' : 'fair',
         preview: this.getAssetPreviewUrl(place?.assetKey || catalog.assetKey),
-        lines: [
-          catalog.description,
-          `Footprint: ${catalog.footprint.w}x${catalog.footprint.h}`,
-          `Road: ${catalog.roadRequired ? 'Adjacent access required' : 'Independent access'}`,
-          `Effect: ${catalog.effect}`,
-          `Status: ${built ? 'Already built' : (locked ? lockReason : (this.resources.gold >= catalog.cost ? 'Ready to place' : 'Insufficient gold'))}`,
-          ...(locked ? [{ text: lockReason, className: 'gwg-bad' }] : []),
-        ],
+        description: catalog.description,
+        footprintLabel: `${catalog.footprint.w}x${catalog.footprint.h}`,
+        roadLabel: catalog.roadRequired ? 'Adjacent required' : 'Independent',
+        effect: catalog.effect,
+        flavor: catalog.flavor || place?.upgradeFlavor || '',
+        status: built
+          ? 'Already built. Unique municipal duplication denied.'
+          : locked
+            ? lockReason
+            : affordable
+              ? 'Affordable and ready to place.'
+              : `Need ${catalog.cost} gold. The accountant remains unhelpful.`,
+        state,
         actions: [{
-          label: built ? 'Built' : (locked ? 'Locked' : (this.resources.gold >= catalog.cost ? 'Place Building' : `Need ${catalog.cost}g`)),
+          label: built ? 'BUILT' : (locked ? 'Locked' : (affordable ? 'Select Building' : `Need ${catalog.cost}g`)),
           event: 'gwg-select-build',
           id: catalog.id,
-          disabled: built || locked || this.resources.gold < catalog.cost,
+          disabled: built || locked || !affordable,
         }],
       };
     });
@@ -2177,25 +2223,32 @@ export default class TownScene extends Phaser.Scene {
     if (category.informational) {
       rows.push(...this.getBuildMenuDecorationRows());
     }
+    if (!rows.some((row) => row.id === this.buildMenuSelectedItemId)) {
+      this.buildMenuSelectedItemId = this.buildMenuSelectionByCategory[category.id] || rows[0]?.id || null;
+      if (!rows.some((row) => row.id === this.buildMenuSelectedItemId)) {
+        this.buildMenuSelectedItemId = rows[0]?.id || null;
+      }
+    }
+    this.buildMenuSelectionByCategory[category.id] = this.buildMenuSelectedItemId;
+    for (const row of rows) row.selected = row.id === this.buildMenuSelectedItemId;
+    const detail = rows.find((row) => row.selected) || null;
     return {
+      panelType: 'build-catalog',
       title: 'Build Menu',
       subtitle: `${this.resources.gold}g available - ${category.label}`,
+      catalog: {
+        categoryId: category.id,
+        label: category.label,
+        description: category.description,
+      },
       tabs: BUILD_MENU_CATEGORIES.map((entry) => ({
         id: entry.id,
         label: entry.label,
         event: 'gwg-build-category',
         active: entry.id === category.id,
       })),
-      sections: [{
-        title: category.label,
-        lines: [
-          category.description,
-          category.id === 'roads'
-            ? 'Connected tiles choose their shape automatically. Filled blocks become plazas without hollow centers.'
-            : 'Green footprints fit. Red footprints explain why they do not.',
-        ],
-      }],
       rows,
+      detail,
       actions: [
         {
           label: 'Expand Eastern Lot - 900g',
@@ -2221,6 +2274,7 @@ export default class TownScene extends Phaser.Scene {
   selectBuildCategory(categoryId) {
     if (!BUILD_MENU_CATEGORIES.some((entry) => entry.id === categoryId)) return;
     this.buildMenuCategory = categoryId;
+    this.buildMenuSelectedItemId = this.buildMenuSelectionByCategory[categoryId] || null;
     this.activeInspector = { type: 'build', category: categoryId };
     this.game.events.emit('gwg-ledger-open', this.getBuildMenuPayload(categoryId));
   }
