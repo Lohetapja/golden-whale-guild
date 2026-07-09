@@ -14,33 +14,33 @@ const MAX_TICKER_CHARS = 150;
 const RESOURCE_META = [
   {
     key: 'gold', label: 'Gold', icon: 'ph-icon_coin', asset: 'icon_coin', color: '#f6c945',
-    help: 'Used for upgrades, quest bounties, and bad ideas.',
+    help: 'Used for upgrades, quest bounties, roads, services, and bad ideas. Comes from quests, trade, taxes, loot, and premium abuse.',
     danger: (v) => (v < 120 ? 'warning' : 'safe'),
-    dangerText: (v) => (v < 120 ? 'Warning: low gold limits upgrades and quests.' : 'Safe: enough gold to make at least one suspicious decision.'),
+    dangerText: (v) => (v < 120 ? 'Warning: low gold blocks upgrades, road planning, and quest bounties.' : 'Safe: enough gold to build, post quests, or make one suspicious decision.'),
   },
   {
     key: 'trust', label: 'Trust', icon: 'icon-trust', asset: 'icon_trust', color: '#7fdc93',
-    help: 'Trust keeps honest heroes from leaving. Below 30, expect protests and dramatic exits.',
+    help: 'Trust keeps honest heroes in town. It rises from fair quests, honest services, and public order; it falls when the town scams everyone.',
     danger: (v) => (v < 20 ? 'critical' : v < 30 ? 'warning' : 'safe'),
-    dangerText: (v) => (v < 20 ? 'Critical: trust collapse is close.' : v < 30 ? 'Warning: honest heroes are losing faith.' : 'Safe: citizens can still pretend the brochure is real.'),
+    dangerText: (v) => (v < 20 ? 'Critical: trust collapse is close. Expect exits, protests, and dramatic barrel usage.' : v < 30 ? 'Warning: honest heroes are losing faith.' : 'Safe: citizens can still pretend the fairness brochure is real.'),
   },
   {
     key: 'corruption', label: 'Corruption', icon: 'icon-corruption', asset: 'icon_corruption', color: '#c99aec',
-    help: 'Corruption increases shady profits and premium nonsense. Above 70, consequences begin filing paperwork.',
+    help: 'Corruption comes from premium nonsense, loot boxes, shady finance, fake odds, and convenience abuse. It makes gold easier and consequences louder.',
     danger: (v) => (v > 86 ? 'critical' : v > 70 ? 'warning' : 'safe'),
-    dangerText: (v) => (v > 86 ? 'Critical: scandal territory, now with sparkle effects.' : v > 70 ? 'Warning: shady events become more common.' : 'Safe-ish: the paperwork is only lightly cursed.'),
+    dangerText: (v) => (v > 86 ? 'Critical: scandal territory, now with sparkle effects.' : v > 70 ? 'Warning: debt, fake odds, and premium problems become more common.' : 'Safe-ish: the paperwork is only lightly cursed.'),
   },
   {
     key: 'morale', label: 'Morale', icon: 'icon-morale', asset: 'icon_morale', color: '#f0938f',
-    help: 'Morale affects quest success and whether heroes keep trying instead of becoming tavern furniture.',
+    help: 'Morale affects quest success and hero stamina. Rest, food, victories, and fair treatment help; losses, injuries, debt, and scams hurt.',
     danger: (v) => (v < 20 ? 'critical' : v < 30 ? 'warning' : 'safe'),
-    dangerText: (v) => (v < 20 ? 'Critical: morale crash is close.' : v < 30 ? 'Warning: failures and ragequits are more likely.' : 'Safe: heroes are still making eye contact with danger.'),
+    dangerText: (v) => (v < 20 ? 'Critical: morale crash is close. Ragequits and failures are lining up.' : v < 30 ? 'Warning: failures and ragequits are more likely.' : 'Safe: heroes are still making eye contact with danger.'),
   },
   {
     key: 'threat', label: 'Threat', icon: 'icon-threat', asset: 'icon_threat', color: '#d4dae2',
-    help: 'Threat means the dungeon is getting confident. At 100, it visits.',
+    help: 'Threat means monsters, dungeons, and expansion risks are gaining confidence. Quests, patrols, towers, and monster hunts reduce it.',
     danger: (v) => (v > 90 ? 'critical' : v > 80 ? 'warning' : 'safe'),
-    dangerText: (v) => (v > 90 ? 'Critical: invasion is close.' : v > 80 ? 'Warning: town attack risk is high.' : 'Safe: the dungeon is only thinking loudly.'),
+    dangerText: (v) => (v > 90 ? 'Critical: invasion is close. The dungeon is rehearsing its entrance.' : v > 80 ? 'Warning: town attack risk is high.' : 'Safe: the dungeon is only thinking loudly.'),
   },
 ];
 

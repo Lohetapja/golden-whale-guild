@@ -27,6 +27,18 @@ export const EVENT_POOLS = {
       building: 'whale',
       d: { gold: 130, morale: -1, corruption: 2 },
     },
+    {
+      text: (n) => `${n} purchased a limited-time bundle that has been limited all month.`,
+      bubble: 'Urgency achieved.',
+      building: 'whale',
+      d: { gold: 170, trust: -1, corruption: 3 },
+    },
+    {
+      text: (n) => `${n} rolled the sacred banner and got duplicate boots with executive confidence.`,
+      bubble: 'Duplicate destiny.',
+      building: 'lootbox_kiosk',
+      d: { gold: 120, morale: -1, corruption: 2 },
+    },
   ],
 
   honestTraining: [
@@ -417,6 +429,18 @@ export const EVENT_POOLS = {
       building: 'notice_board',
       d: { morale: -1 },
     },
+    {
+      text: (n) => `${n} asked RNGesus for mercy and received a receipt with wings.`,
+      bubble: 'Blessed invoice.',
+      building: 'premium_temple',
+      d: { gold: 35, corruption: 2, trust: -1 },
+    },
+    {
+      text: (n) => `${n} joined a pity-timer vigil. The timer filed for an extension.`,
+      bubble: 'Any roll now.',
+      building: 'patch_notes_shrine',
+      d: { morale: -1, corruption: 1 },
+    },
   ],
 
   fakeOddsGossip: [
@@ -443,6 +467,18 @@ export const EVENT_POOLS = {
       bubble: 'Limited forever.',
       building: 'convenience_office',
       d: { gold: 70, trust: -1, corruption: 2 },
+    },
+    {
+      text: (n) => `${n} read "99% value" and asked what happened to the other percent. Security arrived.`,
+      bubble: 'Math forbidden.',
+      building: 'gem_exchange',
+      d: { trust: -1, corruption: 2 },
+    },
+    {
+      text: (n) => `${n} found a pity chart shaped exactly like a sales funnel.`,
+      bubble: 'Funnels are holy?',
+      building: 'lootbox_kiosk',
+      d: { morale: -1, corruption: 2 },
     },
   ],
 

@@ -63,7 +63,17 @@ export const ROAD_TYPES = {
 export const DEFAULT_NEW_CITY = {
   mode: 'builder',
   unlockedZones: ['west'],
-  roads: Array.from({ length: 14 }, (_, x) => ({ x, y: 7, type: 'dirt' })),
+  roads: [
+    ...Array.from({ length: 15 }, (_, x) => ({ x: x + 1, y: 7, type: 'dirt' })),
+    ...Array.from({ length: 7 }, (_, y) => ({ x: 8, y: y + 4, type: 'dirt' })),
+    ...Array.from({ length: 5 }, (_, x) => ({ x: x + 6, y: 10, type: 'dirt' })),
+    ...Array.from({ length: 4 }, (_, x) => ({ x: x + 10, y: 5, type: 'dirt' })),
+    { x: 5, y: 6, type: 'dirt' },
+    { x: 6, y: 6, type: 'dirt' },
+    { x: 7, y: 6, type: 'dirt' },
+    { x: 13, y: 6, type: 'dirt' },
+    { x: 14, y: 6, type: 'dirt' },
+  ].filter((road, index, roads) => roads.findIndex((item) => item.x === road.x && item.y === road.y) === index),
   placedBuildings: [
     { id: 'guildhall', gridX: 8, gridY: 4 },
   ],

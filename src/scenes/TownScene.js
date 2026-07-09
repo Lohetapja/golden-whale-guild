@@ -771,12 +771,8 @@ export default class TownScene extends Phaser.Scene {
     this.defaultZoom = Phaser.Math.Clamp(CAMERA_DEFAULT_ZOOM, this.minZoom, CAMERA_MAX_ZOOM);
     cam.setZoom(this.defaultZoom);
     if (this.isBuilderCity) {
-      // start centered on the founding western district
-      const west = GRID_CONFIG.zones.west;
-      cam.centerOn(
-        GRID_CONFIG.originX + ((west.minX + Math.min(west.maxX + 8, GRID_CONFIG.columns - 1)) / 2) * GRID_CONFIG.tileSize,
-        GRID_CONFIG.originY + ((west.minY + Math.min(west.maxY + 4, GRID_CONFIG.rows - 1)) / 2) * GRID_CONFIG.tileSize,
-      );
+      const anchor = this.getBuilderCameraAnchor();
+      cam.centerOn(anchor.x, anchor.y);
     } else {
       cam.setScroll(
         Phaser.Math.Clamp(TOWN_WORLD.cameraStart.x, 0, Math.max(0, this.worldWidth - WIDTH)),
@@ -858,15 +854,22 @@ export default class TownScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.setZoom(Phaser.Math.Clamp(CAMERA_HOME_ZOOM, this.minZoom, CAMERA_MAX_ZOOM));
     if (this.isBuilderCity) {
-      const west = GRID_CONFIG.zones.west;
-      cam.centerOn(
-        GRID_CONFIG.originX + ((west.minX + Math.min(west.maxX + 10, GRID_CONFIG.columns - 1)) / 2) * GRID_CONFIG.tileSize,
-        GRID_CONFIG.originY + ((west.minY + Math.min(west.maxY + 6, GRID_CONFIG.rows - 1)) / 2) * GRID_CONFIG.tileSize,
-      );
+      const anchor = this.getBuilderCameraAnchor();
+      cam.centerOn(anchor.x, anchor.y);
     } else {
       cam.centerOn(PLAZA.x, PLAZA.y);
     }
     this.clampCameraToWorld();
+  }
+
+  getBuilderCameraAnchor() {
+    const guild = this.buildings?.find((building) => building.id === 'guildhall' && building.isPlaced);
+    if (guild) return { x: guild.x + 80, y: guild.y + 80 };
+    const west = GRID_CONFIG.zones.west;
+    return {
+      x: GRID_CONFIG.originX + ((west.minX + Math.min(west.maxX + 8, GRID_CONFIG.columns - 1)) / 2) * GRID_CONFIG.tileSize,
+      y: GRID_CONFIG.originY + ((west.minY + Math.min(west.maxY + 6, GRID_CONFIG.rows - 1)) / 2) * GRID_CONFIG.tileSize,
+    };
   }
 
   zoomCamera(direction, pointer = null) {
@@ -1917,7 +1920,7 @@ export default class TownScene extends Phaser.Scene {
         const hash = this.getTerrainHash(x, y, 3);
         const unlocked = isTileUnlocked(x, y, this.cityState.unlockedZones);
         const edge = x < 2 || y < 2 || x > GRID_CONFIG.columns - 3 || y > GRID_CONFIG.rows - 3;
-        const chance = unlocked ? 18 : (edge ? 34 : 10);
+        const chance = unlocked ? (edge ? 30 : 22) : (edge ? 34 : 10);
         if (hash % 100 >= chance) continue;
         const color = unlocked
           ? ([0x79b760, 0x5f9b45, 0x86be67, 0xa2b873][hash % 4])
@@ -1932,6 +1935,15 @@ export default class TownScene extends Phaser.Scene {
           16 + (hash % 18),
           8 + ((hash >> 3) % 8),
         );
+        if (unlocked && hash % 11 === 0) {
+          g.fillStyle(hash % 2 ? 0x836f45 : 0x4c7e3d, 0.08);
+          g.fillEllipse(
+            world.x - rx * 0.35,
+            world.y - GRID_CONFIG.tileSize / 2 - ry * 0.25,
+            34 + (hash % 22),
+            15 + ((hash >> 5) % 10),
+          );
+        }
         if (unlocked && hash % 7 === 0) {
           g.fillStyle(0xd8e28d, 0.16);
           g.fillCircle(world.x + rx * 0.6, world.y - GRID_CONFIG.tileSize / 2 + ry, 2);
@@ -2013,6 +2025,39 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
+  drawRoadGrounding(graphics, road, left, top, rect, type, plaza) {
+    const tile = GRID_CONFIG.tileSize;
+    const center = gridToWorld(road.x, road.y);
+    const centerY = center.y - tile / 2;
+    const hash = this.getTerrainHash(road.x, road.y, 19);
+    const shoulderAlpha = road.type === 'premium' ? 0.22 : road.type === 'stone' ? 0.18 : 0.2;
+    graphics.fillStyle(0x33482d, 0.1);
+    graphics.fillRoundedRect(left + 2, top + 4, tile - 4, tile - 8, plaza ? 8 : 11);
+    graphics.fillStyle(type.edgeColor, shoulderAlpha);
+    graphics.fillRoundedRect(
+      rect.x - (plaza ? 3 : 6),
+      rect.y - (plaza ? 3 : 6),
+      rect.width + (plaza ? 6 : 12),
+      rect.height + (plaza ? 6 : 12),
+      plaza ? 7 : 12,
+    );
+    graphics.fillStyle(0x516b36, 0.08);
+    graphics.fillEllipse(center.x, centerY + 2, tile * 0.86, tile * 0.32);
+
+    const flecks = plaza ? 2 : 4;
+    for (let i = 0; i < flecks; i += 1) {
+      const fx = rect.x + 6 + ((hash >> (i * 3)) % Math.max(1, rect.width - 12));
+      const fy = rect.y + 6 + ((hash >> (i * 5 + 2)) % Math.max(1, rect.height - 12));
+      const color = road.type === 'premium'
+        ? [0xffe08a, 0xb78620, 0xfff1b6][i % 3]
+        : road.type === 'stone'
+          ? [0xd0ccc4, 0x777c82, 0xf2ead8][i % 3]
+          : [0xf0d49a, 0x9a6e43, 0x6f8545][i % 3];
+      graphics.fillStyle(color, road.type === 'premium' ? 0.26 : 0.18);
+      graphics.fillEllipse(fx, fy, 3 + (hash % 5), 2);
+    }
+  }
+
   redrawCityRoads() {
     if (!this.cityRoadGraphics) this.cityRoadGraphics = this.add.graphics().setDepth(20);
     if (!this.cityRoadImages) this.cityRoadImages = [];
@@ -2043,10 +2088,7 @@ export default class TownScene extends Phaser.Scene {
         // become solid slabs instead of donuts; loose tiles keep a small
         // grass shoulder on unconnected sides
         const rect = getRoadSurfaceRect(left, top, GRID_CONFIG.tileSize, mask, plaza ? 0 : 4);
-        graphics.fillStyle(0x31482d, 0.16);
-        graphics.fillRoundedRect(left + 1, top + 3, GRID_CONFIG.tileSize - 2, GRID_CONFIG.tileSize - 7, 8);
-        graphics.fillStyle(type.edgeColor, 0.5);
-        graphics.fillRoundedRect(rect.x - 2, rect.y - 2, rect.width + 4, rect.height + 4, plaza ? 5 : 8);
+        this.drawRoadGrounding(graphics, road, left, top, rect, type, plaza);
         if (!plaza) {
           graphics.fillStyle(0xe2cf9d, road.type === 'premium' ? 0.2 : 0.11);
           graphics.fillEllipse(center.x, center.y - GRID_CONFIG.tileSize / 2, rect.width * 0.55, 7);
@@ -2061,6 +2103,7 @@ export default class TownScene extends Phaser.Scene {
       const edgeRect = getRoadSurfaceRect(left, top, GRID_CONFIG.tileSize, mask, plaza ? 3 : 4);
       const surfaceRect = getRoadSurfaceRect(left, top, GRID_CONFIG.tileSize, mask, plaza ? 4 : 8);
 
+      this.drawRoadGrounding(graphics, road, left, top, edgeRect, type, plaza);
       graphics.fillStyle(type.edgeColor, 0.72);
       graphics.fillRoundedRect(edgeRect.x, edgeRect.y, edgeRect.width, edgeRect.height, plaza ? 5 : 8);
       graphics.fillStyle(type.color, 0.98);
@@ -2957,22 +3000,61 @@ export default class TownScene extends Phaser.Scene {
       const padInset = 5;
       const padColor = shady ? 0x9c7a32 : 0x8d805e;
       const trimColor = shady ? 0xf0c94a : 0xc5b58c;
-      foundation.fillStyle(0x243020, 0.14);
-      foundation.fillRoundedRect(left + padInset - 3, top + 10, width - padInset * 2 + 6, height - 14, 9);
-      foundation.fillStyle(padColor, shady ? 0.28 : 0.22);
-      foundation.fillRoundedRect(left + padInset, top + 8, width - padInset * 2, height - 16, 8);
-      foundation.lineStyle(1, trimColor, shady ? 0.36 : 0.24);
-      foundation.strokeRoundedRect(left + padInset, top + 8, width - padInset * 2, height - 16, 8);
-      foundation.fillStyle(shady ? 0xc6a14a : 0xbfa77a, shady ? 0.32 : 0.24);
-      foundation.fillEllipse(b.x, b.y - 2, Math.min(width * 0.72, b.w * 0.86), 18);
+      const padTop = top + 8;
+      const padMidY = top + height * 0.56;
+      const padBottom = top + height - 4;
+      const padLeft = left + padInset;
+      const padRight = left + width - padInset;
+      foundation.fillStyle(0x162116, 0.16);
+      foundation.beginPath();
+      foundation.moveTo(left + width / 2, padTop + 3);
+      foundation.lineTo(padRight + 4, padMidY + 3);
+      foundation.lineTo(left + width / 2, padBottom + 5);
+      foundation.lineTo(padLeft - 4, padMidY + 3);
+      foundation.closePath();
+      foundation.fillPath();
+      foundation.fillStyle(padColor, shady ? 0.34 : 0.27);
+      foundation.beginPath();
+      foundation.moveTo(left + width / 2, padTop);
+      foundation.lineTo(padRight, padMidY);
+      foundation.lineTo(left + width / 2, padBottom);
+      foundation.lineTo(padLeft, padMidY);
+      foundation.closePath();
+      foundation.fillPath();
+      foundation.lineStyle(1, trimColor, shady ? 0.42 : 0.3);
+      foundation.beginPath();
+      foundation.moveTo(left + width / 2, padTop);
+      foundation.lineTo(padRight, padMidY);
+      foundation.lineTo(left + width / 2, padBottom);
+      foundation.lineTo(padLeft, padMidY);
+      foundation.closePath();
+      foundation.strokePath();
+      foundation.fillStyle(shady ? 0xf0c94a : 0xd1bd8d, shady ? 0.16 : 0.12);
+      foundation.fillEllipse(b.x, b.y - 6, Math.min(width * 0.76, b.w * 0.86), 9);
       if (access.roadCell) {
         const road = gridToWorld(access.roadCell.x, access.roadCell.y);
-        const dx = Phaser.Math.Clamp((road.x - b.x) * 0.18, -22, 22);
-        foundation.fillStyle(shady ? 0xc9a547 : 0xc2aa76, shady ? 0.34 : 0.25);
-        foundation.fillEllipse(b.x + dx, b.y + 5, 38, 13);
-        foundation.fillStyle(0xf0d9a2, 0.18);
-        foundation.fillCircle(b.x + dx - 10, b.y + 3, 2);
-        foundation.fillCircle(b.x + dx + 9, b.y + 6, 2);
+        const roadX = road.x;
+        const roadY = road.y - GRID_CONFIG.tileSize / 2;
+        const doorX = b.doorX ?? b.x;
+        const doorY = b.doorY ?? b.y + (b.doorOffsetY ? 4 : 2);
+        const dx = roadX - doorX;
+        const dy = roadY - doorY;
+        const length = Math.max(1, Math.hypot(dx, dy));
+        const nx = (-dy / length) * 8;
+        const ny = (dx / length) * 8;
+        const endX = doorX + Phaser.Math.Clamp(dx * 0.56, -42, 42);
+        const endY = doorY + Phaser.Math.Clamp(dy * 0.56, -28, 28);
+        foundation.fillStyle(shady ? 0xd5a63b : 0xc2aa76, shady ? 0.36 : 0.27);
+        foundation.beginPath();
+        foundation.moveTo(doorX - nx, doorY - ny);
+        foundation.lineTo(doorX + nx, doorY + ny);
+        foundation.lineTo(endX + nx * 0.72, endY + ny * 0.72);
+        foundation.lineTo(endX - nx * 0.72, endY - ny * 0.72);
+        foundation.closePath();
+        foundation.fillPath();
+        foundation.fillStyle(0xf0d9a2, 0.16);
+        foundation.fillCircle((doorX + endX) / 2 - nx * 0.3, (doorY + endY) / 2 - ny * 0.3, 2);
+        foundation.fillCircle((doorX + endX) / 2 + nx * 0.4, (doorY + endY) / 2 + ny * 0.4, 2);
       }
       this.buildingObjectsById[b.id].push(foundation);
 
@@ -2992,7 +3074,7 @@ export default class TownScene extends Phaser.Scene {
       Math.max(54, (catalog?.footprint?.w || 2) * GRID_CONFIG.tileSize * 0.72),
       b.w * 0.86,
     );
-    const shadow = this.add.ellipse(b.x, b.y - 7, shadowWidth, 15, 0x10151d, 0.14).setDepth(b.y - 2);
+    const shadow = this.add.ellipse(b.x, b.y - 8, shadowWidth, 8, 0x10151d, 0.1).setDepth(b.y - 2);
     this.buildingObjectsById[b.id].push(shadow);
     const textureKey = buildingTexture(this, b);
     const img = this.add.image(b.x, b.y, textureKey)
@@ -5130,7 +5212,7 @@ export default class TownScene extends Phaser.Scene {
         return;
       }
       if (Math.random() < 0.6) {
-        const line = Phaser.Utils.Array.GetRandom([...DENIED_LINES, ...QUEUE_LINES]);
+        const line = this.pickHeroLine(hero, [...DENIED_LINES, ...QUEUE_LINES]);
         this.say(hero, line);
         this.floatText(spot.x, spot.y - 34, 'VIPs ONLY', '#e74c3c');
         hero.timer = this.time.delayedCall(900, () => this.ambientMove(hero));
@@ -5503,7 +5585,7 @@ export default class TownScene extends Phaser.Scene {
       ...(WHALE_REACTIONS[hero.def.personality] || []),
     ];
     if (lines.length > 0) {
-      this.say(hero, Phaser.Utils.Array.GetRandom(lines), true);
+      this.say(hero, this.pickHeroLine(hero, lines), true);
     }
   }
 
@@ -5519,7 +5601,7 @@ export default class TownScene extends Phaser.Scene {
 
     const hero = Phaser.Utils.Array.GetRandom(candidates);
     this.walkTo(hero, ropeSpot, () => {
-      this.say(hero, Phaser.Utils.Array.GetRandom([...DENIED_LINES, ...QUEUE_LINES]), true);
+      this.say(hero, this.pickHeroLine(hero, [...DENIED_LINES, ...QUEUE_LINES]), true);
       this.floatText(ropeSpot.x, ropeSpot.y - 38, 'VIPs ONLY', '#e74c3c');
       this.scheduleAmbient(hero, Phaser.Math.Between(2000, 4200));
     });
@@ -5788,9 +5870,12 @@ export default class TownScene extends Phaser.Scene {
 
   chooseExplorationAction(hero) {
     if (!this.isBuildingPlaced('dungeon')) return null;
-    const threatPull = this.resources.threat > 45 ? 0.16 : 0;
+    const watchtower = this.getPlaceLevel(this.buildingById.watchtower);
+    const guildhall = this.getPlaceLevel(this.buildingById.guildhall);
+    const threatPull = Phaser.Math.Clamp((this.resources.threat - 35) * 0.005, 0, 0.22);
+    const scoutingSupport = Math.min(0.08, guildhall * 0.015 + watchtower * 0.025);
     const brave = this.isHonestHero(hero.def) || this.isVeteranHero(hero.def);
-    const chance = EXPLORATION_CHANCE + threatPull + (brave ? 0.08 : 0);
+    const chance = Phaser.Math.Clamp(EXPLORATION_CHANCE + threatPull + scoutingSupport + (brave ? 0.08 : 0), 0.12, 0.58);
     if (Math.random() > chance) return null;
     const monster = rollMonster();
     const spot = this.getExplorationSpot(hero);
@@ -5810,7 +5895,7 @@ export default class TownScene extends Phaser.Scene {
         explore: true,
         monster,
         text: `${hero.def.name} hunted ${monster.name} near the wilderness. ${monster.flavour} Threat fell before it could monetize.`,
-        bubble: Phaser.Utils.Array.GetRandom(EXPLORATION_LINES),
+        bubble: this.pickHeroLine(hero, EXPLORATION_LINES),
         d: { gold, threat: -(3 + monster.threat * 2), morale: 1, trust: brave ? 1 : 0 },
       };
     }
@@ -5824,7 +5909,7 @@ export default class TownScene extends Phaser.Scene {
       explore: true,
       monster,
       text: `${hero.def.name} found ${monster.name} outside town and returned with debt, dust, and opinions. ${monster.flavour}`,
-      bubble: 'The wilderness has feedback.',
+      bubble: this.pickHeroLine(hero, EXPLORATION_LINES) || 'The wilderness has feedback.',
       d: { gold: 8, threat: monster.threat + 2, morale: -2, trust: -1 },
     };
   }
