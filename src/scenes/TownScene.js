@@ -61,6 +61,7 @@ import {
   getRoadVariant,
   isRoadPlazaTile,
 } from '../systems/roadRenderer.js';
+import { resolveInteractionTarget } from '../systems/interactionResolver.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -503,6 +504,8 @@ export default class TownScene extends Phaser.Scene {
 
     this.buildings = this.applyBuildingPlacements(applyTownLayout(BUILDINGS, BUILDING_LAYOUT));
     this.decorations = this.applyBuilderDecorationState(applyTownLayout(DECORATIONS, DECORATION_LAYOUT));
+    this.worldInteractionTargets = [];
+    this.hoveredWorldTarget = null;
     this.pathNodes = TOWN_PATH_NODES;
     this.pathLinks = TOWN_PATH_LINKS;
     this.pathNodeById = Object.fromEntries(this.pathNodes.map((node) => [node.id, node]));
@@ -739,6 +742,7 @@ export default class TownScene extends Phaser.Scene {
 
     this.input.on('pointermove', (pointer) => {
       if (this.buildMode) return;
+      this.updateWorldInteractionHover(pointer);
       if (!this.cameraDrag.active || !pointer.primaryDown) return;
       const dx = pointer.x - this.cameraDrag.lastX;
       const dy = pointer.y - this.cameraDrag.lastY;
@@ -753,10 +757,15 @@ export default class TownScene extends Phaser.Scene {
     });
 
     this.input.on('pointerup', (pointer, over = []) => {
+      if (this.registry.get('uiPointerBlocked')) {
+        this.cameraDrag.active = false;
+        return;
+      }
       if (this.cameraDrag.moved) this.suppressTapUntil = this.time.now + 120;
       else if (over.length === 0 && this.activeInspector) this.hideTooltip();
       this.cameraDrag.active = false;
     });
+    this.input.on('gameout', () => this.clearWorldInteractionHover());
   }
 
   wasDragGesture(pointer) {
@@ -1959,6 +1968,7 @@ export default class TownScene extends Phaser.Scene {
     if (kind === 'road' && !ROAD_TYPES[id]) return;
     if (kind === 'building' && !getBuildingCatalogEntry(id)) return;
     this.clearSelection();
+    this.clearWorldInteractionHover();
     this.buildMode = { kind, id };
     this.buildPreviewCell = null;
     this.gridGraphics.setVisible(true);
@@ -2425,14 +2435,22 @@ export default class TownScene extends Phaser.Scene {
   }
 
   createPlaceHitZone(place, img, onSelect) {
-    const width = place.interactionW || Math.max(84, (place.w || 64) + 34);
-    const height = place.interactionH || Math.max(72, (place.h || 52) + 34);
-    const centerY = place.y - (place.h || 52) / 2 + (place.interactionOffsetY || 0);
+    const isBuilding = Boolean(this.buildingById?.[place.id]);
+    const width = place.interactionW || Math.max(
+      isBuilding ? 64 : 40,
+      (place.w || 64) * (isBuilding ? 0.88 : 0.82),
+    );
+    const height = place.interactionH || Math.max(
+      isBuilding ? 58 : 36,
+      (place.h || 52) * (isBuilding ? 0.86 : 0.8),
+    );
+    const centerY = place.y - (place.h || 52) * 0.47 + (place.interactionOffsetY || 0);
     const hit = this.add.rectangle(place.x, centerY, width, height, 0xffffff, 0.001)
       .setOrigin(0.5)
       .setDepth((place.y || 0) + 8)
       .setInteractive({ useHandCursor: true });
-    hit.on('pointerover', () => {
+
+    const hoverIn = () => {
       if (img?.setTint) img.setTint(this.isLocationUnlocked(place.id) ? 0xfff3c0 : 0x9aa3b5);
       this.showPlaceLabel(place);
       if (img && this.tweens) {
@@ -2440,8 +2458,8 @@ export default class TownScene extends Phaser.Scene {
         const restY = img.getData('restScaleY') || img.getData('baseScaleY') || 1;
         this.tweens.add({ targets: img, scaleX: restX * 1.035, scaleY: restY * 1.035, duration: 90 });
       }
-    });
-    hit.on('pointerout', () => {
+    };
+    const hoverOut = () => {
       if (img?.clearTint && this.isLocationUnlocked(place.id)) img.clearTint();
       else if (img?.setTint) img.setTint(0x6f7787);
       if (this.selectedPlaceId !== place.id) this.resetPlaceLabel(place);
@@ -2453,12 +2471,69 @@ export default class TownScene extends Phaser.Scene {
           duration: 90,
         });
       }
+    };
+    this.registerWorldInteractionTarget({
+      id: place.id,
+      type: isBuilding ? 'building' : 'decoration',
+      place,
+      hit,
+      img,
+      width,
+      height,
+      getCenter: () => ({ x: place.x, y: centerY }),
+      onHoverIn: hoverIn,
+      onHoverOut: hoverOut,
+      onSelect: () => onSelect?.(place),
     });
     hit.on('pointerup', (pointer) => {
       if (this.wasDragGesture(pointer)) return;
-      onSelect?.(place);
+      this.selectWorldInteractionTarget(pointer);
     });
+    this.applyInteractionDebugStyle(hit, isBuilding ? 0x7fdc93 : 0xc99aec);
     return hit;
+  }
+
+  applyInteractionDebugStyle(hit, color) {
+    if (!import.meta.env.DEV || typeof window === 'undefined') return;
+    if (!new URLSearchParams(window.location.search).has('hitboxes')) return;
+    hit.setFillStyle(color, 0.16).setStrokeStyle(1, color, 0.85);
+  }
+
+  registerWorldInteractionTarget(target) {
+    this.worldInteractionTargets.push(target);
+    return target;
+  }
+
+  getWorldInteractionTargetAt(worldX, worldY) {
+    return resolveInteractionTarget(this.worldInteractionTargets, worldX, worldY, {
+      placeId: this.selectedPlaceId,
+      heroId: this.selectedHeroId,
+    });
+  }
+
+  updateWorldInteractionHover(pointer) {
+    if (!pointer || this.cameraDrag?.moved) return;
+    const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    const target = this.getWorldInteractionTargetAt(world.x, world.y);
+    if (target === this.hoveredWorldTarget) return;
+    this.hoveredWorldTarget?.onHoverOut?.();
+    this.hoveredWorldTarget = target;
+    this.hoveredWorldTarget?.onHoverIn?.();
+  }
+
+  clearWorldInteractionHover() {
+    this.hoveredWorldTarget?.onHoverOut?.();
+    this.hoveredWorldTarget = null;
+  }
+
+  selectWorldInteractionTarget(pointer) {
+    if (this.registry.get('uiPointerBlocked')) return;
+    const interactionKey = `${pointer.id}:${pointer.upTime || this.time.now}`;
+    if (this.lastWorldInteractionKey === interactionKey) return;
+    this.lastWorldInteractionKey = interactionKey;
+    const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    const target = this.getWorldInteractionTargetAt(world.x, world.y);
+    target?.onSelect?.();
   }
 
   buildBuildings() {
@@ -4125,18 +4200,32 @@ export default class TownScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       container.add(hit);
       hero.hit = hit;
-      hit.on('pointerover', () => {
+      const hoverIn = () => {
         sprite.setTint(0xfff3c0);
         this.setHeroLabelFocus(hero, true);
-      });
-      hit.on('pointerout', () => {
+      };
+      const hoverOut = () => {
         this.applyHeroTint(hero);
         this.setHeroLabelFocus(hero, false);
+      };
+      this.registerWorldInteractionTarget({
+        id: def.id,
+        type: 'hero',
+        hero,
+        hit,
+        img: container,
+        width: 58,
+        height: 72,
+        getCenter: () => ({ x: hero.container.x, y: hero.container.y - 34 }),
+        onHoverIn: hoverIn,
+        onHoverOut: hoverOut,
+        onSelect: () => this.showHeroTooltip(hero),
       });
       hit.on('pointerup', (pointer) => {
         if (this.wasDragGesture(pointer)) return;
-        this.showHeroTooltip(hero);
+        this.selectWorldInteractionTarget(pointer);
       });
+      this.applyInteractionDebugStyle(hit, 0xf6c945);
 
       // idle breathing — replace with a real idle animation later
       const spriteScaleY = sprite.getData('baseScaleY') || sprite.scaleY || NPC_SCALE;

@@ -475,7 +475,25 @@ export default class UIScene extends Phaser.Scene {
       renderAction: this.renderAction.bind(this),
     });
 
-    this.panelEl.addEventListener('pointerdown', (event) => event.stopPropagation());
+    this.panelEl.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      this.registry.set('uiPointerBlocked', true);
+    });
+    const releaseUiPointer = () => {
+      window.setTimeout(() => this.registry.set('uiPointerBlocked', false), 0);
+    };
+    this.panelEl.addEventListener('pointerup', (event) => {
+      event.stopPropagation();
+      releaseUiPointer();
+    });
+    this.panelEl.addEventListener('pointercancel', releaseUiPointer);
+    window.addEventListener('pointerup', releaseUiPointer);
+    window.addEventListener('pointercancel', releaseUiPointer);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      window.removeEventListener('pointerup', releaseUiPointer);
+      window.removeEventListener('pointercancel', releaseUiPointer);
+      this.registry.set('uiPointerBlocked', false);
+    });
     this.panelEl.addEventListener('click', (event) => {
       event.stopPropagation();
       const close = event.target.closest('.gwg-panel-close');
@@ -588,8 +606,8 @@ export default class UIScene extends Phaser.Scene {
 
   showHtmlPanel(payload = {}, ledger = false) {
     if (!this.panelEl) return;
-    this.setWorldInputBlocked(true);
     const isBuildCatalog = payload.panelType === 'build-catalog';
+    this.setWorldInputBlocked(isBuildCatalog || ledger);
     this.panelEl.className = `gwg-panel${ledger ? ' gwg-ledger' : ''}${isBuildCatalog ? ' gwg-build-catalog' : ''}`;
     this.panelTitleEl.textContent = payload.title || 'Inspector';
     this.panelSubtitleEl.textContent = payload.subtitle || '';
