@@ -70,6 +70,7 @@ export default class UIScene extends Phaser.Scene {
       this.flashDayBanner(value);
     });
     this.game.events.on('gwg-event', this.queueEvent, this);
+    this.game.events.on('gwg-day-summary', this.showDaySummary, this);
     this.game.events.on('gwg-achievement', this.showAchievementToast, this);
     this.game.events.on('gwg-cycle-done', this.enableCycleButton, this);
     this.game.events.on('gwg-cycle-start', this.lockCycleButton, this);
@@ -81,6 +82,7 @@ export default class UIScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-ESC', this.closeHtmlPanel, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off('gwg-event', this.queueEvent, this);
+      this.game.events.off('gwg-day-summary', this.showDaySummary, this);
       this.game.events.off('gwg-achievement', this.showAchievementToast, this);
       this.game.events.off('gwg-cycle-done', this.enableCycleButton, this);
       this.game.events.off('gwg-cycle-start', this.lockCycleButton, this);
@@ -122,10 +124,14 @@ export default class UIScene extends Phaser.Scene {
       x += 30 + text.width + 120; // generous fixed spacing; text length varies little
     }
 
+    // clicking the day counter reopens the latest day report
     this.dayText = this.add.text(WIDTH - 16, 22, 'Day 1', {
       fontFamily: FONT, fontSize: '16px', fontStyle: 'bold', color: '#fff6dc',
       stroke: '#0c1118', strokeThickness: 2,
-    }).setOrigin(1, 0.5);
+    }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
+    this.dayText.on('pointerover', () => this.dayText.setColor('#ffe08a'));
+    this.dayText.on('pointerout', () => this.dayText.setColor('#fff6dc'));
+    this.dayText.on('pointerup', () => this.game.events.emit('gwg-open-report'));
 
     this.warningText = this.add.text(16, 50, '', {
       fontFamily: FONT,
@@ -254,8 +260,8 @@ export default class UIScene extends Phaser.Scene {
   buildHelperText() {
     const hasTouch = this.sys.game.device.input.touch;
     const text = hasTouch
-      ? 'Drag to pan - Build roads/services - Tap heroes - Skip Day'
-      : 'Drag/WASD to pan - Build roads/services - Inspect heroes - Skip Day';
+      ? 'Drag to pan - Pinch or +/- to zoom - Build roads/services - Tap heroes'
+      : 'Drag/WASD to pan - Wheel to zoom - Build roads/services - Inspect heroes';
     this.helperText = this.add.text(WIDTH / 2, 54, text, {
       fontFamily: FONT,
       fontSize: '12px',
@@ -372,6 +378,14 @@ export default class UIScene extends Phaser.Scene {
     this.makeUtilityButton(466, HEIGHT - 64, 'Reset', 'gwg-reset', 70);
     this.makeUtilityButton(548, HEIGHT - 64, 'Build', 'gwg-open-build', 74);
     this.makeUtilityButton(626, HEIGHT - 64, 'Roads', 'gwg-open-roads', 70);
+    // camera zoom lives on the right edge, clear of panels and the day button
+    const zoomIn = this.makeUtilityButton(WIDTH - 26, HEIGHT - 210, '+', 'gwg-zoom', 36, 1);
+    const zoomOut = this.makeUtilityButton(WIDTH - 26, HEIGHT - 170, '-', 'gwg-zoom', 36, -1);
+    for (const [button, iconKey] of [[zoomIn, 'ui_zoom_in'], [zoomOut, 'ui_zoom_out']]) {
+      if (!this.textures.exists(iconKey)) continue;
+      button.text.setVisible(false);
+      this.add.image(button.bg.x, button.bg.y, iconKey).setScale(0.62).setDepth(button.text.depth);
+    }
   }
 
   buildTownLedgerButton() {
@@ -655,11 +669,12 @@ export default class UIScene extends Phaser.Scene {
     if (!this.panelEl) return;
     const isBuildCatalog = payload.panelType === 'build-catalog';
     const isTownLedger = payload.panelType === 'town-ledger';
+    const isDayReport = payload.panelType === 'day-report';
     if (this.currentHtmlPanelType === 'town-ledger') {
       this.townLedgerScrollTop = this.panelBodyEl.scrollTop;
     }
-    this.setWorldInputBlocked(isBuildCatalog || ledger);
-    this.panelEl.className = `gwg-panel${ledger ? ' gwg-ledger' : ''}${isBuildCatalog ? ' gwg-build-catalog' : ''}${isTownLedger ? ' gwg-town-ledger' : ''}`;
+    this.setWorldInputBlocked(isBuildCatalog || ledger || isDayReport);
+    this.panelEl.className = `gwg-panel${ledger ? ' gwg-ledger' : ''}${isBuildCatalog ? ' gwg-build-catalog' : ''}${isTownLedger ? ' gwg-town-ledger' : ''}${isDayReport ? ' gwg-day-report' : ''}`;
     this.panelTitleEl.textContent = payload.title || 'Inspector';
     this.panelSubtitleEl.textContent = payload.subtitle || '';
     this.currentHtmlPanelType = payload.panelType || (ledger ? 'ledger' : 'inspector');
@@ -742,6 +757,48 @@ export default class UIScene extends Phaser.Scene {
       yoyo: true,
       hold: 2100,
       onComplete: () => toast.destroy(),
+    });
+  }
+
+  // compact end-of-day banner: quiet days no longer open the full report panel
+  showDaySummary({ day, summary } = {}) {
+    this.daySummaryGroup?.destroy(true);
+    const icon = this.textures.exists('ui_dayreport_icon') ? 'ui_dayreport_icon' : null;
+    const container = this.add.container(WIDTH / 2, 132).setDepth(6800);
+    const label = this.add.text(icon ? 14 : 0, -8, `Day ${day} complete   ${summary}`, {
+      fontFamily: FONT, fontSize: '14px', fontStyle: 'bold', color: '#fff6dc',
+      stroke: '#0c1118', strokeThickness: 3,
+    }).setOrigin(0.5, 0.5);
+    const open = this.add.text(icon ? 14 : 0, 12, '[ Open Report ]', {
+      fontFamily: FONT, fontSize: '12px', fontStyle: 'bold', color: '#ffe08a',
+      stroke: '#0c1118', strokeThickness: 3,
+    }).setOrigin(0.5, 0.5).setInteractive({ useHandCursor: true });
+    const width = Math.max(label.width, open.width) + (icon ? 58 : 24);
+    const bg = this.add.rectangle(icon ? 7 : 0, 2, width, 52, 0x141a24, 0.92)
+      .setStrokeStyle(1, 0xbf8a38, 0.9);
+    container.add([bg, label, open]);
+    if (icon) {
+      container.add(this.add.image(-width / 2 + 26, 2, icon).setScale(0.7));
+    }
+    open.on('pointerup', () => {
+      this.game.events.emit('gwg-open-report');
+      this.daySummaryGroup?.destroy(true);
+      this.daySummaryGroup = null;
+    });
+    container.setAlpha(0);
+    this.tweens.add({ targets: container, alpha: 1, duration: 220 });
+    this.daySummaryGroup = container;
+    this.time.delayedCall(8000, () => {
+      if (this.daySummaryGroup !== container) return;
+      this.tweens.add({
+        targets: container,
+        alpha: 0,
+        duration: 450,
+        onComplete: () => {
+          if (this.daySummaryGroup === container) this.daySummaryGroup = null;
+          container.destroy(true);
+        },
+      });
     });
   }
 

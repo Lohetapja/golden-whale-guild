@@ -53,6 +53,7 @@ export default class BuildMenuPanel {
         data-gwg-id="${this.escapeHtml(tab.id)}"
         aria-pressed="${tab.active ? 'true' : 'false'}"
       >
+        ${tab.icon ? `<img class="gwg-build-tab-icon" src="${this.escapeHtml(tab.icon)}" alt="" />` : ''}
         <span>${this.escapeHtml(tab.label)}</span>
         <small>${this.escapeHtml(tab.count ?? '')}</small>
       </button>

@@ -2,13 +2,31 @@ export const GRID_CONFIG = {
   tileSize: 48,
   originX: 48,
   originY: 48,
-  columns: 28,
-  rows: 15,
+  columns: 56,
+  rows: 32,
   zones: {
+    // west/east keep their original rectangles so existing saves stay valid.
     west: { minX: 0, maxX: 19, minY: 0, maxY: 14 },
     east: { minX: 20, maxX: 27, minY: 0, maxY: 14 },
+    south: { minX: 0, maxX: 27, minY: 15, maxY: 31 },
+    frontier: { minX: 28, maxX: 55, minY: 0, maxY: 14 },
+    southeast: { minX: 28, maxX: 55, minY: 15, maxY: 31 },
   },
 };
+
+// Pixel size of the buildable world (grid plus a one-origin margin on each side).
+export const GRID_WORLD = {
+  width: GRID_CONFIG.originX * 2 + GRID_CONFIG.columns * GRID_CONFIG.tileSize,
+  height: GRID_CONFIG.originY * 2 + GRID_CONFIG.rows * GRID_CONFIG.tileSize,
+};
+
+// Purchasable land, in the order the town is expected to grow.
+export const EXPANSION_ZONES = [
+  { id: 'east', name: 'Eastern Lot', cost: 900, threat: 4, blurb: 'Room for shops and one questionable kiosk.' },
+  { id: 'south', name: 'Southern Fields', cost: 1600, threat: 5, blurb: 'Flat, sunny, and zoned for future districts.' },
+  { id: 'frontier', name: 'Eastern Frontier', cost: 2400, threat: 7, blurb: 'Far enough that the monsters call it their side.' },
+  { id: 'southeast', name: 'Far Meadows', cost: 3200, threat: 8, blurb: 'Premium emptiness. The surveyor wept with joy.' },
+];
 
 export const ROAD_TYPES = {
   dirt: {

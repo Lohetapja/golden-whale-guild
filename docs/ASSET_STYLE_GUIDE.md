@@ -41,6 +41,23 @@ premium-economy edge. New assets should match the first PixelLab reference set:
 - Keep generated Phaser placeholder art as fallback/debug art.
 - If an asset is missing, the game must still load and use the placeholder.
 
+## 2026-07 Reference Additions
+
+The July 2026 pass established these as additional style anchors:
+
+- Buildings: `building_bank_debt_office.png`, `building_gem_exchange.png`,
+  `building_vip_lounge.png` - slightly angled, detailed, grounded 160px
+  silhouettes. New buildings should match this angle and detail level.
+- Road tiles: `tiles/road_dirt.png`, `road_stone.png`, `road_premium.png` -
+  48px seamless top-down fills used by the textured road renderer.
+- Items: 64px satirical shop icons in `items/` with a shared warm palette.
+- Monsters: 64px cute-but-dangerous sprites in `monsters/`.
+- UI icons: 40px warm gold/brown icons in `ui/`.
+
+Prompt template that produced consistent results (multi-object shots):
+"<category description>, cozy pixel art, warm palette, transparent
+background, no text. 1). <item> 2). <item> ..." at size 40/64/160.
+
 ## Golden Whale Rule
 
 The Golden Whale Milking Station should remain the strongest visual identity in

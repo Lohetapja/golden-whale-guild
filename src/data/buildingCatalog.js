@@ -1,10 +1,13 @@
-const action = (id, label, summary, cost, deltas, heroEffect = null) => ({
+// icon is an item manifest key (item_*); the inspector shows it next to the
+// action line when the texture/file exists, and falls back to text otherwise
+const action = (id, label, summary, cost, deltas, heroEffect = null, icon = null) => ({
   id,
   label,
   summary,
   cost,
   deltas,
   heroEffect,
+  icon,
 });
 
 const core = (
@@ -46,6 +49,11 @@ export const BUILDING_CATALOG = [
   core('training', 'Training Yard', 'Recovery / Support', 360, { w: 3, h: 2 }, 'Turns time and effort into suspiciously modest numbers.'),
   core('market', 'Market', 'Economy / Shady', 240, { w: 2, h: 2 }, 'Steady gold with optional dynamic suffering.', {
     kind: 'mixed',
+    actions: [
+      action('sell_loot', 'Sell Hero Loot', '+Gold from surplus loot.', 0, { gold: 110 }, null, 'item_gem_bag'),
+      action('buy_supplies', 'Buy Supplies', '+Morale and service quality.', 90, { morale: 2 }, 'quality', 'item_herb_bundle'),
+      action('fair_equipment', 'Stock Fair Equipment', '+Trust, honest hero Power.', 140, { trust: 2 }, 'honestPower', 'item_basic_armor'),
+    ],
   }),
   core('dungeon', 'Dungeon Gate', 'Defense / Missions', 500, { w: 3, h: 2 }, 'Quest access, threat control, and a door monsters respect selectively.', {
     kind: 'mixed',
@@ -53,6 +61,12 @@ export const BUILDING_CATALOG = [
   core('whale', 'Golden Whale Milking Station', 'Premium', 680, { w: 3, h: 3 }, 'Fast gold, premium power, and measurable moral distance.', {
     kind: 'shady',
     flavor: 'Available immediately because temptation tested well.',
+    actions: [
+      action('premium_weapon', 'Sell Premium Weapon', '+Gold, whale Power, +Envy.', 0, { gold: 240, corruption: 3, trust: -2 }, 'whalePower', 'item_sword_unfair_advantage'),
+      action('morale_boost', 'Sell Morale Boost', '+Gold, whale Morale.', 0, { gold: 160, corruption: 2 }, 'whaleMorale', 'item_confidence_booster_soup'),
+      action('token_pack', 'Sell Whale Token Pack', 'Large +Gold, +Corruption.', 0, { gold: 300, corruption: 4, trust: -2 }, null, 'item_whale_token_pack'),
+      action('optional_bundle', '"Optional" Convenience Bundle', 'Huge +Gold, -Trust, whale Power.', 0, { gold: 380, trust: -4, corruption: 5 }, 'whalePower', 'item_deluxe_struggle_bundle'),
+    ],
   }),
 
   core('inn', 'Inn', 'Rest / Housing', 350, { w: 2, h: 2 }, 'Warm beds for heroes with enough dignity left to request blankets.', {
@@ -75,9 +89,9 @@ export const BUILDING_CATALOG = [
     effect: '+12 hero capacity; modest recovery at practical prices.',
     flavor: 'More beds, fewer pillows, identical dreams of loot.',
     actions: [
-      action('bunks', 'Add Bunk Beds', '+3 capacity, -Morale.', 100, { morale: -1 }, 'capacityLarge'),
+      action('bunks', 'Add Bunk Beds', '+3 capacity, -Morale.', 100, { morale: -1 }, 'capacityLarge', 'item_budget_bunk_pass'),
       action('cut_maintenance', 'Cut Maintenance', '+Gold, -Trust, -Morale.', 0, { gold: 150, trust: -2, morale: -2 }),
-      action('cheap_rest', 'Offer Cheap Rest', '+Trust, +Morale, costs Gold.', 80, { trust: 2, morale: 4 }),
+      action('cheap_rest', 'Offer Cheap Rest', '+Trust, +Morale, costs Gold.', 80, { trust: 2, morale: 4 }, null, 'item_budget_bunk_pass'),
     ],
   }),
   core('premium_lodge', 'Premium Lodge', 'Rest / Housing', 900, { w: 3, h: 2 }, 'Luxury recovery where pillows have account managers.', {
@@ -88,9 +102,9 @@ export const BUILDING_CATALOG = [
     effect: 'Whales recover faster; +Gold, +Corruption, +Envy.',
     flavor: 'Every pillow includes a small convenience fee.',
     actions: [
-      action('luxury_recovery', 'Luxury Recovery', '+Gold; whales gain Morale.', 0, { gold: 220, corruption: 2 }, 'whaleMorale'),
-      action('pillow_fee', 'Premium Pillow Fee', '+Gold, -Trust.', 0, { gold: 280, trust: -3, corruption: 2 }),
-      action('whale_rest', 'Whale-Only Rest', '+Whale Power, +Envy.', 120, { trust: -2 }, 'whalePower'),
+      action('luxury_recovery', 'Luxury Recovery', '+Gold; whales gain Morale.', 0, { gold: 220, corruption: 2 }, 'whaleMorale', 'item_deluxe_potion'),
+      action('pillow_fee', 'Premium Pillow Fee', '+Gold, -Trust.', 0, { gold: 280, trust: -3, corruption: 2 }, null, 'item_luxury_pillow'),
+      action('whale_rest', 'Whale-Only Rest', '+Whale Power, +Envy.', 120, { trust: -2 }, 'whalePower', 'item_premium_knees'),
     ],
   }),
   core('potion_shop', 'Potion Shop', 'Recovery / Support', 400, { w: 2, h: 2 }, 'Mission recovery bottled in colors not approved by nature.', {
@@ -99,9 +113,9 @@ export const BUILDING_CATALOG = [
     effect: 'Improves quest survival and softens failure morale damage.',
     flavor: 'The purple one is either medicine or a business model.',
     actions: [
-      action('healing', 'Brew Healing Potions', '+Morale, better recovery.', 70, { morale: 5 }, 'healWeak'),
-      action('questionable', 'Sell Questionable Potion', '+Gold, +Corruption.', 0, { gold: 150, corruption: 3 }),
-      action('stock_herbs', 'Stock Recovery Herbs', '+Service quality.', 100, {}, 'quality'),
+      action('healing', 'Brew Healing Potions', '+Morale, better recovery.', 70, { morale: 5 }, 'healWeak', 'item_healing_potion'),
+      action('questionable', 'Sell Questionable Potion', '+Gold, +Corruption.', 0, { gold: 150, corruption: 3 }, null, 'item_risky_potion'),
+      action('stock_herbs', 'Stock Recovery Herbs', '+Service quality.', 100, {}, 'quality', 'item_herb_bundle'),
     ],
   }),
   core('mentor_hall', 'Mentor Hall', 'Recovery / Support', 550, { w: 2, h: 2 }, 'Patient teachers for heroes still willing to learn slowly.', {
@@ -144,10 +158,10 @@ export const BUILDING_CATALOG = [
     effect: 'Generates debt income; increases Corruption and debt events.',
     flavor: 'The contract smiles only after the signature.',
     actions: [
-      action('loan', 'Offer Loan', '+Gold, hero Debt, +Corruption.', 0, { gold: 180, corruption: 2 }, 'addDebt'),
-      action('interest', 'Increase Interest', '+Gold, -Trust, -Morale.', 0, { gold: 250, trust: -3, morale: -2 }, 'addDebtLarge'),
-      action('forgive', 'Forgive Debt', '+Trust, +Morale, costs Gold.', 180, { trust: 4, morale: 3 }, 'reduceDebt'),
-      action('refinance', 'Refinance Shamefully', '+Gold, rearranged suffering.', 0, { gold: 120, corruption: 3 }, 'shuffleDebt'),
+      action('loan', 'Offer Loan', '+Gold, hero Debt, +Corruption.', 0, { gold: 180, corruption: 2 }, 'addDebt', 'item_contract_bundle'),
+      action('interest', 'Increase Interest', '+Gold, -Trust, -Morale.', 0, { gold: 250, trust: -3, morale: -2 }, 'addDebtLarge', 'item_legendary_receipt'),
+      action('forgive', 'Forgive Debt', '+Trust, +Morale, costs Gold.', 180, { trust: 4, morale: 3 }, 'reduceDebt', 'item_shame_coin_pouch'),
+      action('refinance', 'Refinance Shamefully', '+Gold, rearranged suffering.', 0, { gold: 120, corruption: 3 }, 'shuffleDebt', 'item_cursed_coupon'),
     ],
   }),
   core('gem_exchange', 'Gem Exchange', 'Economy / Shady', 600, { w: 2, h: 1 }, 'A glowing booth that converts ordinary gold into premium confusion.', {
@@ -157,9 +171,9 @@ export const BUILDING_CATALOG = [
     effect: 'Premium trades generate Gold and Corruption.',
     flavor: 'The exchange rate is dynamic, which means it can smell fear.',
     actions: [
-      action('convert', 'Convert Gold to Tokens', '+Premium item chance, costs Gold.', 180, { corruption: 2 }, 'premiumItem'),
-      action('dynamic', 'Dynamic Gem Pricing', '+Gold, -Trust.', 0, { gold: 230, trust: -3, corruption: 3 }),
-      action('best_value', 'Best Value Pack', '+Gold, +Corruption, +Envy.', 0, { gold: 300, corruption: 5, trust: -3 }, 'whalePower'),
+      action('convert', 'Convert Gold to Tokens', '+Premium item chance, costs Gold.', 180, { corruption: 2 }, 'premiumItem', 'item_whale_token_pack'),
+      action('dynamic', 'Dynamic Gem Pricing', '+Gold, -Trust.', 0, { gold: 230, trust: -3, corruption: 3 }, null, 'item_gem_bag'),
+      action('best_value', 'Best Value Pack', '+Gold, +Corruption, +Envy.', 0, { gold: 300, corruption: 5, trust: -3 }, 'whalePower', 'item_gem_pack'),
     ],
   }),
   core('convenience_office', 'Convenience Office', 'Economy / Shady', 650, { w: 2, h: 2 }, 'Urgent stamps and waiting-time removal shaped exactly like power.', {
@@ -169,9 +183,9 @@ export const BUILDING_CATALOG = [
     effect: 'Produces Gold and reduces friction while Trust files objections.',
     flavor: 'Nothing sold here is power. It merely removes everything before power.',
     actions: [
-      action('skip_queue', 'Skip Queue', '+Gold, -Trust.', 0, { gold: 170, trust: -2, corruption: 2 }),
-      action('permit', 'Fast Track Permit', '+Building growth, costs Gold.', 120, {}, 'buildingProgress'),
-      action('urgent', 'Stamp Urgent Paperwork', '+Gold, +Threat.', 0, { gold: 210, threat: 3 }),
+      action('skip_queue', 'Skip Queue', '+Gold, -Trust.', 0, { gold: 170, trust: -2, corruption: 2 }, null, 'item_queue_skip_relic'),
+      action('permit', 'Fast Track Permit', '+Building growth, costs Gold.', 120, {}, 'buildingProgress', 'item_convenience_permit'),
+      action('urgent', 'Stamp Urgent Paperwork', '+Gold, +Threat.', 0, { gold: 210, threat: 3 }, null, 'item_contract_bundle'),
     ],
   }),
   core('vip_lounge', 'VIP Lounge', 'Premium', 700, { w: 2, h: 2 }, 'Shiny chairs behind a rope that has never met equality.', {
@@ -181,9 +195,9 @@ export const BUILDING_CATALOG = [
     effect: 'Whales spend more; Trust falls and Resentment rises.',
     flavor: 'The chairs are comfortable enough to forget the queue outside.',
     actions: [
-      action('chair', 'Sell Premium Chair', '+Gold, +Corruption.', 0, { gold: 190, corruption: 2 }),
-      action('gala', 'Host Whale Gala', 'Large +Gold, -Trust, +Envy.', 80, { gold: 360, trust: -5, corruption: 4 }, 'whalePower'),
-      action('exclude', 'Exclude Free Heroes', '+Whale Morale, -Town Morale.', 0, { morale: -3, trust: -2 }, 'whaleMorale'),
+      action('chair', 'Sell Premium Chair', '+Gold, +Corruption.', 0, { gold: 190, corruption: 2 }, null, 'item_luxury_pillow'),
+      action('gala', 'Host Whale Gala', 'Large +Gold, -Trust, +Envy.', 80, { gold: 360, trust: -5, corruption: 4 }, 'whalePower', 'item_deluxe_potion'),
+      action('exclude', 'Exclude Free Heroes', '+Whale Morale, -Town Morale.', 0, { morale: -3, trust: -2 }, 'whaleMorale', 'item_premium_knees'),
     ],
   }),
   core('lootbox_kiosk', 'Lootbox Kiosk', 'Premium', 500, { w: 1, h: 1 }, 'A tiny mystery chest with a very large ethics disclaimer.', {
@@ -193,9 +207,9 @@ export const BUILDING_CATALOG = [
     effect: 'Creates premium items, Gold, Corruption, and heroic opinions.',
     flavor: 'The odds are visible to anyone with enchanted legal vision.',
     actions: [
-      action('mystery', 'Open Mystery Chest', 'Premium item chance, costs Gold.', 100, { corruption: 2 }, 'premiumItem'),
-      action('fake_odds', 'Display Fake Odds', '+Gold, -Trust.', 0, { gold: 160, trust: -3, corruption: 3 }),
-      action('disappointment', 'Sell Shiny Disappointment', '+Gold, -Morale.', 0, { gold: 210, morale: -2, corruption: 2 }),
+      action('mystery', 'Open Mystery Chest', 'Premium item chance, costs Gold.', 100, { corruption: 2 }, 'premiumItem', 'item_mystery_chest'),
+      action('fake_odds', 'Display Fake Odds', '+Gold, -Trust.', 0, { gold: 160, trust: -3, corruption: 3 }, null, 'item_fake_odds_flyer'),
+      action('disappointment', 'Sell Shiny Disappointment', '+Gold, -Morale.', 0, { gold: 210, morale: -2, corruption: 2 }, null, 'item_lootbox'),
     ],
   }),
 ];

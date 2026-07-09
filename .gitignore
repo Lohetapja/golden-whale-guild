@@ -160,3 +160,6 @@ temp/
 *.temp
 .DS_Store
 Thumbs.db
+
+# PixelLab generation scratch (contact sheets, candidate downloads)
+.pixellab-tmp/

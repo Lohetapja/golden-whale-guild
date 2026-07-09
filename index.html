@@ -77,6 +77,17 @@
         max-height: none;
         transform: translateX(-50%);
       }
+      .gwg-panel.gwg-day-report {
+        left: 50%;
+        right: auto;
+        top: 76px;
+        width: min(640px, calc(100vw - 48px));
+        max-height: calc(100dvh - 170px);
+        transform: translateX(-50%);
+      }
+      .gwg-day-report .gwg-panel-body {
+        max-height: calc(100dvh - 240px);
+      }
       .gwg-town-ledger .gwg-panel-body {
         box-sizing: border-box;
         height: calc(100% - 61px);
@@ -185,6 +196,13 @@
         color: #fff6dc;
         font-size: 12px;
         line-height: 1.35;
+      }
+      .gwg-build-tab-icon {
+        width: 20px;
+        height: 20px;
+        image-rendering: pixelated;
+        object-fit: contain;
+        flex-shrink: 0;
       }
       .gwg-inline-icon {
         width: 24px;

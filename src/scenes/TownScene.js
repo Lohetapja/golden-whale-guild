@@ -18,10 +18,12 @@ import { getItemByName, getRandomPremiumItem } from '../data/itemCatalog.js';
 import { rollMonster } from '../data/monsters.js';
 import {
   createGridState,
+  EXPANSION_ZONES,
   getFootprintCells,
   gridKey,
   gridToWorld,
   GRID_CONFIG,
+  GRID_WORLD,
   isInsideGrid,
   isTileUnlocked,
   makeLegacyCityState,
@@ -65,9 +67,8 @@ import { resolveInteractionTarget } from '../systems/interactionResolver.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
-const WORLD_WIDTH = TOWN_WORLD.width;
-const WORLD_HEIGHT = TOWN_WORLD.height;
 const PLAZA = TOWN_WORLD.plaza;
+const CAMERA_MAX_ZOOM = 2;
 const ROAD_WIDTH = LAYOUT_CONSTANTS.ROAD_WIDTH;
 const NPC_SCALE = LAYOUT_CONSTANTS.NPC_SCALE;
 const LABEL_FONT_SIZE = LAYOUT_CONSTANTS.LABEL_FONT_SIZE;
@@ -91,6 +92,18 @@ const COMPACT_SPECIAL_LABEL_IDS = new Set(['notice_board']);
 const LEGACY_BUILDING_IDS = new Set([
   'tavern', 'blacksmith', 'guildhall', 'market', 'training', 'whale', 'dungeon',
 ]);
+
+// build menu tab id -> PixelLab tab icon manifest key
+const BUILD_TAB_ICON_KEYS = {
+  roads: 'ui_build_category_roads',
+  core: 'ui_build_category_core',
+  rest: 'ui_build_category_rest',
+  economy: 'ui_build_category_shops',
+  defense: 'ui_build_category_defense',
+  premium: 'ui_build_category_premium',
+  social: 'ui_build_category_social',
+  decorations: 'ui_build_category_decor',
+};
 
 const RESOURCE_THRESHOLDS = {
   trustWarning: 34,
@@ -423,7 +436,6 @@ export default class TownScene extends Phaser.Scene {
     ensureFallbacks(this);
     this.input.mouse?.disableContextMenu();
     this.input.addPointer(2);
-    this.setupCameraControls();
 
     const saved = this.loadSavedState();
     this.cityState = normalizeCityState(saved, () => makeLegacyCityState(
@@ -510,6 +522,12 @@ export default class TownScene extends Phaser.Scene {
     this.pathLinks = TOWN_PATH_LINKS;
     this.pathNodeById = Object.fromEntries(this.pathNodes.map((node) => [node.id, node]));
 
+    // builder cities live on the full expandable grid; the legacy town keeps
+    // its original hand-placed world so nothing floats in empty space
+    this.worldWidth = this.isBuilderCity ? GRID_WORLD.width : TOWN_WORLD.width;
+    this.worldHeight = this.isBuilderCity ? GRID_WORLD.height : TOWN_WORLD.height;
+    this.setupCameraControls();
+
     this.buildTerrain();
     this.buildGridLayer();
     this.buildBuildings();
@@ -564,6 +582,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-time-speed', this.setSimulationSpeed, this);
     this.game.events.on('gwg-expand-land', this.expandLand, this);
     this.game.events.on('gwg-building-action', this.runBuildingAction, this);
+    this.game.events.on('gwg-open-report', this.showCycleReport, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off('gwg-end-day', this.runCycle, this);
       this.game.events.off('gwg-save', this.saveGame, this);
@@ -588,6 +607,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-time-speed', this.setSimulationSpeed, this);
       this.game.events.off('gwg-expand-land', this.expandLand, this);
       this.game.events.off('gwg-building-action', this.runBuildingAction, this);
+      this.game.events.off('gwg-open-report', this.showCycleReport, this);
     });
 
     this.game.events.emit(
@@ -721,15 +741,40 @@ export default class TownScene extends Phaser.Scene {
 
   setupCameraControls() {
     const cam = this.cameras.main;
-    cam.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-    cam.setScroll(
-      Phaser.Math.Clamp(TOWN_WORLD.cameraStart.x, 0, Math.max(0, WORLD_WIDTH - WIDTH)),
-      Phaser.Math.Clamp(TOWN_WORLD.cameraStart.y, 0, Math.max(0, WORLD_HEIGHT - HEIGHT)),
+    cam.setBounds(0, 0, this.worldWidth, this.worldHeight);
+    // never allow zooming out past the world edges
+    this.minZoom = Math.min(
+      CAMERA_MAX_ZOOM,
+      Math.max(WIDTH / this.worldWidth, HEIGHT / this.worldHeight),
     );
+    cam.setZoom(1);
+    if (this.isBuilderCity) {
+      // start centered on the founding western district
+      const west = GRID_CONFIG.zones.west;
+      cam.centerOn(
+        GRID_CONFIG.originX + ((west.minX + west.maxX + 1) / 2) * GRID_CONFIG.tileSize,
+        GRID_CONFIG.originY + ((west.minY + west.maxY + 1) / 2) * GRID_CONFIG.tileSize,
+      );
+    } else {
+      cam.setScroll(
+        Phaser.Math.Clamp(TOWN_WORLD.cameraStart.x, 0, Math.max(0, this.worldWidth - WIDTH)),
+        Phaser.Math.Clamp(TOWN_WORLD.cameraStart.y, 0, Math.max(0, this.worldHeight - HEIGHT)),
+      );
+    }
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D');
     this.cameraDrag = { active: false, moved: false, lastX: 0, lastY: 0 };
+    this.pinchState = null;
+
+    this.input.on('wheel', (pointer, _objects, _dx, dy) => {
+      if (this.registry.get('uiPointerBlocked')) return;
+      this.zoomCamera(dy > 0 ? -1 : 1, pointer);
+    });
+    this.game.events.on('gwg-zoom', this.zoomFromUi, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.game.events.off('gwg-zoom', this.zoomFromUi, this);
+    });
 
     this.input.on('pointerdown', (pointer) => {
       if (this.buildMode) return;
@@ -742,6 +787,7 @@ export default class TownScene extends Phaser.Scene {
 
     this.input.on('pointermove', (pointer) => {
       if (this.buildMode) return;
+      if (this.updatePinchZoom()) return;
       this.updateWorldInteractionHover(pointer);
       if (!this.cameraDrag.active || !pointer.primaryDown) return;
       const dx = pointer.x - this.cameraDrag.lastX;
@@ -749,14 +795,17 @@ export default class TownScene extends Phaser.Scene {
       const total = Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.x, pointer.y);
       if (total > TAP_MOVE_THRESHOLD) this.cameraDrag.moved = true;
       if (this.cameraDrag.moved) {
-        cam.scrollX = Phaser.Math.Clamp(cam.scrollX - dx, 0, Math.max(0, WORLD_WIDTH - WIDTH));
-        cam.scrollY = Phaser.Math.Clamp(cam.scrollY - dy, 0, Math.max(0, WORLD_HEIGHT - HEIGHT));
+        // camera bounds clamp the final scroll; divide by zoom so the world
+        // tracks the pointer 1:1 at any zoom level
+        cam.scrollX -= dx / cam.zoom;
+        cam.scrollY -= dy / cam.zoom;
       }
       this.cameraDrag.lastX = pointer.x;
       this.cameraDrag.lastY = pointer.y;
     });
 
     this.input.on('pointerup', (pointer, over = []) => {
+      this.pinchState = null;
       if (this.registry.get('uiPointerBlocked')) {
         this.cameraDrag.active = false;
         return;
@@ -768,6 +817,50 @@ export default class TownScene extends Phaser.Scene {
     this.input.on('gameout', () => this.clearWorldInteractionHover());
   }
 
+  zoomFromUi(direction) {
+    this.zoomCamera(Number(direction) >= 0 ? 1 : -1, null);
+  }
+
+  zoomCamera(direction, pointer = null) {
+    const cam = this.cameras.main;
+    const factor = direction > 0 ? 1.2 : 1 / 1.2;
+    const next = Phaser.Math.Clamp(cam.zoom * factor, this.minZoom, CAMERA_MAX_ZOOM);
+    if (Math.abs(next - cam.zoom) < 0.0001) return;
+    const focusX = pointer ? pointer.x : cam.width / 2;
+    const focusY = pointer ? pointer.y : cam.height / 2;
+    const worldFocus = cam.getWorldPoint(focusX, focusY);
+    cam.setZoom(next);
+    // keep the world point under the cursor stationary while zooming
+    cam.scrollX = worldFocus.x - cam.width / 2 - (focusX - cam.width / 2) / next;
+    cam.scrollY = worldFocus.y - cam.height / 2 - (focusY - cam.height / 2) / next;
+    if (this.buildMode && this.buildPreviewCell) {
+      const world = gridToWorld(this.buildPreviewCell.x, this.buildPreviewCell.y);
+      this.updateBuildPreview(world.x, world.y);
+    }
+  }
+
+  // two-finger pinch zoom for touch devices; returns true while pinching
+  updatePinchZoom() {
+    const p1 = this.input.pointer1;
+    const p2 = this.input.pointer2;
+    if (!p1?.isDown || !p2?.isDown) {
+      this.pinchState = null;
+      return false;
+    }
+    const distance = Phaser.Math.Distance.Between(p1.x, p1.y, p2.x, p2.y);
+    const cam = this.cameras.main;
+    if (this.pinchState) {
+      const scale = distance / Math.max(1, this.pinchState.distance);
+      const next = Phaser.Math.Clamp(this.pinchState.zoom * scale, this.minZoom, CAMERA_MAX_ZOOM);
+      cam.setZoom(next);
+    } else {
+      this.pinchState = { distance, zoom: cam.zoom };
+    }
+    this.cameraDrag.active = false;
+    this.cameraDrag.moved = true;
+    return true;
+  }
+
   wasDragGesture(pointer) {
     if (!pointer) return this.time.now < (this.suppressTapUntil || 0);
     const dist = Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.x, pointer.y);
@@ -775,12 +868,12 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getVisibleWorldRect() {
-    const cam = this.cameras.main;
+    const view = this.cameras.main.worldView;
     return {
-      left: cam.scrollX,
-      top: cam.scrollY,
-      right: cam.scrollX + WIDTH,
-      bottom: cam.scrollY + HEIGHT,
+      left: view.x,
+      top: view.y,
+      right: view.right,
+      bottom: view.bottom,
     };
   }
 
@@ -1169,6 +1262,7 @@ export default class TownScene extends Phaser.Scene {
     })) : [];
 
     return {
+      panelType: 'day-report',
       title: report?.crises?.length ? `Town Crisis - Day ${this.day}` : `Day ${this.day} Report`,
       subtitle: `${this.getCurrentStage().name} - compact consequences ledger`,
       sections,
@@ -1177,10 +1271,33 @@ export default class TownScene extends Phaser.Scene {
   }
 
   showCycleReport() {
-    if (!this.cycleReport) return;
+    if (!this.cycleReport) {
+      this.game.events.emit('gwg-event', 'No day report yet. The scribe is still sharpening the quill.');
+      return;
+    }
     this.activeInspector = { type: 'report' };
     this.clearSelection(false);
     this.game.events.emit('gwg-inspector-open', this.getCycleReportPayload());
+  }
+
+  // end-of-day: quiet days get a compact banner; policies and crises still
+  // open the full report because they demand a decision
+  presentCycleReport() {
+    if (!this.cycleReport) return;
+    const needsAttention = Boolean(this.getPendingPolicy()) || (this.cycleReport.crises?.length > 0);
+    if (needsAttention) {
+      this.showCycleReport();
+      return;
+    }
+    const deltas = this.getResourceDeltaSummary(this.cycleReport.start || this.resources)
+      .filter((entry) => entry.value !== 0)
+      .slice(0, 4)
+      .map((entry) => `${entry.key.charAt(0).toUpperCase() + entry.key.slice(1)} ${entry.value > 0 ? '+' : ''}${entry.value}`)
+      .join('   ');
+    this.game.events.emit('gwg-day-summary', {
+      day: this.day,
+      summary: deltas || 'A quiet day. Suspiciously quiet.',
+    });
   }
 
   getPendingPolicy() {
@@ -1577,18 +1694,12 @@ export default class TownScene extends Phaser.Scene {
   // --- world ------------------------------------------------------------
 
   buildTerrain() {
-    this.add.tileSprite(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, WORLD_WIDTH, WORLD_HEIGHT, 'grass');
+    this.add.tileSprite(this.worldWidth / 2, this.worldHeight / 2, this.worldWidth, this.worldHeight, 'grass');
 
     if (this.isBuilderCity) {
-      const land = this.add.graphics().setDepth(1);
-      const west = GRID_CONFIG.zones.west;
-      land.fillStyle(0xb8d98a, 0.08);
-      land.fillRect(
-        GRID_CONFIG.originX + west.minX * GRID_CONFIG.tileSize,
-        GRID_CONFIG.originY + west.minY * GRID_CONFIG.tileSize,
-        (west.maxX - west.minX + 1) * GRID_CONFIG.tileSize,
-        (west.maxY - west.minY + 1) * GRID_CONFIG.tileSize,
-      );
+      this.landHighlightGraphics = this.add.graphics().setDepth(1);
+      this.redrawLandHighlight();
+      this.redrawWildernessDressing();
       this.redrawCityRoads();
       return;
     }
@@ -1650,6 +1761,52 @@ export default class TownScene extends Phaser.Scene {
     this.redrawBuildGrid();
   }
 
+  redrawLandHighlight() {
+    if (!this.landHighlightGraphics) return;
+    this.landHighlightGraphics.clear();
+    this.landHighlightGraphics.fillStyle(0xb8d98a, 0.08);
+    for (const zoneId of this.cityState.unlockedZones) {
+      const zone = GRID_CONFIG.zones[zoneId];
+      if (!zone) continue;
+      this.landHighlightGraphics.fillRect(
+        GRID_CONFIG.originX + zone.minX * GRID_CONFIG.tileSize,
+        GRID_CONFIG.originY + zone.minY * GRID_CONFIG.tileSize,
+        (zone.maxX - zone.minX + 1) * GRID_CONFIG.tileSize,
+        (zone.maxY - zone.minY + 1) * GRID_CONFIG.tileSize,
+      );
+    }
+  }
+
+  // locked zones read as wilderness: deterministic prop scatter under the
+  // fog shading, cleared per-zone when the land is purchased
+  redrawWildernessDressing() {
+    if (!this.isBuilderCity) return;
+    if (!this.wildernessContainer) this.wildernessContainer = this.add.container(0, 0).setDepth(55);
+    this.wildernessContainer.removeAll(true);
+    const propKeys = [
+      'object_tree_03', 'object_tree_pine', 'object_tree_autumn', 'object_tree_03',
+      'object_rock_02', 'object_rock_mossy', 'object_bush', 'object_tree_pine',
+    ].filter((key) => this.textures.exists(key));
+    const fallbackKeys = ['prop_tree', 'prop_rock'].filter((key) => this.textures.exists(key));
+    const keys = propKeys.length ? propKeys : fallbackKeys;
+    if (!keys.length) return;
+    for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
+      for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
+        if (isTileUnlocked(x, y, this.cityState.unlockedZones)) continue;
+        const hash = Math.abs((x * 73856093) ^ (y * 19349663)) % 1000;
+        if (hash % 100 >= 8) continue;
+        const world = gridToWorld(x, y);
+        const key = keys[hash % keys.length];
+        const image = this.add.image(
+          world.x + ((hash % 13) - 6),
+          world.y - 10 + ((hash % 7) - 3),
+          key,
+        ).setScale(0.7 + (hash % 5) * 0.05).setAlpha(0.9);
+        this.wildernessContainer.add(image);
+      }
+    }
+  }
+
   redrawLockedLand() {
     if (!this.lockedLandGraphics) return;
     this.lockedLandGraphics.clear();
@@ -1695,9 +1852,18 @@ export default class TownScene extends Phaser.Scene {
 
   redrawCityRoads() {
     if (!this.cityRoadGraphics) this.cityRoadGraphics = this.add.graphics().setDepth(20);
+    if (!this.cityRoadImages) this.cityRoadImages = [];
+    for (const image of this.cityRoadImages) image.destroy();
+    this.cityRoadImages = [];
     const graphics = this.cityRoadGraphics;
     graphics.clear();
     if (!this.isBuilderCity) return;
+
+    const roadTextureByType = {
+      dirt: 'tile_road_dirt',
+      stone: 'tile_road_stone',
+      premium: 'tile_road_premium',
+    };
 
     for (const road of this.cityState.roads) {
       const type = ROAD_TYPES[road.type] || ROAD_TYPES.dirt;
@@ -1707,6 +1873,22 @@ export default class TownScene extends Phaser.Scene {
       const mask = getRoadMask(this.gridCells, road.x, road.y);
       const variant = getRoadVariant(mask);
       const plaza = isRoadPlazaTile(this.gridCells, road.x, road.y);
+      const textureKey = resolveTexture(this, roadTextureByType[road.type] || '', null);
+
+      if (textureKey) {
+        // textured roads: plaza interiors fill the whole tile so 2x2+ blocks
+        // become solid slabs instead of donuts; loose tiles keep a small
+        // grass shoulder on unconnected sides
+        const rect = getRoadSurfaceRect(left, top, GRID_CONFIG.tileSize, mask, plaza ? 0 : 4);
+        graphics.fillStyle(type.edgeColor, 0.5);
+        graphics.fillRect(rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2);
+        const image = this.add.image(left, top, textureKey).setOrigin(0, 0).setDepth(20.5);
+        image.setCrop(rect.x - left, rect.y - top, rect.width, rect.height);
+        this.cityRoadImages.push(image);
+        continue;
+      }
+
+      // fallback: procedural rectangles when road tile art is missing
       const edgeRect = getRoadSurfaceRect(left, top, GRID_CONFIG.tileSize, mask, plaza ? 3 : 4);
       const surfaceRect = getRoadSurfaceRect(left, top, GRID_CONFIG.tileSize, mask, plaza ? 4 : 8);
 
@@ -2138,6 +2320,14 @@ export default class TownScene extends Phaser.Scene {
       ['Barrels', 'prop_barrel', 'Storage and approved complaint-adjacent furniture.'],
       ['Crates', 'prop_crate', 'Market clutter with a municipal permit.'],
       ['Signs', 'prop_signpost', 'Directions for heroes who reject conceptual access.'],
+      ['Wells', 'object_well', 'Fresh water with no hydration subscription.'],
+      ['Carts', 'object_cart', 'Logistics props awaiting a logistics economy.'],
+      ['Statues', 'object_statue', 'Civic pride cast in affordable stone.'],
+      ['Campfires', 'object_campfire', 'Ambient warmth for heroes between paychecks.'],
+      ['Market Stalls', 'object_market_stall', 'Pop-up commerce with pop-up ethics.'],
+      ['Premium Lamps', 'object_lamp_premium', 'Street lighting for the gilded district.'],
+      ['Braziers', 'object_brazier', 'Watch post lighting that doubles as drama.'],
+      ['Rope Barriers', 'object_rope_barrier', 'Soft security for hard exclusivity.'],
     ];
     return decorations.map(([title, assetKey, description]) => ({
       id: assetKey,
@@ -2174,6 +2364,7 @@ export default class TownScene extends Phaser.Scene {
       costLabel: `${road.cost}g / tile`,
       stateLabel: this.resources.gold >= road.cost ? 'READY' : 'SHORT',
       kind: road.id === 'premium' ? 'shady' : 'fair',
+      preview: this.getAssetPreviewUrl(`tile_road_${road.id}`),
       swatch: `#${road.color.toString(16).padStart(6, '0')}`,
       description: road.description,
       footprintLabel: '1x1',
@@ -2258,6 +2449,7 @@ export default class TownScene extends Phaser.Scene {
       tabs: BUILD_MENU_CATEGORIES.map((entry) => ({
         id: entry.id,
         label: entry.label,
+        icon: this.getAssetPreviewUrl(BUILD_TAB_ICON_KEYS[entry.id] || ''),
         count: entry.id === 'roads'
           ? Object.keys(ROAD_TYPES).length
           : entry.id === 'decorations'
@@ -2269,11 +2461,7 @@ export default class TownScene extends Phaser.Scene {
       rows,
       detail,
       actions: [
-        {
-          label: 'Expand Eastern Lot - 900g',
-          event: 'gwg-expand-land',
-          disabled: this.cityState.unlockedZones.includes('east') || this.resources.gold < 900,
-        },
+        ...this.getExpansionActions(),
         { label: 'Cancel Build Mode', event: 'gwg-cancel-build' },
       ],
     };
@@ -2298,19 +2486,40 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.emit('gwg-ledger-open', this.getBuildMenuPayload(categoryId));
   }
 
-  expandLand() {
-    if (this.cityState.unlockedZones.includes('east')) return;
-    if (this.resources.gold < 900) {
-      this.game.events.emit('gwg-event', 'Expansion costs 900g. The surveyor does not accept optimism.');
+  // only the next locked zone (in expansion order) is offered, so the town
+  // grows outward instead of buying random far corners first
+  getNextExpansionZone() {
+    return EXPANSION_ZONES.find((zone) => !this.cityState.unlockedZones.includes(zone.id)) || null;
+  }
+
+  getExpansionActions() {
+    const zone = this.getNextExpansionZone();
+    if (!zone) return [{ label: 'All land unlocked', event: 'gwg-cancel-build', disabled: true }];
+    return [{
+      label: `Expand: ${zone.name} - ${zone.cost}g`,
+      event: 'gwg-expand-land',
+      id: zone.id,
+      disabled: this.resources.gold < zone.cost,
+    }];
+  }
+
+  expandLand(zoneId) {
+    const zone = EXPANSION_ZONES.find((entry) => entry.id === zoneId)
+      || this.getNextExpansionZone();
+    if (!zone || this.cityState.unlockedZones.includes(zone.id)) return;
+    if (this.resources.gold < zone.cost) {
+      this.game.events.emit('gwg-event', `Expansion costs ${zone.cost}g. The surveyor does not accept optimism.`);
       return;
     }
-    this.applyDeltas({ gold: -900, threat: 4 });
-    this.cityState.unlockedZones.push('east');
+    this.applyDeltas({ gold: -zone.cost, threat: zone.threat });
+    this.cityState.unlockedZones.push(zone.id);
     for (const cell of this.gridCells.values()) {
       cell.unlocked = isTileUnlocked(cell.x, cell.y, this.cityState.unlockedZones);
     }
     this.redrawLockedLand();
-    const text = 'New land unlocked. The monsters noticed the paperwork.';
+    this.redrawLandHighlight();
+    this.redrawWildernessDressing();
+    const text = `${zone.name} unlocked. ${zone.blurb} The monsters noticed the paperwork.`;
     this.game.events.emit('gwg-event', text);
     this.addTownLog(text, 'unlock');
     this.saveGame(false);
@@ -3176,6 +3385,13 @@ export default class TownScene extends Phaser.Scene {
       .filter((place) => this.getUpgradeInfo(place).cost || getUpgradeDef(place.id));
   }
 
+  // resolve an item manifest key to its file path, only when the art loaded
+  getItemIconPath(assetKey) {
+    if (!assetKey || !this.textures.exists(assetKey)) return null;
+    const entry = ASSET_MANIFEST.find((slot) => slot.key === assetKey);
+    return entry ? entry.path : null;
+  }
+
   getPlaceInspectorPayload(place) {
     const info = this.getUpgradeInfo(place);
     const catalog = getBuildingCatalogEntry(place.id);
@@ -3253,10 +3469,11 @@ export default class TownScene extends Phaser.Scene {
             ],
         },
         ...((catalog?.actions || []).length ? [{
-          title: 'Shop Actions',
-          lines: catalog.actions.map((shopAction) => (
-            `${shopAction.label}: ${shopAction.summary}${shopAction.cost ? ` Cost ${shopAction.cost}g.` : ''}`
-          )),
+          title: 'For Sale / Services',
+          lines: catalog.actions.map((shopAction) => ({
+            text: `${shopAction.label}: ${shopAction.summary}${shopAction.cost ? ` Cost ${shopAction.cost}g.` : ''}`,
+            icon: this.getItemIconPath(shopAction.icon),
+          })),
         }] : []),
       ],
       actions,
@@ -5013,10 +5230,11 @@ export default class TownScene extends Phaser.Scene {
     const right = this.cursors?.right?.isDown || this.wasd?.D?.isDown;
     const up = this.cursors?.up?.isDown || this.wasd?.W?.isDown;
     const down = this.cursors?.down?.isDown || this.wasd?.S?.isDown;
-    if (left) cam.scrollX = Phaser.Math.Clamp(cam.scrollX - speed, 0, Math.max(0, WORLD_WIDTH - WIDTH));
-    if (right) cam.scrollX = Phaser.Math.Clamp(cam.scrollX + speed, 0, Math.max(0, WORLD_WIDTH - WIDTH));
-    if (up) cam.scrollY = Phaser.Math.Clamp(cam.scrollY - speed, 0, Math.max(0, WORLD_HEIGHT - HEIGHT));
-    if (down) cam.scrollY = Phaser.Math.Clamp(cam.scrollY + speed, 0, Math.max(0, WORLD_HEIGHT - HEIGHT));
+    // camera bounds clamp the result; scale by zoom so panning feels constant
+    if (left) cam.scrollX -= speed / cam.zoom;
+    if (right) cam.scrollX += speed / cam.zoom;
+    if (up) cam.scrollY -= speed / cam.zoom;
+    if (down) cam.scrollY += speed / cam.zoom;
 
     // depth-sort heroes by their feet; talking heroes pop above rooftops
     for (const hero of this.heroes) {
@@ -5689,7 +5907,7 @@ export default class TownScene extends Phaser.Scene {
       this.publishTownHint();
       this.refreshActivePanel();
       this.saveGame(false);
-      this.showCycleReport();
+      this.presentCycleReport();
       this.game.events.emit('gwg-cycle-done');
     });
 

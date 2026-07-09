@@ -1,4 +1,4 @@
-# Golden Whale Guild Asset Catalog
+﻿# Golden Whale Guild Asset Catalog
 
 Generated assets are optional and must stay routed through
 `src/data/assetManifest.js`. If a file is missing, the runtime placeholder in
@@ -19,14 +19,14 @@ Generated assets are optional and must stay routed through
 | `building_hero_hostel` | `public/assets/buildings/building_hero_hostel.png` | Buildable Hero Hostel | PixelLab asset, integrated |
 | `building_potion_shop` | `public/assets/buildings/building_potion_shop.png` | Buildable Potion Shop | PixelLab asset, integrated |
 | `building_watchtower` | `public/assets/buildings/building_watchtower.png` | Buildable Watchtower | PixelLab asset, integrated |
-| `building_bank_debt_office` | `public/assets/buildings/building_bank_debt_office.png` | Buildable Bank / Debt Office | Manifest slot; generated job was not retained, fallback active |
-| `building_mentor_hall` | `public/assets/buildings/building_mentor_hall.png` | Buildable Mentor Hall | Manifest slot; generated job was not retained, fallback active |
-| `building_arena` | `public/assets/buildings/building_arena.png` | Buildable Arena | Manifest slot; generated job was not retained, fallback active |
-| `building_vip_lounge` | `public/assets/buildings/building_vip_lounge.png` | Buildable VIP Lounge | Manifest slot; generated job was not retained, fallback active |
-| `building_premium_lodge` | `public/assets/buildings/building_premium_lodge.png` | Buildable Premium Lodge | Manifest slot; fallback active |
-| `building_lootbox_kiosk` | `public/assets/buildings/building_lootbox_kiosk.png` | Buildable Lootbox Kiosk | Manifest slot; fallback active |
-| `building_gem_exchange` | `public/assets/buildings/building_gem_exchange.png` | Buildable Gem Exchange | Manifest slot; fallback active |
-| `building_convenience_office` | `public/assets/buildings/building_convenience_office.png` | Buildable Convenience Office | Manifest slot; fallback active |
+| `building_bank_debt_office` | `public/assets/buildings/building_bank_debt_office.png` | Buildable Bank / Debt Office | PixelLab asset, integrated (2026-07 pass) |
+| `building_mentor_hall` | `public/assets/buildings/building_mentor_hall.png` | Buildable Mentor Hall | PixelLab asset, integrated (2026-07 pass) |
+| `building_arena` | `public/assets/buildings/building_arena.png` | Buildable Arena | PixelLab asset, integrated (2026-07 pass) |
+| `building_vip_lounge` | `public/assets/buildings/building_vip_lounge.png` | Buildable VIP Lounge | PixelLab asset, integrated (2026-07 pass) |
+| `building_premium_lodge` | `public/assets/buildings/building_premium_lodge.png` | Buildable Premium Lodge | PixelLab asset, integrated (2026-07 pass) |
+| `building_lootbox_kiosk` | `public/assets/buildings/building_lootbox_kiosk.png` | Buildable Lootbox Kiosk | PixelLab asset, integrated (2026-07 pass) |
+| `building_gem_exchange` | `public/assets/buildings/building_gem_exchange.png` | Buildable Gem Exchange | PixelLab asset, integrated (2026-07 pass) |
+| `building_convenience_office` | `public/assets/buildings/building_convenience_office.png` | Buildable Convenience Office | PixelLab asset, integrated (2026-07 pass) |
 
 ## Special Locations
 
@@ -144,3 +144,85 @@ download limit.
 | `ui_panel_dark` | `public/assets/ui/ui_panel_dark.png` | Manifest-ready panel slot | PixelLab job stalled at 95%; fallback remains active until file exists |
 | `ui_button` | `public/assets/ui/ui_button_normal.png` | Manifest-ready button slot | PixelLab job stalled at 95%; fallback remains active until file exists |
 | `ui_close_x` | `public/assets/ui/ui_close_x.png` | Manifest-ready close button slot | PixelLab job timed out; fallback remains active until file exists |
+
+
+## 2026-07 PixelLab Pass
+
+All assets below were generated in structured PixelLab batches (July 2026) and
+are wired through `src/data/assetManifest.js`. Missing files still fall back to
+runtime placeholders.
+
+### Road Tiles (`public/assets/tiles/`)
+
+| Asset key | File | Where used | Notes |
+| --- | --- | --- | --- |
+| `tile_road_dirt` | `road_dirt.png` | Textured dirt road fill | tiles-pro, 48px top-down |
+| `tile_road_stone` | `road_stone.png` | Textured stone road fill | tiles-pro, 48px top-down |
+| `tile_road_premium` | `road_premium.png` | Textured gold road fill | tiles-pro, 48px top-down |
+| `tile_road_plaza` | `road_plaza.png` | Plaza paving (reserved) | tiles-pro, 48px top-down |
+| `tile_road_plaza_star` | `road_plaza_star.png` | Ornate plaza centerpiece (reserved) | tiles-pro, 48px top-down |
+
+### UI Icons (`public/assets/ui/`, 40px)
+
+`ui_build_category_roads/core/rest/shops/defense/premium/social/decor`,
+`ui_build_icon`, `ui_upgrade_icon`, `ui_inventory_icon`, `ui_shop_icon`,
+`ui_warning_icon`, `ui_monster_alert_icon`, `ui_dayreport_icon`,
+`ui_zoom_in`, `ui_zoom_out`, `ui_pan_icon`, `ui_close_button`, `ui_chest_icon`.
+The day-summary banner uses `ui_dayreport_icon`; the rest are cataloged for
+menu/tab integration.
+
+### Shop / Sale Items (`public/assets/items/`, 64px)
+
+Existing manifest keys now backed by real art: `item_starter_sword`,
+`item_bent_sword`, `item_basic_armor`, `item_sponsored_armor`,
+`item_premium_knees`, `item_legendary_receipt`, `item_queue_skip_relic`,
+`item_sword_unfair_advantage`, `item_revive_insurance_scroll`,
+`item_loot_priority_blessing`, `item_confidence_booster_soup`,
+`item_dragon_mount_trial`, `item_deluxe_struggle_bundle`, `item_premium_dust`,
+`item_whale_token_pack`, `item_shame_coin_pouch`.
+New keys: `item_healing_potion`, `item_deluxe_potion`, `item_mystery_chest`,
+`item_gem_bag`, `item_convenience_permit`, `item_luxury_pillow`,
+`item_cursed_coupon`, `item_risky_potion`, `item_herb_bundle`,
+`item_gem_pack`, `item_lootbox`, `item_gold_ingots`, `item_whale_plush`,
+`item_budget_bunk_pass`, `item_fake_odds_flyer`, `item_contract_bundle`.
+Shop actions in `src/data/buildingCatalog.js` reference these via the
+`icon` field and render in the building inspector.
+
+### Monsters (`public/assets/monsters/`, 64px)
+
+Existing keys now backed by art: `monster_goblin_raider`,
+`monster_skeleton_attacker`, `monster_slime`, `monster_dungeon_bat`,
+`monster_debt_wraith`, `monster_refund_ghost`, `monster_premium_goblin`.
+New keys (also added to `src/data/monsters.js` attack pool):
+`monster_loot_mimic`, `monster_queue_demon`, `monster_audit_imp`,
+`monster_giant_rat`, `monster_grump_mushroom`, `monster_cave_spider`,
+`monster_bandit`, `monster_wolf`, `monster_coin_golem`.
+
+### World Props (`public/assets/objects/`, 64px)
+
+`object_tree_03`, `object_tree_pine`, `object_tree_autumn`, `object_rock_02`,
+`object_rock_mossy`, `object_fence_wood`, `object_barrel_02`,
+`object_crate_stack`, `object_bench_02`, `object_sign_hanging`,
+`object_lamp_02`, `object_coin_pile_02`, `object_contract_pile`,
+`object_anvil_02`, `object_training_dummy_02`, `object_target_02`,
+`object_expansion_sign` (fills existing slot), `object_construction_site`
+(fills existing slot), `object_build_plot_marker`, `object_rope_barrier`,
+`object_complaint_barrel`, `object_notice_board_02`,
+`object_notice_board_gold`, `object_flowers_02`, `object_bush`,
+`object_well`, `object_cart`, `object_lamp_premium`, `object_statue`,
+`object_campfire`, `object_brazier`, `object_market_stall`.
+Tree/rock/bush props also dress locked expansion zones as wilderness.
+
+### Building Replacements (`public/assets/buildings/`, 160px)
+
+`building_bank_debt_office`, `building_gem_exchange`,
+`building_convenience_office`, `building_lootbox_kiosk`,
+`building_vip_lounge`, `building_premium_lodge`, `building_mentor_hall`,
+`building_arena` - all previously canvas placeholders, now real angled
+pixel-art buildings matching the existing set.
+
+### UI Panels (`public/assets/ui/`)
+
+`ui_panel_parchment.png` (slot `ui_panel`) and `ui_panel_dark.png`
+(slot `ui_panel_dark`), 384x288 PixelLab UI panels, cataloged for future
+panel skinning.
