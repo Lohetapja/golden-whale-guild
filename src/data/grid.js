@@ -172,17 +172,10 @@ export const DEFAULT_NEW_CITY = {
   // empty array = fog-era save: the starting clearing is derived from the
   // guild hall and starter roads instead of a whole zone rectangle
   revealed: [],
-  roads: [
-    ...Array.from({ length: 15 }, (_, x) => ({ x: x + 1, y: 7, type: 'dirt' })),
-    ...Array.from({ length: 7 }, (_, y) => ({ x: 8, y: y + 4, type: 'dirt' })),
-    ...Array.from({ length: 5 }, (_, x) => ({ x: x + 6, y: 10, type: 'dirt' })),
-    ...Array.from({ length: 4 }, (_, x) => ({ x: x + 10, y: 5, type: 'dirt' })),
-    { x: 5, y: 6, type: 'dirt' },
-    { x: 6, y: 6, type: 'dirt' },
-    { x: 7, y: 6, type: 'dirt' },
-    { x: 13, y: 6, type: 'dirt' },
-    { x: 14, y: 6, type: 'dirt' },
-  ].filter((road, index, roads) => roads.findIndex((item) => item.x === road.x && item.y === road.y) === index),
+  // starting layout (see docs/CITY_BUILDER_SYSTEMS_PLAN.md section 3):
+  // one clean straight dirt road with the Guild Hall beside it — the player
+  // draws the rest of the town themselves
+  roads: Array.from({ length: 11 }, (_, x) => ({ x: x + 4, y: 7, type: 'dirt' })),
   placedBuildings: [
     { id: 'guildhall', gridX: 8, gridY: 4 },
   ],

@@ -440,10 +440,12 @@ export default class UIScene extends Phaser.Scene {
   }
 
   buildUtilityButtons() {
+    // row squeezed slightly to fit the Delete tool before the time controls
     this.makeUtilityButton(386, HEIGHT - 64, 'Save', 'gwg-save');
-    this.makeUtilityButton(466, HEIGHT - 64, 'Reset', 'gwg-reset', 70);
-    this.makeUtilityButton(548, HEIGHT - 64, 'Build', 'gwg-open-build', 74);
-    this.makeUtilityButton(626, HEIGHT - 64, 'Roads', 'gwg-open-roads', 70);
+    this.makeUtilityButton(456, HEIGHT - 64, 'Reset', 'gwg-reset', 58);
+    this.makeUtilityButton(520, HEIGHT - 64, 'Build', 'gwg-open-build', 62);
+    this.makeUtilityButton(584, HEIGHT - 64, 'Roads', 'gwg-open-roads', 58);
+    this.makeUtilityButton(646, HEIGHT - 64, 'Delete', 'gwg-open-delete', 58);
     // camera zoom lives on the right edge, clear of panels and the day button
     this.makeUtilityButton(WIDTH - 26, HEIGHT - 250, 'Home', 'gwg-camera-home', 46);
     const zoomIn = this.makeUtilityButton(WIDTH - 26, HEIGHT - 210, '+', 'gwg-zoom', 36, 1);
@@ -503,14 +505,15 @@ export default class UIScene extends Phaser.Scene {
   buildMobileBottomBar() {
     const y = this.rsp.bottomBarY;
     this.makeUtilityButton(54, y, 'More', 'gwg-open-more', 86, undefined, { height: 56 });
-    this.makeUtilityButton(154, y, 'Build', 'gwg-open-build', 92, undefined, { height: 56 });
-    this.makeUtilityButton(258, y, 'Roads', 'gwg-open-roads', 94, undefined, { height: 56 });
+    this.makeUtilityButton(150, y, 'Build', 'gwg-open-build', 80, undefined, { height: 56 });
+    this.makeUtilityButton(236, y, 'Roads', 'gwg-open-roads', 80, undefined, { height: 56 });
+    this.makeUtilityButton(324, y, 'Delete', 'gwg-open-delete', 84, undefined, { height: 56 });
 
     const controls = [
-      { x: 366, label: '||', speed: 0 },
-      { x: 426, label: '1x', speed: 1 },
-      { x: 486, label: '2x', speed: 2 },
-      { x: 546, label: '4x', speed: 4 },
+      { x: 412, label: '||', speed: 0 },
+      { x: 470, label: '1x', speed: 1 },
+      { x: 528, label: '2x', speed: 2 },
+      { x: 586, label: '4x', speed: 4 },
     ];
     this.timeButtons = {};
     for (const control of controls) {
@@ -525,7 +528,7 @@ export default class UIScene extends Phaser.Scene {
       );
     }
 
-    this.buildModeText = this.add.text(614, y, '', {
+    this.buildModeText = this.add.text(646, y, '', {
       fontFamily: FONT,
       fontSize: this.rsp.font(8),
       fontStyle: 'bold',
@@ -533,7 +536,7 @@ export default class UIScene extends Phaser.Scene {
       stroke: '#0c1118',
       strokeThickness: 2,
       lineSpacing: 2,
-      wordWrap: { width: 248 },
+      wordWrap: { width: 224 },
     }).setOrigin(0, 0.5);
     this.cancelBuildButton = this.makeUtilityButton(
       936,

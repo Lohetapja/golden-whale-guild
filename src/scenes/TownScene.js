@@ -611,6 +611,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-expand-land', this.expandLand, this);
     this.game.events.on('gwg-building-action', this.runBuildingAction, this);
     this.game.events.on('gwg-open-report', this.showCycleReport, this);
+    this.game.events.on('gwg-open-delete', this.openDeleteTool, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       window.removeEventListener('resize', refreshResponsiveState);
       window.removeEventListener('orientationchange', refreshResponsiveState);
@@ -640,6 +641,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-expand-land', this.expandLand, this);
       this.game.events.off('gwg-building-action', this.runBuildingAction, this);
       this.game.events.off('gwg-open-report', this.showCycleReport, this);
+      this.game.events.off('gwg-open-delete', this.openDeleteTool, this);
     });
 
     this.game.events.emit(
@@ -2404,6 +2406,18 @@ export default class TownScene extends Phaser.Scene {
       };
     }
 
+    if (this.buildMode.kind === 'delete') {
+      const cell = this.gridCells.get(gridKey(gridX, gridY));
+      if (cell?.occupiedBy) {
+        return { valid: false, reason: 'Building demolition is not licensed yet. Roads only for now.' };
+      }
+      if (!cell?.road) {
+        return { valid: false, reason: 'Nothing to delete here. The bulldozer sighs.' };
+      }
+      const refund = Math.floor((ROAD_TYPES[cell.road]?.cost || 0) / 2);
+      return { valid: true, reason: '', cost: -refund, footprint };
+    }
+
     const catalog = getBuildingCatalogEntry(this.buildMode.id);
     if (!catalog) return { valid: false, reason: 'The catalog misplaced that building.' };
     const lockReason = this.getCatalogLockReason(catalog);
@@ -2437,9 +2451,11 @@ export default class TownScene extends Phaser.Scene {
     this.buildPreviewCell = cell;
     const result = this.validateBuildPlacement(cell.x, cell.y);
     const footprint = result.footprint || this.getBuildFootprint();
+    // delete mode highlights in amber: a valid target means "will remove"
+    const validColor = this.buildMode.kind === 'delete' ? 0xf6c945 : 0x7fdc93;
     this.buildPreviewGraphics.clear().setVisible(true);
-    this.buildPreviewGraphics.fillStyle(result.valid ? 0x7fdc93 : 0xf0938f, 0.28);
-    this.buildPreviewGraphics.lineStyle(2, result.valid ? 0x7fdc93 : 0xf0938f, 0.95);
+    this.buildPreviewGraphics.fillStyle(result.valid ? validColor : 0xf0938f, 0.28);
+    this.buildPreviewGraphics.lineStyle(2, result.valid ? validColor : 0xf0938f, 0.95);
     for (const pos of getFootprintCells(cell.x, cell.y, footprint)) {
       const world = gridToWorld(pos.x, pos.y);
       const left = world.x - GRID_CONFIG.tileSize / 2 + 2;
@@ -2452,6 +2468,7 @@ export default class TownScene extends Phaser.Scene {
     const anchor = gridToWorld(cell.x, cell.y, footprint);
     const name = definition?.name || 'Construction';
     const cost = result.cost ?? definition?.cost ?? 0;
+    const costLabel = cost < 0 ? `+${-cost}g refund` : `${cost}g`;
     const view = this.getVisibleWorldRect();
     const labelX = Phaser.Math.Clamp(anchor.x, view.left + 138, view.right - 138);
     const labelY = Phaser.Math.Clamp(
@@ -2460,7 +2477,7 @@ export default class TownScene extends Phaser.Scene {
       view.bottom - 54,
     );
     this.buildPreviewLabel
-      ?.setText(`${name} - ${cost}g\n${result.valid ? 'Ready to place' : result.reason}`)
+      ?.setText(`${name} - ${costLabel}\n${result.valid ? (this.buildMode.kind === 'delete' ? 'Tap to remove' : 'Ready to place') : result.reason}`)
       .setColor(result.valid ? '#d7f3d0' : '#ffd0cc')
       .setPosition(labelX, labelY)
       .setVisible(true);
@@ -2478,6 +2495,9 @@ export default class TownScene extends Phaser.Scene {
   getBuildModeDefinition() {
     if (!this.buildMode) return null;
     if (this.buildMode.kind === 'road') return ROAD_TYPES[this.buildMode.id] || null;
+    if (this.buildMode.kind === 'delete') {
+      return { name: 'Delete Tool', cost: 0, description: 'Removes roads for a 50% refund.' };
+    }
     const catalog = getBuildingCatalogEntry(this.buildMode.id);
     const place = this.buildingById?.[this.buildMode.id];
     return catalog ? { ...catalog, assetKey: place?.assetKey || catalog.assetKey } : null;
@@ -2522,6 +2542,7 @@ export default class TownScene extends Phaser.Scene {
     }
     if (kind === 'road' && !ROAD_TYPES[id]) return;
     if (kind === 'building' && !getBuildingCatalogEntry(id)) return;
+    if (!['road', 'building', 'delete'].includes(kind)) return;
     this.clearSelection();
     this.clearWorldInteractionHover();
     this.buildMode = { kind, id };
@@ -2580,6 +2601,8 @@ export default class TownScene extends Phaser.Scene {
     }
     if (this.buildMode.kind === 'road') {
       this.placeRoad(gridX, gridY, this.buildMode.id, result.cost);
+    } else if (this.buildMode.kind === 'delete') {
+      this.deleteRoadAt(gridX, gridY);
     } else {
       this.placeCatalogBuilding(gridX, gridY, this.buildMode.id, result.cost);
     }
@@ -2587,6 +2610,42 @@ export default class TownScene extends Phaser.Scene {
       gridToWorld(gridX, gridY).x,
       gridToWorld(gridX, gridY).y - GRID_CONFIG.tileSize / 2,
     );
+  }
+
+  // delete tool entry point (docs/CITY_BUILDER_SYSTEMS_PLAN.md section 6);
+  // stays active after each removal so mistakes can be cleaned in one sweep
+  openDeleteTool() {
+    this.enterBuildMode('delete', 'delete');
+  }
+
+  deleteRoadAt(gridX, gridY) {
+    const cell = this.gridCells.get(gridKey(gridX, gridY));
+    if (!cell?.road || cell.occupiedBy) return;
+    const type = ROAD_TYPES[cell.road] || ROAD_TYPES.dirt;
+    const refund = Math.floor(type.cost / 2);
+    this.cityState.roads = this.cityState.roads.filter(
+      (road) => !(road.x === gridX && road.y === gridY),
+    );
+    cell.road = null;
+    if (refund > 0) this.applyDeltas({ gold: refund });
+    // neighbor masks change, so the whole road layer re-autotiles
+    this.redrawCityRoads();
+    this.redrawTerrainDetails();
+    const world = gridToWorld(gridX, gridY);
+    this.floatText(world.x, world.y - 30, refund > 0 ? `+${refund}g` : 'REMOVED', '#f6c945');
+
+    // warn when a service building just lost its last road connection
+    const orphaned = this.cityState.placedBuildings
+      .map((placement) => this.buildingById?.[placement.id])
+      .filter((place) => place?.isPlaced && getBuildingCatalogEntry(place.id)?.roadRequired)
+      .filter((place) => !this.getBuildingRoadAccess(place).connected)
+      .map((place) => place.name);
+    const text = orphaned.length
+      ? `${type.name} removed. ${orphaned.join(', ')} lost road access and filed a complaint.`
+      : `${type.name} removed for a ${refund}g refund. The commute mourns briefly.`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.saveGame(false);
   }
 
   placeRoad(gridX, gridY, typeId, cost) {
@@ -2844,6 +2903,7 @@ export default class TownScene extends Phaser.Scene {
       detail,
       actions: [
         ...this.getExpansionActions(),
+        { label: 'Delete Tool', event: 'gwg-open-delete' },
         { label: 'Cancel Build Mode', event: 'gwg-cancel-build' },
       ],
     };
