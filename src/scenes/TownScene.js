@@ -45,8 +45,10 @@ import {
 } from '../data/townLayout.js';
 import {
   DENIED_LINES,
+  EXPLORATION_LINES,
   IDLE_QUIPS,
   QUEUE_LINES,
+  RNGEESUS_LINES,
   THREAT_REACTIONS,
   WHALE_REACTIONS,
 } from '../data/dialogue.js';
@@ -64,11 +66,15 @@ import {
   isRoadPlazaTile,
 } from '../systems/roadRenderer.js';
 import { resolveInteractionTarget } from '../systems/interactionResolver.js';
+import { getResponsiveUi } from '../ui/responsive.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
 const PLAZA = TOWN_WORLD.plaza;
 const CAMERA_MAX_ZOOM = 2;
+const CAMERA_DEFAULT_ZOOM = 0.82;
+const CAMERA_HOME_ZOOM = 0.78;
+const EXPLORATION_CHANCE = 0.22;
 const ROAD_WIDTH = LAYOUT_CONSTANTS.ROAD_WIDTH;
 const NPC_SCALE = LAYOUT_CONSTANTS.NPC_SCALE;
 const LABEL_FONT_SIZE = LAYOUT_CONSTANTS.LABEL_FONT_SIZE;
@@ -89,6 +95,7 @@ const HERO_LABEL_EVENT_ALPHA = 0.82;
 const PRIMARY_LABEL_IDS = new Set(['whale', 'guildhall', 'dungeon']);
 const DEFAULT_SPECIAL_LABEL_IDS = new Set(['notice_board', 'complaint_barrel']);
 const COMPACT_SPECIAL_LABEL_IDS = new Set(['notice_board']);
+const SHOW_MOVEMENT_MARKERS = false;
 const LEGACY_BUILDING_IDS = new Set([
   'tavern', 'blacksmith', 'guildhall', 'market', 'training', 'whale', 'dungeon',
 ]);
@@ -434,6 +441,7 @@ export default class TownScene extends Phaser.Scene {
 
   create() {
     ensureFallbacks(this);
+    this.rsp = getResponsiveUi();
     this.input.mouse?.disableContextMenu();
     this.input.addPointer(2);
 
@@ -527,6 +535,11 @@ export default class TownScene extends Phaser.Scene {
     this.worldWidth = this.isBuilderCity ? GRID_WORLD.width : TOWN_WORLD.width;
     this.worldHeight = this.isBuilderCity ? GRID_WORLD.height : TOWN_WORLD.height;
     this.setupCameraControls();
+    const refreshResponsiveState = () => {
+      this.rsp = getResponsiveUi();
+    };
+    window.addEventListener('resize', refreshResponsiveState);
+    window.addEventListener('orientationchange', refreshResponsiveState);
 
     this.buildTerrain();
     this.buildGridLayer();
@@ -568,6 +581,8 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-open-ledger', this.openTownLedger, this);
     this.game.events.on('gwg-open-town-log', this.openTownLog, this);
     this.game.events.on('gwg-open-help', this.openHelpPanel, this);
+    this.game.events.on('gwg-open-more', this.openMobileMorePanel, this);
+    this.game.events.on('gwg-open-reset-confirm', this.openResetConfirmPanel, this);
     this.game.events.on('gwg-tutorial-next', this.advanceOnboardingFromUi, this);
     this.game.events.on('gwg-tutorial-skip', this.skipOnboarding, this);
     this.game.events.on('gwg-tutorial-start', this.restartOnboarding, this);
@@ -584,6 +599,8 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-building-action', this.runBuildingAction, this);
     this.game.events.on('gwg-open-report', this.showCycleReport, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      window.removeEventListener('resize', refreshResponsiveState);
+      window.removeEventListener('orientationchange', refreshResponsiveState);
       this.game.events.off('gwg-end-day', this.runCycle, this);
       this.game.events.off('gwg-save', this.saveGame, this);
       this.game.events.off('gwg-reset', this.resetGame, this);
@@ -593,6 +610,8 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-open-ledger', this.openTownLedger, this);
       this.game.events.off('gwg-open-town-log', this.openTownLog, this);
       this.game.events.off('gwg-open-help', this.openHelpPanel, this);
+      this.game.events.off('gwg-open-more', this.openMobileMorePanel, this);
+      this.game.events.off('gwg-open-reset-confirm', this.openResetConfirmPanel, this);
       this.game.events.off('gwg-tutorial-next', this.advanceOnboardingFromUi, this);
       this.game.events.off('gwg-tutorial-skip', this.skipOnboarding, this);
       this.game.events.off('gwg-tutorial-start', this.restartOnboarding, this);
@@ -682,14 +701,16 @@ export default class TownScene extends Phaser.Scene {
   applyBuilderDecorationState(decorations) {
     if (!this.isBuilderCity) return decorations.map((decoration) => ({ ...decoration, isPlaced: true }));
     const guild = this.buildings.find((building) => building.id === 'guildhall');
+    const decorationWorldWidth = this.isBuilderCity ? GRID_WORLD.width : TOWN_WORLD.width;
+    const decorationWorldHeight = this.isBuilderCity ? GRID_WORLD.height : TOWN_WORLD.height;
     return decorations.map((decoration) => {
       const isNature = ['tree', 'rock', 'flowers'].includes(decoration.fallbackKey);
       const isEdgeNature = isNature && (
         decoration.district === 'edge'
         || decoration.x < 180
-        || decoration.x > 1320
+        || decoration.x > decorationWorldWidth - 180
         || decoration.y < 140
-        || decoration.y > 750
+        || decoration.y > decorationWorldHeight - 140
       );
       const isNotice = decoration.id === 'notice_board';
       if (isNotice && guild) {
@@ -747,13 +768,14 @@ export default class TownScene extends Phaser.Scene {
       CAMERA_MAX_ZOOM,
       Math.max(WIDTH / this.worldWidth, HEIGHT / this.worldHeight),
     );
-    cam.setZoom(1);
+    this.defaultZoom = Phaser.Math.Clamp(CAMERA_DEFAULT_ZOOM, this.minZoom, CAMERA_MAX_ZOOM);
+    cam.setZoom(this.defaultZoom);
     if (this.isBuilderCity) {
       // start centered on the founding western district
       const west = GRID_CONFIG.zones.west;
       cam.centerOn(
-        GRID_CONFIG.originX + ((west.minX + west.maxX + 1) / 2) * GRID_CONFIG.tileSize,
-        GRID_CONFIG.originY + ((west.minY + west.maxY + 1) / 2) * GRID_CONFIG.tileSize,
+        GRID_CONFIG.originX + ((west.minX + Math.min(west.maxX + 8, GRID_CONFIG.columns - 1)) / 2) * GRID_CONFIG.tileSize,
+        GRID_CONFIG.originY + ((west.minY + Math.min(west.maxY + 4, GRID_CONFIG.rows - 1)) / 2) * GRID_CONFIG.tileSize,
       );
     } else {
       cam.setScroll(
@@ -761,6 +783,7 @@ export default class TownScene extends Phaser.Scene {
         Phaser.Math.Clamp(TOWN_WORLD.cameraStart.y, 0, Math.max(0, this.worldHeight - HEIGHT)),
       );
     }
+    this.clampCameraToWorld();
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D');
@@ -772,12 +795,16 @@ export default class TownScene extends Phaser.Scene {
       this.zoomCamera(dy > 0 ? -1 : 1, pointer);
     });
     this.game.events.on('gwg-zoom', this.zoomFromUi, this);
+    this.game.events.on('gwg-camera-home', this.cameraHome, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off('gwg-zoom', this.zoomFromUi, this);
+      this.game.events.off('gwg-camera-home', this.cameraHome, this);
     });
 
+    // dragging pans the camera even in build mode: the placement zone only
+    // places on pointerup taps (wasDragGesture filters drags), so touch users
+    // can pan around the map while choosing where to build
     this.input.on('pointerdown', (pointer) => {
-      if (this.buildMode) return;
       if (!pointer.primaryDown) return;
       this.cameraDrag.active = true;
       this.cameraDrag.moved = false;
@@ -786,19 +813,19 @@ export default class TownScene extends Phaser.Scene {
     });
 
     this.input.on('pointermove', (pointer) => {
-      if (this.buildMode) return;
       if (this.updatePinchZoom()) return;
-      this.updateWorldInteractionHover(pointer);
+      if (!this.buildMode) this.updateWorldInteractionHover(pointer);
       if (!this.cameraDrag.active || !pointer.primaryDown) return;
       const dx = pointer.x - this.cameraDrag.lastX;
       const dy = pointer.y - this.cameraDrag.lastY;
       const total = Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.x, pointer.y);
-      if (total > TAP_MOVE_THRESHOLD) this.cameraDrag.moved = true;
+      if (total > this.getTapThreshold()) this.cameraDrag.moved = true;
       if (this.cameraDrag.moved) {
         // camera bounds clamp the final scroll; divide by zoom so the world
         // tracks the pointer 1:1 at any zoom level
         cam.scrollX -= dx / cam.zoom;
         cam.scrollY -= dy / cam.zoom;
+        this.clampCameraToWorld();
       }
       this.cameraDrag.lastX = pointer.x;
       this.cameraDrag.lastY = pointer.y;
@@ -821,6 +848,27 @@ export default class TownScene extends Phaser.Scene {
     this.zoomCamera(Number(direction) >= 0 ? 1 : -1, null);
   }
 
+  // touch needs a wider tap/drag threshold than mouse (finger jitter)
+  getTapThreshold() {
+    return this.rsp?.tapThreshold || TAP_MOVE_THRESHOLD;
+  }
+
+  // "home" button: reset zoom and return to the founding district / plaza
+  cameraHome() {
+    const cam = this.cameras.main;
+    cam.setZoom(Phaser.Math.Clamp(CAMERA_HOME_ZOOM, this.minZoom, CAMERA_MAX_ZOOM));
+    if (this.isBuilderCity) {
+      const west = GRID_CONFIG.zones.west;
+      cam.centerOn(
+        GRID_CONFIG.originX + ((west.minX + Math.min(west.maxX + 10, GRID_CONFIG.columns - 1)) / 2) * GRID_CONFIG.tileSize,
+        GRID_CONFIG.originY + ((west.minY + Math.min(west.maxY + 6, GRID_CONFIG.rows - 1)) / 2) * GRID_CONFIG.tileSize,
+      );
+    } else {
+      cam.centerOn(PLAZA.x, PLAZA.y);
+    }
+    this.clampCameraToWorld();
+  }
+
   zoomCamera(direction, pointer = null) {
     const cam = this.cameras.main;
     const factor = direction > 0 ? 1.2 : 1 / 1.2;
@@ -831,12 +879,21 @@ export default class TownScene extends Phaser.Scene {
     const worldFocus = cam.getWorldPoint(focusX, focusY);
     cam.setZoom(next);
     // keep the world point under the cursor stationary while zooming
-    cam.scrollX = worldFocus.x - cam.width / 2 - (focusX - cam.width / 2) / next;
-    cam.scrollY = worldFocus.y - cam.height / 2 - (focusY - cam.height / 2) / next;
+    cam.scrollX = worldFocus.x - focusX / next;
+    cam.scrollY = worldFocus.y - focusY / next;
+    this.clampCameraToWorld();
     if (this.buildMode && this.buildPreviewCell) {
       const world = gridToWorld(this.buildPreviewCell.x, this.buildPreviewCell.y);
       this.updateBuildPreview(world.x, world.y);
     }
+  }
+
+  clampCameraToWorld() {
+    const cam = this.cameras.main;
+    const viewW = cam.width / cam.zoom;
+    const viewH = cam.height / cam.zoom;
+    cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, Math.max(0, this.worldWidth - viewW));
+    cam.scrollY = Phaser.Math.Clamp(cam.scrollY, 0, Math.max(0, this.worldHeight - viewH));
   }
 
   // two-finger pinch zoom for touch devices; returns true while pinching
@@ -848,23 +905,32 @@ export default class TownScene extends Phaser.Scene {
       return false;
     }
     const distance = Phaser.Math.Distance.Between(p1.x, p1.y, p2.x, p2.y);
+    const focusX = (p1.x + p2.x) / 2;
+    const focusY = (p1.y + p2.y) / 2;
     const cam = this.cameras.main;
     if (this.pinchState) {
       const scale = distance / Math.max(1, this.pinchState.distance);
       const next = Phaser.Math.Clamp(this.pinchState.zoom * scale, this.minZoom, CAMERA_MAX_ZOOM);
+      const worldFocus = cam.getWorldPoint(focusX, focusY);
       cam.setZoom(next);
+      cam.scrollX = worldFocus.x - focusX / next;
+      cam.scrollY = worldFocus.y - focusY / next;
+      this.clampCameraToWorld();
     } else {
       this.pinchState = { distance, zoom: cam.zoom };
     }
     this.cameraDrag.active = false;
     this.cameraDrag.moved = true;
+    this.pinchSuppressUntil = this.time.now + 220;
     return true;
   }
 
   wasDragGesture(pointer) {
-    if (!pointer) return this.time.now < (this.suppressTapUntil || 0);
+    if (!pointer) return this.time.now < (this.suppressTapUntil || 0) || this.time.now < (this.pinchSuppressUntil || 0);
     const dist = Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.x, pointer.y);
-    return dist > TAP_MOVE_THRESHOLD || this.time.now < (this.suppressTapUntil || 0);
+    return dist > this.getTapThreshold()
+      || this.time.now < (this.suppressTapUntil || 0)
+      || this.time.now < (this.pinchSuppressUntil || 0);
   }
 
   getVisibleWorldRect() {
@@ -957,6 +1023,53 @@ export default class TownScene extends Phaser.Scene {
       // Local storage may be blocked; reloading still returns to the default state.
     }
     window.location.reload();
+  }
+
+  openMobileMorePanel() {
+    this.activeInspector = { type: 'more' };
+    this.clearSelection(false);
+    this.game.events.emit('gwg-inspector-open', {
+      title: 'Guild Menu',
+      subtitle: 'Useful paperwork, tucked away from thumbs.',
+      sections: [
+        {
+          title: 'Quick Access',
+          lines: [
+            'Build and Roads stay on the bar. Less urgent paperwork lives here.',
+            'Save is local only. No accounts, no cloud, no premium memory.',
+          ],
+        },
+      ],
+      actions: [
+        { label: 'Help', event: 'gwg-open-help' },
+        { label: 'Town Log', event: 'gwg-open-town-log' },
+        { label: 'Town Ledger', event: 'gwg-open-ledger' },
+        { label: 'Save', event: 'gwg-save' },
+        { label: 'Reset...', event: 'gwg-open-reset-confirm', className: 'gwg-danger-action' },
+      ],
+    });
+  }
+
+  openResetConfirmPanel() {
+    this.activeInspector = { type: 'reset-confirm' };
+    this.clearSelection(false);
+    this.game.events.emit('gwg-inspector-open', {
+      title: 'Reset Local Save?',
+      subtitle: 'This clears local progress on this browser.',
+      sections: [
+        {
+          title: 'Careful',
+          lines: [
+            'Reset deletes the local ledger and reloads the game.',
+            'The clerk recommends not doing this by accident.',
+          ],
+        },
+      ],
+      actions: [
+        { label: 'Keep Save', event: 'gwg-inspector-close' },
+        { label: 'Reset Local Save', event: 'gwg-reset', className: 'gwg-danger-action' },
+      ],
+    });
   }
 
   openHelpPanel() {
@@ -1698,7 +1811,9 @@ export default class TownScene extends Phaser.Scene {
 
     if (this.isBuilderCity) {
       this.landHighlightGraphics = this.add.graphics().setDepth(1);
+      this.terrainDetailGraphics = this.add.graphics().setDepth(2);
       this.redrawLandHighlight();
+      this.redrawTerrainDetails();
       this.redrawWildernessDressing();
       this.redrawCityRoads();
       return;
@@ -1774,6 +1889,54 @@ export default class TownScene extends Phaser.Scene {
         (zone.maxX - zone.minX + 1) * GRID_CONFIG.tileSize,
         (zone.maxY - zone.minY + 1) * GRID_CONFIG.tileSize,
       );
+    }
+  }
+
+  getTerrainHash(x, y, salt = 0) {
+    return Math.abs(((x + 17) * 73856093) ^ ((y + 31) * 19349663) ^ (salt * 83492791));
+  }
+
+  isRoadOrRoadShoulder(x, y, radius = 1) {
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (this.gridCells.get(gridKey(x + dx, y + dy))?.road) return true;
+      }
+    }
+    return false;
+  }
+
+  redrawTerrainDetails() {
+    if (!this.terrainDetailGraphics || !this.isBuilderCity) return;
+    const g = this.terrainDetailGraphics;
+    g.clear();
+    for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
+      for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
+        const cell = this.gridCells.get(gridKey(x, y));
+        if (!cell || cell.road || cell.occupiedBy || this.isRoadOrRoadShoulder(x, y, 1)) continue;
+        const world = gridToWorld(x, y);
+        const hash = this.getTerrainHash(x, y, 3);
+        const unlocked = isTileUnlocked(x, y, this.cityState.unlockedZones);
+        const edge = x < 2 || y < 2 || x > GRID_CONFIG.columns - 3 || y > GRID_CONFIG.rows - 3;
+        const chance = unlocked ? 18 : (edge ? 34 : 10);
+        if (hash % 100 >= chance) continue;
+        const color = unlocked
+          ? ([0x79b760, 0x5f9b45, 0x86be67, 0xa2b873][hash % 4])
+          : ([0x4f7442, 0x3f6338, 0x6d7b50][hash % 3]);
+        const alpha = unlocked ? 0.18 : 0.22;
+        const rx = ((hash % 19) - 9);
+        const ry = (((hash >> 4) % 15) - 7);
+        g.fillStyle(color, alpha);
+        g.fillEllipse(
+          world.x + rx,
+          world.y - GRID_CONFIG.tileSize / 2 + ry,
+          16 + (hash % 18),
+          8 + ((hash >> 3) % 8),
+        );
+        if (unlocked && hash % 7 === 0) {
+          g.fillStyle(0xd8e28d, 0.16);
+          g.fillCircle(world.x + rx * 0.6, world.y - GRID_CONFIG.tileSize / 2 + ry, 2);
+        }
+      }
     }
   }
 
@@ -1880,8 +2043,14 @@ export default class TownScene extends Phaser.Scene {
         // become solid slabs instead of donuts; loose tiles keep a small
         // grass shoulder on unconnected sides
         const rect = getRoadSurfaceRect(left, top, GRID_CONFIG.tileSize, mask, plaza ? 0 : 4);
+        graphics.fillStyle(0x31482d, 0.16);
+        graphics.fillRoundedRect(left + 1, top + 3, GRID_CONFIG.tileSize - 2, GRID_CONFIG.tileSize - 7, 8);
         graphics.fillStyle(type.edgeColor, 0.5);
-        graphics.fillRect(rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2);
+        graphics.fillRoundedRect(rect.x - 2, rect.y - 2, rect.width + 4, rect.height + 4, plaza ? 5 : 8);
+        if (!plaza) {
+          graphics.fillStyle(0xe2cf9d, road.type === 'premium' ? 0.2 : 0.11);
+          graphics.fillEllipse(center.x, center.y - GRID_CONFIG.tileSize / 2, rect.width * 0.55, 7);
+        }
         const image = this.add.image(left, top, textureKey).setOrigin(0, 0).setDepth(20.5);
         image.setCrop(rect.x - left, rect.y - top, rect.width, rect.height);
         this.cityRoadImages.push(image);
@@ -1893,9 +2062,9 @@ export default class TownScene extends Phaser.Scene {
       const surfaceRect = getRoadSurfaceRect(left, top, GRID_CONFIG.tileSize, mask, plaza ? 4 : 8);
 
       graphics.fillStyle(type.edgeColor, 0.72);
-      graphics.fillRect(edgeRect.x, edgeRect.y, edgeRect.width, edgeRect.height);
+      graphics.fillRoundedRect(edgeRect.x, edgeRect.y, edgeRect.width, edgeRect.height, plaza ? 5 : 8);
       graphics.fillStyle(type.color, 0.98);
-      graphics.fillRect(surfaceRect.x, surfaceRect.y, surfaceRect.width, surfaceRect.height);
+      graphics.fillRoundedRect(surfaceRect.x, surfaceRect.y, surfaceRect.width, surfaceRect.height, plaza ? 4 : 7);
 
       const hash = (road.x * 31 + road.y * 17) % 4;
       if (road.type === 'dirt' && hash < 2 && !plaza) {
@@ -2225,6 +2394,7 @@ export default class TownScene extends Phaser.Scene {
     });
     this.cityState.roads.push({ x: gridX, y: gridY, type: typeId });
     this.gridCells.get(gridKey(gridX, gridY)).road = typeId;
+    this.redrawTerrainDetails();
     this.redrawCityRoads();
     const world = gridToWorld(gridX, gridY);
     this.floatText(world.x, world.y - 30, `-${cost}g`, '#f6c945');
@@ -2250,6 +2420,7 @@ export default class TownScene extends Phaser.Scene {
       isPlaced: true,
     });
     this.renderBuilding(building);
+    this.redrawTerrainDetails();
     this.doorById[building.id] = this.getDoorSpotForPlace(building);
     this.placeById[building.id] = building;
     this.getBuildingRuntime(id);
@@ -2518,6 +2689,7 @@ export default class TownScene extends Phaser.Scene {
     }
     this.redrawLockedLand();
     this.redrawLandHighlight();
+    this.redrawTerrainDetails();
     this.redrawWildernessDressing();
     const text = `${zone.name} unlocked. ${zone.blurb} The monsters noticed the paperwork.`;
     this.game.events.emit('gwg-event', text);
@@ -2781,19 +2953,27 @@ export default class TownScene extends Phaser.Scene {
       const width = footprint.w * GRID_CONFIG.tileSize;
       const height = footprint.h * GRID_CONFIG.tileSize;
       const foundation = this.add.graphics().setDepth(b.y - 5);
+      const shady = catalog?.kind === 'shady';
+      const padInset = 5;
+      const padColor = shady ? 0x9c7a32 : 0x8d805e;
+      const trimColor = shady ? 0xf0c94a : 0xc5b58c;
+      foundation.fillStyle(0x243020, 0.14);
+      foundation.fillRoundedRect(left + padInset - 3, top + 10, width - padInset * 2 + 6, height - 14, 9);
+      foundation.fillStyle(padColor, shady ? 0.28 : 0.22);
+      foundation.fillRoundedRect(left + padInset, top + 8, width - padInset * 2, height - 16, 8);
+      foundation.lineStyle(1, trimColor, shady ? 0.36 : 0.24);
+      foundation.strokeRoundedRect(left + padInset, top + 8, width - padInset * 2, height - 16, 8);
+      foundation.fillStyle(shady ? 0xc6a14a : 0xbfa77a, shady ? 0.32 : 0.24);
+      foundation.fillEllipse(b.x, b.y - 2, Math.min(width * 0.72, b.w * 0.86), 18);
       if (access.roadCell) {
         const road = gridToWorld(access.roadCell.x, access.roadCell.y);
-        const roadY = road.y - GRID_CONFIG.tileSize / 2;
-        foundation.lineStyle(13, 0x806b50, 0.34);
-        foundation.lineBetween(b.x, b.y - 12, road.x, roadY);
-        foundation.lineStyle(8, 0xbda477, 0.94);
-        foundation.lineBetween(b.x, b.y - 12, road.x, roadY);
+        const dx = Phaser.Math.Clamp((road.x - b.x) * 0.18, -22, 22);
+        foundation.fillStyle(shady ? 0xc9a547 : 0xc2aa76, shady ? 0.34 : 0.25);
+        foundation.fillEllipse(b.x + dx, b.y + 5, 38, 13);
+        foundation.fillStyle(0xf0d9a2, 0.18);
+        foundation.fillCircle(b.x + dx - 10, b.y + 3, 2);
+        foundation.fillCircle(b.x + dx + 9, b.y + 6, 2);
       }
-      const shady = catalog?.kind === 'shady';
-      foundation.fillStyle(shady ? 0x8a7445 : 0x9a8d70, shady ? 0.34 : 0.27);
-      foundation.fillRoundedRect(left + 4, top + 6, width - 8, height - 10, 7);
-      foundation.lineStyle(1, shady ? 0xd9b94d : 0xd7ccb2, 0.35);
-      foundation.strokeRoundedRect(left + 4, top + 6, width - 8, height - 10, 7);
       this.buildingObjectsById[b.id].push(foundation);
 
       if (!access.connected) {
@@ -2812,7 +2992,7 @@ export default class TownScene extends Phaser.Scene {
       Math.max(54, (catalog?.footprint?.w || 2) * GRID_CONFIG.tileSize * 0.72),
       b.w * 0.86,
     );
-    const shadow = this.add.ellipse(b.x, b.y - 8, shadowWidth, 24, 0x10151d, 0.24).setDepth(b.y - 2);
+    const shadow = this.add.ellipse(b.x, b.y - 7, shadowWidth, 15, 0x10151d, 0.14).setDepth(b.y - 2);
     this.buildingObjectsById[b.id].push(shadow);
     const textureKey = buildingTexture(this, b);
     const img = this.add.image(b.x, b.y, textureKey)
@@ -3152,8 +3332,8 @@ export default class TownScene extends Phaser.Scene {
       alpha: { start: 1, end: 0 },
       scale: { min: coinScale * 0.62, max: coinScale * 1.05 },
       lifespan: 1900,
-      frequency: 190,
-      maxParticles: 28,
+      frequency: this.rsp?.compact ? 320 : 190,
+      maxParticles: this.rsp?.compact ? 14 : 28,
     }).setDepth(whale.y + 2);
 
     // burst emitter fired when the station cashes in during a cycle
@@ -3165,7 +3345,7 @@ export default class TownScene extends Phaser.Scene {
       scale: { start: coinScale * 1.45, end: coinScale * 0.45 },
       alpha: { start: 1, end: 0 },
       emitting: false,
-      maxParticles: 80,
+      maxParticles: this.rsp?.compact ? 48 : 80,
     }).setDepth(whale.y + 2);
 
     // premium entrance: red carpet + velvet rope in front of the door
@@ -3185,7 +3365,7 @@ export default class TownScene extends Phaser.Scene {
     if (!this.coinBurst) return;
     if (this.time.now - this.lastCoinBurstAt < COIN_BURST_COOLDOWN_MS) return;
     this.lastCoinBurstAt = this.time.now;
-    this.coinBurst.explode(Math.min(count, 64));
+    this.coinBurst.explode(Math.min(count, this.rsp?.maxParticleBurst ?? 64));
   }
 
   refreshAllUpgradeVisuals() {
@@ -4881,18 +5061,22 @@ export default class TownScene extends Phaser.Scene {
     this.interruptHero(hero);
     hero.state = 'walking';
     hero.destination = spot.id;
-    hero.currentAction = `Walking to ${this.getPlaceName(spot.id)}`;
+    const spotName = spot.name || this.getPlaceName(spot.id);
+    hero.currentAction = `Walking to ${spotName}`;
 
     const tx = spot.x + Phaser.Math.Between(-38, 38);
     const ty = spot.y + Phaser.Math.Between(-4, 18);
     const route = this.buildWalkRoute(hero, spot, tx, ty);
 
-    // destination indicator: a small chevron bouncing where the hero is headed
-    hero.destMarker = this.add.image(tx, ty - 12, 'chevron').setDepth(3500).setAlpha(0.85);
-    this.tweens.add({
-      targets: hero.destMarker, y: ty - 4,
-      duration: 300, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
-    });
+    // Movement markers are useful while tuning pathing, but too debug-like
+    // for normal play. Keep the hook without cluttering the town.
+    if (SHOW_MOVEMENT_MARKERS) {
+      hero.destMarker = this.add.image(tx, ty - 12, 'chevron').setDepth(3500).setAlpha(0.45);
+      this.tweens.add({
+        targets: hero.destMarker, y: ty - 4,
+        duration: 300, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      });
+    }
 
     hero.sprite.setFlipX(tx < hero.container.x);
     // waddle while walking — replace with a real walk animation later
@@ -4912,7 +5096,7 @@ export default class TownScene extends Phaser.Scene {
         hero.pathNode = this.getPathNodeForPlaceId(spot.id)?.id || hero.pathNode;
         hero.destination = null;
         hero.state = 'idle';
-        hero.currentAction = `Idle near ${this.getPlaceName(spot.id)}`;
+        hero.currentAction = `Idle near ${spotName}`;
         onArrive?.();
         return;
       }
@@ -5070,7 +5254,9 @@ export default class TownScene extends Phaser.Scene {
 
   say(hero, text, important = false) {
     if (!hero || !text) return;
-    const maxBubbles = important ? MAX_IMPORTANT_BUBBLES : MAX_IDLE_BUBBLES;
+    const maxBubbles = important
+      ? (this.rsp?.maxImportantBubbles ?? MAX_IMPORTANT_BUBBLES)
+      : (this.rsp?.maxIdleBubbles ?? MAX_IDLE_BUBBLES);
     if (!important && this.activeBubbles >= maxBubbles) return;
     if (!important && this.hasNearbyBubble(hero)) return;
     if (important && this.activeBubbles >= maxBubbles) this.clearOldestBubble();
@@ -5124,7 +5310,7 @@ export default class TownScene extends Phaser.Scene {
 
   floatText(x, y, str, color) {
     this.floaters = this.floaters.filter((item) => item.active);
-    while (this.floaters.length >= MAX_FLOATING_TEXTS) {
+    while (this.floaters.length >= (this.rsp?.maxFloatingTexts ?? MAX_FLOATING_TEXTS)) {
       const oldest = this.floaters.shift();
       if (oldest?.active) oldest.destroy();
     }
@@ -5184,7 +5370,41 @@ export default class TownScene extends Phaser.Scene {
     });
   }
 
+  showMonsterEncounter(monster, x, y) {
+    if (!monster) return;
+    const textureKey = this.textures.exists(monster.assetKey)
+      ? monster.assetKey
+      : resolveTexture(this, 'icon_warning', 'chevron');
+    if (!textureKey) return;
+    const source = this.textures.get(textureKey)?.getSourceImage?.();
+    const scale = source?.height ? Phaser.Math.Clamp(40 / source.height, 0.35, 1.3) : 1;
+    const sprite = this.add.image(x, y - 26, textureKey)
+      .setScale(scale)
+      .setDepth(y + 30)
+      .setAlpha(0);
+    this.tweens.add({
+      targets: sprite,
+      alpha: 1,
+      y: y - 38,
+      duration: 180,
+      yoyo: true,
+      hold: 1050,
+      onComplete: () => sprite.destroy(),
+    });
+  }
+
   // --- ambient chatter -------------------------------------------------------
+
+  pickHeroLine(hero, lines) {
+    const options = (lines || []).filter(Boolean);
+    if (options.length === 0) return '';
+    hero.recentLines = Array.isArray(hero.recentLines) ? hero.recentLines : [];
+    const fresh = options.filter((line) => !hero.recentLines.includes(line));
+    const line = Phaser.Utils.Array.GetRandom(fresh.length ? fresh : options);
+    hero.recentLines.push(line);
+    hero.recentLines = hero.recentLines.slice(-6);
+    return line;
+  }
 
   startIdleChatter() {
     const chatter = () => {
@@ -5194,15 +5414,18 @@ export default class TownScene extends Phaser.Scene {
       if (
         candidates.length > 0
         && !this.cycleRunning
-        && this.activeBubbles < MAX_IDLE_BUBBLES
+        && this.activeBubbles < (this.rsp?.maxIdleBubbles ?? MAX_IDLE_BUBBLES)
         && this.time.now > this.importantChatterUntil
       ) {
         const hero = Phaser.Utils.Array.GetRandom(candidates);
         const lines = [
           ...(IDLE_QUIPS[hero.def.personality] || []),
           ...(hero.def.idleLines || []),
+          ...(this.resources.corruption > 45 ? RNGEESUS_LINES : []),
+          ...(this.resources.threat > 55 ? EXPLORATION_LINES : []),
         ];
-        if (lines.length > 0) this.say(hero, Phaser.Utils.Array.GetRandom(lines));
+        const line = this.pickHeroLine(hero, lines);
+        if (line) this.say(hero, line);
       }
       this.time.delayedCall(Phaser.Math.Between(4200, 8200), chatter);
     };
@@ -5235,6 +5458,7 @@ export default class TownScene extends Phaser.Scene {
     if (right) cam.scrollX += speed / cam.zoom;
     if (up) cam.scrollY -= speed / cam.zoom;
     if (down) cam.scrollY += speed / cam.zoom;
+    if (left || right || up || down) this.clampCameraToWorld();
 
     // depth-sort heroes by their feet; talking heroes pop above rooftops
     for (const hero of this.heroes) {
@@ -5540,6 +5764,71 @@ export default class TownScene extends Phaser.Scene {
     this.floatText(instigator.container.x, instigator.container.y - 44, 'ITEM CONFLICT', '#f0938f');
   }
 
+  getExplorationSpot(hero) {
+    if (!this.isBuilderCity) {
+      const gate = this.doorById.dungeon || { x: PLAZA.x + 120, y: PLAZA.y - 90 };
+      return { id: 'wilderness', name: 'Wilderness', x: gate.x + 120, y: Math.max(90, gate.y - 80), h: 40 };
+    }
+    const west = GRID_CONFIG.zones.west;
+    const edgeX = Math.min(GRID_CONFIG.columns - 2, west.maxX + 3 + ((this.day + hero.def.id.length) % 6));
+    const edgeY = Phaser.Math.Clamp(
+      west.minY + 2 + ((this.day * 3 + hero.def.name.length) % Math.max(1, west.maxY - west.minY - 2)),
+      1,
+      GRID_CONFIG.rows - 2,
+    );
+    const world = gridToWorld(edgeX, edgeY);
+    return {
+      id: `wilderness-${hero.def.id}`,
+      name: 'Wilderness Edge',
+      x: world.x,
+      y: world.y - GRID_CONFIG.tileSize / 2,
+      h: 40,
+    };
+  }
+
+  chooseExplorationAction(hero) {
+    if (!this.isBuildingPlaced('dungeon')) return null;
+    const threatPull = this.resources.threat > 45 ? 0.16 : 0;
+    const brave = this.isHonestHero(hero.def) || this.isVeteranHero(hero.def);
+    const chance = EXPLORATION_CHANCE + threatPull + (brave ? 0.08 : 0);
+    if (Math.random() > chance) return null;
+    const monster = rollMonster();
+    const spot = this.getExplorationSpot(hero);
+    const support = this.getPlaceLevel(this.buildingById.watchtower)
+      + Math.floor(this.getPlaceLevel(this.buildingById.blacksmith) / 2)
+      + Math.floor(this.getPlaceLevel(this.buildingById.training) / 2);
+    const success = hero.stats.power + support + Phaser.Math.Between(0, 8) >= monster.threat * 3 + 4;
+    if (success) {
+      const gold = 34 + monster.threat * 18 + support * 4;
+      hero.stats.power += brave ? 1 : 0;
+      hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 4, 0, 100);
+      hero.stats.fame = Phaser.Math.Clamp((hero.stats.fame || 0) + monster.threat * 2, 0, 100);
+      this.addHeroHistory(hero, `Scouted wilderness and beat ${monster.name}.`);
+      return {
+        building: 'dungeon',
+        spot,
+        explore: true,
+        monster,
+        text: `${hero.def.name} hunted ${monster.name} near the wilderness. ${monster.flavour} Threat fell before it could monetize.`,
+        bubble: Phaser.Utils.Array.GetRandom(EXPLORATION_LINES),
+        d: { gold, threat: -(3 + monster.threat * 2), morale: 1, trust: brave ? 1 : 0 },
+      };
+    }
+    hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - 5, 0, 100);
+    hero.stats.debt += monster.threat * 5;
+    hero.stats.resentment = Phaser.Math.Clamp((hero.stats.resentment || 0) + monster.threat, 0, 100);
+    this.addHeroHistory(hero, `Scouted wilderness and fled ${monster.name}.`);
+    return {
+      building: 'dungeon',
+      spot,
+      explore: true,
+      monster,
+      text: `${hero.def.name} found ${monster.name} outside town and returned with debt, dust, and opinions. ${monster.flavour}`,
+      bubble: 'The wilderness has feedback.',
+      d: { gold: 8, threat: monster.threat + 2, morale: -2, trust: -1 },
+    };
+  }
+
   chooseHeroAction(hero) {
     const R = this.resources;
     const tavern = this.getPlaceLevel(this.buildingById.tavern);
@@ -5549,6 +5838,8 @@ export default class TownScene extends Phaser.Scene {
     const complaint = this.getPlaceLevel(this.decorationById.complaint_barrel);
     const debtBooth = this.getPlaceLevel(this.decorationById.debt_collector_booth);
     const market = this.getPlaceLevel(this.buildingById.market);
+    const exploration = this.chooseExplorationAction(hero);
+    if (exploration) return exploration;
 
     if (
       R.trust < 30
@@ -5733,9 +6024,11 @@ export default class TownScene extends Phaser.Scene {
     for (const hero of actors) {
       const ev = this.chooseHeroAction(hero);
       steps.push(() => {
-        const b = this.getOperationalPlace(ev.building);
-        const spot = this.doorById[ev.building] || this.doorById.guildhall;
-        hero.currentAction = ev.whale ? 'Buying premium advantage' : `Acting at ${this.getPlaceName(ev.building)}`;
+        const b = ev.spot || this.getOperationalPlace(ev.building);
+        const spot = ev.spot || this.doorById[ev.building] || this.doorById.guildhall;
+        hero.currentAction = ev.explore
+          ? 'Exploring the wilderness'
+          : ev.whale ? 'Buying premium advantage' : `Acting at ${this.getPlaceName(ev.building)}`;
         this.applyDeltas(ev.d);
         hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + (ev.d.morale || 0) * 2, 0, 100);
         hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty + (ev.d.trust || 0) * 2, 0, 100);
@@ -5762,6 +6055,7 @@ export default class TownScene extends Phaser.Scene {
         }
 
         this.walkTo(hero, spot, () => {
+          if (ev.explore) this.showMonsterEncounter(ev.monster, spot.x, spot.y);
           this.say(hero, ev.bubble, true);
           if (ev.leave) this.sendHeroAway(hero, 2);
           else this.scheduleAmbient(hero, Phaser.Math.Between(3000, 6000));

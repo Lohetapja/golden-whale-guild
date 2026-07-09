@@ -2,6 +2,7 @@
 // Deliberately small — this is a game scene, not a dashboard.
 import Phaser from 'phaser';
 import BuildMenuPanel from '../ui/BuildMenuPanel.js';
+import { getResponsiveUi } from '../ui/responsive.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -49,16 +50,26 @@ export default class UIScene extends Phaser.Scene {
   }
 
   create() {
+    // compact = touch device where the FIT-scaled canvas makes the desktop
+    // HUD unreadably small; sizes below are multiplied by rsp.size so buttons
+    // keep roughly constant physical size on phones
+    this.rsp = getResponsiveUi();
     this.buildTopBar();
     this.buildTownHint();
     this.buildObjectives();
     this.buildHelperText();
     this.buildTicker();
-    this.buildEndDayButton();
-    this.buildUtilityButtons();
-    this.buildTownLedgerButton();
-    this.buildTimeControls();
+    this.buildBottomFrame();
+    if (this.rsp.compact) {
+      this.buildMobileBottomBar();
+    } else {
+      this.buildEndDayButton();
+      this.buildUtilityButtons();
+      this.buildTownLedgerButton();
+      this.buildTimeControls();
+    }
     this.buildHtmlPanels();
+    this.setupResponsiveRestart();
 
     this.registry.events.on('changedata-resources', (_p, value) => this.updateResources(value));
     this.registry.events.on('changedata-objectives', (_p, value) => this.updateObjectives(value));
@@ -105,46 +116,67 @@ export default class UIScene extends Phaser.Scene {
   // --- top resource bar ------------------------------------------------
 
   buildTopBar() {
-    this.add.rectangle(WIDTH / 2, 22, WIDTH, 44, 0x141a24, 0.9);
-
+    const compact = this.rsp?.compact;
+    const barHeight = compact ? 68 : 54;
+    const barCenterY = barHeight / 2;
+    this.add.rectangle(WIDTH / 2, barCenterY, WIDTH, barHeight, 0x0f1521, 0.94);
+    this.add.rectangle(WIDTH / 2, barHeight, WIDTH, 2, 0xbf8a38, 0.68);
     this.resourceTexts = {};
-    let x = 16;
-    for (const meta of RESOURCE_META) {
+    const slotW = compact ? 132 : 154;
+    const slotH = compact ? 46 : 36;
+    const startX = compact ? 10 : 14;
+    const gap = compact ? 6 : 8;
+    const labelFont = compact ? this.rsp.font(8) : '9px';
+    const valueFont = compact ? this.rsp.font(12) : '16px';
+    const iconTarget = compact ? Math.min(32, this.rsp.size(14)) : 17;
+    for (const [index, meta] of RESOURCE_META.entries()) {
+      const x = startX + index * (slotW + gap);
+      const cx = x + slotW / 2;
       const iconKey = meta.asset && this.textures.exists(meta.asset) ? meta.asset : meta.icon;
-      const icon = this.add.image(x + 6, 22, iconKey)
-        .setScale(this.getHudIconScale(iconKey))
+      const bg = this.add.rectangle(cx, barCenterY, slotW, slotH, 0x17202d, 0.92)
+        .setStrokeStyle(1, 0x31405a, 0.9)
         .setInteractive({ useHandCursor: true });
-      const text = this.add.text(x + 18, 22, `${meta.label} 0`, {
-        fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: meta.color,
+      const icon = this.add.image(x + (compact ? 21 : 18), barCenterY, iconKey)
+        .setScale(this.getHudIconScale(iconKey, iconTarget))
+        .setInteractive({ useHandCursor: true });
+      const label = this.add.text(x + (compact ? 42 : 34), compact ? 23 : 16, meta.label.toUpperCase(), {
+        fontFamily: FONT, fontSize: labelFont, fontStyle: 'bold', color: '#d4dae2',
         stroke: '#0c1118', strokeThickness: 2,
       }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-      icon.on('pointerup', () => this.showResourceHelp(meta));
-      text.on('pointerup', () => this.showResourceHelp(meta));
-      this.resourceTexts[meta.key] = { text, meta };
-      x += 30 + text.width + 120; // generous fixed spacing; text length varies little
+      const value = this.add.text(x + (compact ? 42 : 34), compact ? 43 : 32, '0', {
+        fontFamily: FONT, fontSize: valueFont, fontStyle: 'bold', color: meta.color,
+        stroke: '#0c1118', strokeThickness: 2,
+      }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
+      const openHelp = () => this.showResourceHelp(meta);
+      bg.on('pointerup', openHelp);
+      icon.on('pointerup', openHelp);
+      label.on('pointerup', openHelp);
+      value.on('pointerup', openHelp);
+      this.resourceTexts[meta.key] = { bg, icon, label, value, meta };
     }
 
     // clicking the day counter reopens the latest day report
-    this.dayText = this.add.text(WIDTH - 16, 22, 'Day 1', {
-      fontFamily: FONT, fontSize: '16px', fontStyle: 'bold', color: '#fff6dc',
+    this.dayText = this.add.text(WIDTH - 16, compact ? 20 : 22, 'Day 1', {
+      fontFamily: FONT, fontSize: compact ? this.rsp.font(11) : '16px', fontStyle: 'bold', color: '#fff6dc',
       stroke: '#0c1118', strokeThickness: 2,
     }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
     this.dayText.on('pointerover', () => this.dayText.setColor('#ffe08a'));
     this.dayText.on('pointerout', () => this.dayText.setColor('#fff6dc'));
     this.dayText.on('pointerup', () => this.game.events.emit('gwg-open-report'));
 
-    this.warningText = this.add.text(16, 50, '', {
+    this.warningText = this.add.text(16, compact ? 72 : 59, '', {
       fontFamily: FONT,
-      fontSize: '12px',
+      fontSize: compact ? this.rsp.font(8) : '12px',
       fontStyle: 'bold',
       color: '#ffe08a',
       stroke: '#0c1118',
       strokeThickness: 3,
+      wordWrap: { width: compact ? 650 : 520 },
     }).setDepth(6000);
 
-    this.stageText = this.add.text(WIDTH - 16, 72, '', {
+    this.stageText = this.add.text(WIDTH - 16, compact ? 70 : 60, '', {
       fontFamily: FONT,
-      fontSize: '12px',
+      fontSize: compact ? this.rsp.font(8) : '12px',
       fontStyle: 'bold',
       color: '#f6c945',
       stroke: '#0c1118',
@@ -166,7 +198,6 @@ export default class UIScene extends Phaser.Scene {
     for (const { key } of RESOURCE_META) {
       const slot = this.resourceTexts[key];
       const changed = this.lastRes && this.lastRes[key] !== res[key];
-      slot.text.setText(`${slot.meta.label} ${res[key]}`);
       const danger = (
         (key === 'trust' && res[key] < 30)
         || (key === 'corruption' && res[key] > 70)
@@ -174,12 +205,17 @@ export default class UIScene extends Phaser.Scene {
         || (key === 'threat' && res[key] > 80)
       );
       const dangerState = slot.meta.danger?.(res[key]) || (danger ? 'warning' : 'safe');
-      slot.text.setText(`${slot.meta.label} ${res[key]}${dangerState === 'critical' ? ' !!' : dangerState === 'warning' ? ' !' : ''}`);
-      slot.text.setColor(dangerState === 'critical' ? '#ff4f4f' : dangerState === 'warning' ? '#ffe08a' : slot.meta.color);
+      slot.value.setText(`${res[key]}${dangerState === 'critical' ? ' !!' : dangerState === 'warning' ? ' !' : ''}`);
+      slot.value.setColor(dangerState === 'critical' ? '#ff6b5f' : dangerState === 'warning' ? '#ffe08a' : slot.meta.color);
+      slot.bg.setFillStyle(
+        dangerState === 'critical' ? 0x3f1e27 : dangerState === 'warning' ? 0x3a3020 : 0x17202d,
+        0.94,
+      );
+      slot.bg.setStrokeStyle(1, dangerState === 'critical' ? 0xff6b5f : dangerState === 'warning' ? 0xf6c945 : 0x31405a, 0.92);
       if (changed) {
         // small pulse so the eye catches which resource just moved
         this.tweens.add({
-          targets: slot.text, scale: { from: 1.25, to: 1 },
+          targets: slot.value, scale: { from: 1.18, to: 1 },
           duration: 260, ease: 'Cubic.easeOut',
         });
       }
@@ -189,12 +225,12 @@ export default class UIScene extends Phaser.Scene {
     if (res.corruption > 70) warnings.push('HIGH CORRUPTION');
     if (res.morale < 30) warnings.push('LOW MORALE');
     if (res.threat > 80) warnings.push('THREAT CRITICAL');
-    this.warningText.setText(warnings.join('  /  '));
+    this.warningText.setText(warnings.slice(0, 3).join('   '));
     this.lastRes = { ...res };
   }
 
   buildObjectives() {
-    this.objectiveText = this.add.text(WIDTH - 16, 92, '', {
+    this.objectiveText = this.add.text(WIDTH - 16, 140, '', {
       fontFamily: FONT,
       fontSize: '12px',
       fontStyle: 'bold',
@@ -215,7 +251,7 @@ export default class UIScene extends Phaser.Scene {
   }
 
   buildTownHint() {
-    this.townHintText = this.add.text(WIDTH - 16, 50, '', {
+    this.townHintText = this.add.text(WIDTH - 16, 100, '', {
       fontFamily: FONT,
       fontSize: '13px',
       fontStyle: 'bold',
@@ -262,13 +298,15 @@ export default class UIScene extends Phaser.Scene {
     const text = hasTouch
       ? 'Drag to pan - Pinch or +/- to zoom - Build roads/services - Tap heroes'
       : 'Drag/WASD to pan - Wheel to zoom - Build roads/services - Inspect heroes';
-    this.helperText = this.add.text(WIDTH / 2, 54, text, {
+    this.helperText = this.add.text(WIDTH / 2, this.rsp?.compact ? 78 : 54, text, {
       fontFamily: FONT,
-      fontSize: '12px',
+      fontSize: this.rsp?.compact ? this.rsp.font(8) : '12px',
       fontStyle: 'bold',
       color: '#d4dae2',
       stroke: '#0c1118',
       strokeThickness: 3,
+      wordWrap: { width: this.rsp?.compact ? 760 : 900 },
+      align: 'center',
     }).setOrigin(0.5, 0).setDepth(6000);
     this.time.delayedCall(9000, () => {
       this.tweens.add({ targets: this.helperText, alpha: 0, duration: 800 });
@@ -276,6 +314,30 @@ export default class UIScene extends Phaser.Scene {
   }
 
   // --- bottom event ticker ----------------------------------------------
+
+  buildBottomFrame() {
+    if (this.rsp?.compact) {
+      const controlY = this.rsp.bottomBarY;
+      this.add.rectangle(WIDTH / 2, controlY, WIDTH - 24, 92, 0x101721, 0.86)
+        .setStrokeStyle(1, 0x31405a, 0.9);
+      this.add.rectangle(324, controlY, 622, 70, 0x17202d, 0.72)
+        .setStrokeStyle(1, 0x273244, 0.85);
+      this.add.rectangle(856, controlY, 390, 70, 0x17202d, 0.7)
+        .setStrokeStyle(1, 0x273244, 0.8);
+      this.add.rectangle(WIDTH - 116, controlY, 224, 72, 0x231b13, 0.76)
+        .setStrokeStyle(1, 0xbf8a38, 0.92);
+      return;
+    }
+    const controlY = HEIGHT - 64;
+    this.add.rectangle(WIDTH / 2, controlY, WIDTH - 28, 48, 0x101721, 0.84)
+      .setStrokeStyle(1, 0x31405a, 0.9);
+    this.add.rectangle(176, controlY, 330, 36, 0x17202d, 0.74)
+      .setStrokeStyle(1, 0x273244, 0.9);
+    this.add.rectangle(598, controlY, 440, 36, 0x17202d, 0.74)
+      .setStrokeStyle(1, 0x273244, 0.9);
+    this.add.rectangle(WIDTH - 104, controlY, 184, 48, 0x231b13, 0.74)
+      .setStrokeStyle(1, 0xbf8a38, 0.9);
+  }
 
   buildTicker() {
     this.add.rectangle(WIDTH / 2, HEIGHT - 22, WIDTH, 44, 0x0f1521, 0.92);
@@ -324,15 +386,18 @@ export default class UIScene extends Phaser.Scene {
   // --- cycle button ---------------------------------------------------------
   // Skip Day remains the manual cycle trigger while the real-time clock runs.
 
-  buildEndDayButton() {
-    const x = WIDTH - 104;
-    const y = HEIGHT - 64;
+  buildEndDayButton(options = {}) {
+    const x = options.x ?? (WIDTH - 104);
+    const y = options.y ?? (HEIGHT - 64);
+    const width = options.width ?? 168;
+    const height = options.height ?? 44;
+    this.cycleReadyLabel = options.label ?? (this.rsp?.compact ? 'Skip Day' : 'Skip Day >');
 
     // ui_button asset replaces the drawn rectangle when present
     const useAsset = this.textures.exists('ui_button');
     if (useAsset) {
       this.cycleBg = this.add.image(x, y, 'ui_button')
-        .setDisplaySize(168, 44)
+        .setDisplaySize(width, height)
         .setInteractive({ useHandCursor: true });
       this.styleButton = (state) => {
         if (state === 'hover') this.cycleBg.setTint(0xffe6b0);
@@ -340,7 +405,7 @@ export default class UIScene extends Phaser.Scene {
         else this.cycleBg.clearTint();
       };
     } else {
-      this.cycleBg = this.add.rectangle(x, y, 168, 44, 0x8a5a2b)
+      this.cycleBg = this.add.rectangle(x, y, width, height, 0x8a5a2b)
         .setStrokeStyle(2, 0xf2c744)
         .setInteractive({ useHandCursor: true });
       this.styleButton = (state) => {
@@ -349,8 +414,11 @@ export default class UIScene extends Phaser.Scene {
         else this.cycleBg.setFillStyle(0x8a5a2b);
       };
     }
-    this.cycleLabel = this.add.text(x, y, 'Skip Day >', {
-      fontFamily: FONT, fontSize: '16px', fontStyle: 'bold', color: '#fff6dc',
+    this.cycleLabel = this.add.text(x, y, this.cycleReadyLabel, {
+      fontFamily: FONT,
+      fontSize: this.rsp?.compact ? `${Math.min(30, Math.max(19, this.rsp.size(10)))}px` : '16px',
+      fontStyle: 'bold',
+      color: '#fff6dc',
     }).setOrigin(0.5);
 
     this.cycleBg.on('pointerover', () => this.styleButton('hover'));
@@ -372,13 +440,12 @@ export default class UIScene extends Phaser.Scene {
   }
 
   buildUtilityButtons() {
-    this.add.rectangle(410, HEIGHT - 64, 772, 38, 0x0f1521, 0.5)
-      .setStrokeStyle(1, 0x273244, 0.8);
     this.makeUtilityButton(386, HEIGHT - 64, 'Save', 'gwg-save');
     this.makeUtilityButton(466, HEIGHT - 64, 'Reset', 'gwg-reset', 70);
     this.makeUtilityButton(548, HEIGHT - 64, 'Build', 'gwg-open-build', 74);
     this.makeUtilityButton(626, HEIGHT - 64, 'Roads', 'gwg-open-roads', 70);
     // camera zoom lives on the right edge, clear of panels and the day button
+    this.makeUtilityButton(WIDTH - 26, HEIGHT - 250, 'Home', 'gwg-camera-home', 46);
     const zoomIn = this.makeUtilityButton(WIDTH - 26, HEIGHT - 210, '+', 'gwg-zoom', 36, 1);
     const zoomOut = this.makeUtilityButton(WIDTH - 26, HEIGHT - 170, '-', 'gwg-zoom', 36, -1);
     for (const [button, iconKey] of [[zoomIn, 'ui_zoom_in'], [zoomOut, 'ui_zoom_out']]) {
@@ -433,18 +500,95 @@ export default class UIScene extends Phaser.Scene {
     this.cancelBuildButton.text.setVisible(false);
   }
 
-  makeUtilityButton(x, y, label, eventName, width = 64, eventValue = undefined) {
-    const bg = this.add.rectangle(x, y, width, 32, 0x273244, 0.94)
-      .setStrokeStyle(1, 0xf6c945)
+  buildMobileBottomBar() {
+    const y = this.rsp.bottomBarY;
+    this.makeUtilityButton(54, y, 'More', 'gwg-open-more', 86, undefined, { height: 56 });
+    this.makeUtilityButton(154, y, 'Build', 'gwg-open-build', 92, undefined, { height: 56 });
+    this.makeUtilityButton(258, y, 'Roads', 'gwg-open-roads', 94, undefined, { height: 56 });
+
+    const controls = [
+      { x: 366, label: '||', speed: 0 },
+      { x: 426, label: '1x', speed: 1 },
+      { x: 486, label: '2x', speed: 2 },
+      { x: 546, label: '4x', speed: 4 },
+    ];
+    this.timeButtons = {};
+    for (const control of controls) {
+      this.timeButtons[control.speed] = this.makeUtilityButton(
+        control.x,
+        y,
+        control.label,
+        'gwg-time-speed',
+        52,
+        control.speed,
+        { height: 52 },
+      );
+    }
+
+    this.buildModeText = this.add.text(614, y, '', {
+      fontFamily: FONT,
+      fontSize: this.rsp.font(8),
+      fontStyle: 'bold',
+      color: '#7fdc93',
+      stroke: '#0c1118',
+      strokeThickness: 2,
+      lineSpacing: 2,
+      wordWrap: { width: 248 },
+    }).setOrigin(0, 0.5);
+    this.cancelBuildButton = this.makeUtilityButton(
+      936,
+      y,
+      'Cancel',
+      'gwg-cancel-build',
+      104,
+      undefined,
+      { height: 56 },
+    );
+    this.cancelBuildButton.bg.setVisible(false).disableInteractive();
+    this.cancelBuildButton.text.setVisible(false);
+
+    this.buildEndDayButton({
+      x: WIDTH - 116,
+      y,
+      width: 206,
+      height: 58,
+      label: 'Skip Day',
+    });
+
+    this.makeUtilityButton(WIDTH - 40, HEIGHT - 304, 'Home', 'gwg-camera-home', 76, undefined, { height: 54 });
+    this.makeUtilityButton(WIDTH - 40, HEIGHT - 244, '+', 'gwg-zoom', 58, 1, { height: 54 });
+    this.makeUtilityButton(WIDTH - 40, HEIGHT - 184, '-', 'gwg-zoom', 58, -1, { height: 54 });
+  }
+
+  setupResponsiveRestart() {
+    const refreshResponsiveState = () => {
+      this.rsp = getResponsiveUi();
+    };
+    window.addEventListener('resize', refreshResponsiveState);
+    window.addEventListener('orientationchange', refreshResponsiveState);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      window.removeEventListener('resize', refreshResponsiveState);
+      window.removeEventListener('orientationchange', refreshResponsiveState);
+    });
+  }
+
+  makeUtilityButton(x, y, label, eventName, width = 64, eventValue = undefined, options = {}) {
+    const compact = this.rsp?.compact;
+    const height = options.height ?? (compact ? Math.min(58, this.rsp.buttonHeight) : 32);
+    const fontSize = options.fontSize ?? (compact
+      ? `${Math.min(26, Math.max(17, this.rsp.size(8)))}px`
+      : '12px');
+    const bg = this.add.rectangle(x, y, width, height, 0x223047, 0.96)
+      .setStrokeStyle(1, 0xbf8a38)
       .setInteractive({ useHandCursor: true });
     const text = this.add.text(x, y, label, {
       fontFamily: FONT,
-      fontSize: '12px',
+      fontSize,
       fontStyle: 'bold',
       color: '#fff6dc',
     }).setOrigin(0.5);
-    bg.on('pointerover', () => bg.setFillStyle(0x3a4a63, 0.98));
-    bg.on('pointerout', () => bg.setFillStyle(0x273244, 0.94));
+    bg.on('pointerover', () => bg.setFillStyle(0x344a67, 0.98));
+    bg.on('pointerout', () => bg.setFillStyle(0x223047, 0.96));
     bg.on('pointerup', () => {
       this.tweens.add({ targets: [bg, text], scale: 0.92, duration: 70, yoyo: true });
       if (eventName === 'gwg-reset') {
@@ -701,12 +845,14 @@ export default class UIScene extends Phaser.Scene {
   }
 
   enableCycleButton() {
+    if (!this.cycleBg || !this.cycleLabel) return;
     this.cycleBg.setInteractive({ useHandCursor: true });
     this.styleButton('normal');
-    this.cycleLabel.setText('Skip Day >').setAlpha(1);
+    this.cycleLabel.setText(this.cycleReadyLabel || 'Skip Day >').setAlpha(1);
   }
 
   lockCycleButton() {
+    if (!this.cycleBg || !this.cycleLabel) return;
     this.cycleBg.disableInteractive();
     this.styleButton('locked');
     this.cycleLabel.setText('Resolving...').setAlpha(0.8);
@@ -724,7 +870,8 @@ export default class UIScene extends Phaser.Scene {
   updateBuildMode(state = {}) {
     if (!this.buildModeText || !this.cancelBuildButton) return;
     const label = String(state.label || '');
-    const compactLabel = label.length > 17 ? `${label.slice(0, 16)}...` : label;
+    const maxChars = this.rsp?.compact ? 14 : 17;
+    const compactLabel = label.length > maxChars ? `${label.slice(0, maxChars - 1)}...` : label;
     const cost = Number.isFinite(state.cost) ? `${state.cost}g` : '';
     const footprint = state.footprint || '';
     this.buildModeText

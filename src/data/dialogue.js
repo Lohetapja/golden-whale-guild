@@ -226,3 +226,33 @@ export const QUEUE_LINES = [
   'I am economically authentic.',
   'The line has lore now.',
 ];
+
+export const RNGEESUS_LINES = [
+  'Praise RNGesus, patron of suspiciously timed drops.',
+  'The pity timer works in mysterious invoices.',
+  'Blessed be the sacred banner and its fake generosity.',
+  'I prayed for loot and received terms.',
+  'RNGesus saw my roll and asked for a convenience fee.',
+  'May the odds be ever hidden behind a scroll bar.',
+  'My faith is strong. My drop rate is ceremonial.',
+  'The sacred crate opens only when morale is low.',
+  'I lit a candle for rare loot. The candle was common.',
+  'The temple says disappointment is part of the ritual.',
+  'Every tenth miss is technically engagement.',
+  'I am one roll away from spiritual bankruptcy.',
+];
+
+export const EXPLORATION_LINES = [
+  'Scouting the wilderness. If I vanish, blame pathing.',
+  'I found monster tracks and a receipt.',
+  'The woods are full of unpaid consequences.',
+  'If the dungeon will not behave, I will visit its cousins.',
+  'Exploration is just questing without paperwork.',
+  'I packed snacks and reasonable expectations. One will run out.',
+  'Monster hunting builds morale, unless the monster disagrees.',
+  'The forest has fewer pop-ups than town.',
+  'I am looking for threats before they start charging admission.',
+  'A slime hissed "best value" at me. I remain shaken.',
+  'RNGesus guide my sword and ignore my loot table.',
+  'If I find a loot mimic, I am not opening it emotionally.',
+];

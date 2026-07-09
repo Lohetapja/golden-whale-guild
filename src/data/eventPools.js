@@ -392,6 +392,60 @@ export const EVENT_POOLS = {
     },
   ],
 
+  rngesusFaith: [
+    {
+      text: (n) => `${n} prayed to RNGesus and received a common hat with rare disappointment.`,
+      bubble: 'Blessed be the pity timer.',
+      building: 'premium_temple',
+      d: { morale: -1, corruption: 1 },
+    },
+    {
+      text: (n) => `${n} lit a candle for a better roll. The candle had a drop rate.`,
+      bubble: 'The flame was common.',
+      building: 'patch_notes_shrine',
+      d: { morale: 1, corruption: 1 },
+    },
+    {
+      text: (n) => `${n} studied sacred odds written in enchanted small print.`,
+      bubble: 'I believe. Sort of.',
+      building: 'ethics_fountain',
+      d: { trust: -1, corruption: 1 },
+    },
+    {
+      text: (n) => `${n} declared the next loot miss a spiritual growth opportunity.`,
+      bubble: 'Growth hurts.',
+      building: 'notice_board',
+      d: { morale: -1 },
+    },
+  ],
+
+  fakeOddsGossip: [
+    {
+      text: (n) => `${n} found a "best value" bundle priced exactly like panic.`,
+      bubble: 'Value is trembling.',
+      building: 'market',
+      d: { gold: 30, corruption: 1 },
+    },
+    {
+      text: (n) => `${n} read fake odds so tiny the parchment needed glasses.`,
+      bubble: 'Tiny numbers.',
+      building: 'lootbox_kiosk',
+      d: { trust: -1, corruption: 2 },
+    },
+    {
+      text: (n) => `${n} heard the lootbox bell and briefly became a business metric.`,
+      bubble: 'Ding. Regret.',
+      building: 'whale',
+      d: { gold: 55, morale: -1, corruption: 1 },
+    },
+    {
+      text: (n) => `${n} bought urgency in bulk before the timer admitted it was decorative.`,
+      bubble: 'Limited forever.',
+      building: 'convenience_office',
+      d: { gold: 70, trust: -1, corruption: 2 },
+    },
+  ],
+
   bardDebt: [
     {
       text: (n) => `${n} performed a ballad titled "Owed To Joy."`,
@@ -495,9 +549,9 @@ export const PERSONALITY_POOLS = {
   'Refund Seeker': ['refundDenials', 'trustLoss', 'poorHeroFrustration'],
   'Free Trial Paladin': ['trialTroubles', 'honestTraining', 'dungeonResults'],
   'Overleveled Toddler': ['ridiculousWhaleSuccessStories', 'dungeonResults', 'goldenWhalePurchases'],
-  'Lootbox Philosopher': ['lootboxPhilosophy', 'marketGossip', 'corruptionGain'],
+  'Lootbox Philosopher': ['lootboxPhilosophy', 'fakeOddsGossip', 'rngesusFaith', 'marketGossip', 'corruptionGain'],
   'Bankrupt Bard': ['bardDebt', 'debtEvents', 'poorHeroFrustration'],
-  'Quest Intern': ['internErrors', 'clericalWork', 'sponsoredHeroics'],
+  'Quest Intern': ['internErrors', 'clericalWork', 'sponsoredHeroics', 'fakeOddsGossip'],
   'Disillusioned Blacksmith': ['blacksmithDisillusion', 'honestTraining', 'veteranComplaints'],
 };
 
