@@ -1,103 +1,78 @@
-# Golden Whale Guild — Visual Direction
+# Golden Whale Guild - Visual Direction
 
-## Status: placeholder graphics are temporary
+Updated 2026-07 for the isometric city-builder pivot.
 
-Everything currently on screen is **runtime-generated debug art** drawn with
-Phaser Graphics (see `src/textures.js`, all keys prefixed `ph-`). It exists so
-the game is playable and the layout is readable — it is not the art direction.
-Do not polish the generated shapes further; effort goes into systems and
-asset-readiness instead.
+## Target
 
-## Final target
+An angled / isometric fantasy city-builder that is cozy but satirical, and
+readable at browser scale.
 
-A **cozy, colorful top-down / 2.5D pixel fantasy town**:
+- Grid-based city building on a large explorable map.
+- Terrain feels like a natural map (meadows, dirt, clusters, wilderness),
+  never flat debug grass.
+- Roads sit in the world: shoulders, curb depth, doorstep connectors — they
+  must match the buildings' angled perspective.
+- Buildings are 3/4-angled, grounded on foundation pads with soft shadows.
+  Nothing floats, nothing looks pasted on.
+- Fog of war hides the unexplored world; expansion feels like exploration,
+  not buying a rectangle.
+- UI reads as a game interface (parchment, wood, brass, gold-trimmed
+  bureaucracy), never an admin dashboard.
 
-- warm palette, readable silhouettes, chunky pixel proportions
-- map-first: the town *is* the interface; minimal UI floats on top
-- small-scale charm (Stardew-adjacent), not gritty or realistic
-- satire tone carried by animation and signage, not UI text walls
+## Inspiration (high level only — never copy)
 
-Current prototype priorities:
+- **Age of Empires 2**: terrain readability, natural forests/rock clusters,
+  map variety that stays legible when zoomed out.
+- **Caesar 3**: service buildings that need road access; a city you read at
+  a glance by its services.
+- **Anno**: category-based economy and build menus; clear production/shop
+  identity per building.
+- **Settlers**: roads as living logistics; workers/heroes visibly moving
+  through a believable settlement.
 
-- keep the town readable at 1280x720 without zoom
-- preserve the map-first design: the town is the interface
-- use only small HUD elements, compact tooltips, and short speech bubbles
-- no dashboard panels, admin screens, tabs, or card layouts
-- keep all Golden Whale economy jokes fictional and in-game only
-- upgrade/progression visuals should be small map changes, pulses, glow, signs,
-  or particles rather than management UI
-- quest posting and objectives should stay as small notices/signage layered on
-  the town, not as a separate quest-log dashboard
-- responsive/mobile play should preserve the same map-first canvas: scale the
-  game, support drag panning, and keep touch targets readable without adding
-  dashboard UI
-- NPC hero detail belongs in compact tooltips anchored to the map, not in a
-  roster screen; current implementation uses one fixed inspector panel so
-  detailed stats do not clutter the roads
-- Town Ledger is an in-world guild planning board, not an admin dashboard:
-  compact rows, upgrade trade-offs, and immediate map feedback
-- Day Reports, policy choices, and Town Log are compact guild paperwork
-  overlays. They should explain consequences and history without becoming
-  analytics screens, tabs, or full management dashboards
-- Town stages, crises, and unlocks should be visible through small map pulses,
-  labels, signs, glow, and report lines instead of large modal spectacle
-- NPC status changes should remain readable with tiny placeholder markers
-  above sprites until real character/status assets exist
-- Town placement is organized by districts through `src/data/townLayout.js`.
-  Future sprites should fit the footprint bands there: small locations around
-  60-90px, normal buildings around 90-130px, major buildings around 130-170px.
-- Road/path readability comes from the explicit path-node graph in
-  `townLayout.js`; keep NPC destination points near those paths so movement
-  feels intentional without needing complex pathfinding.
+Do not copy assets, layouts, UI, names, or exact designs from any of these.
 
-## Asset-replaceable architecture
+## Rendering model (current state)
 
-All important game objects resolve their texture at runtime through
-`src/assets.js` + `src/data/assetManifest.js`:
+The internal grid stays orthogonal (56x32 at 48px). The isometric feel comes
+from layered rendering, in this order (back to front):
 
-1. Drop a PNG at the manifest `path` under `public/assets/**`.
-2. Reload. The game uses it automatically. No code changes.
-3. If the file is missing, the generated placeholder is used. The boot scene
-   skips missing optional files before Phaser's loader runs, then a console info
-   line lists which generated placeholders are active.
+1. `terrain_grass_base` tiled meadow + one static RenderTexture of variety
+   tiles (clover, dirt patches) and ground decals (tufts, flowers, stumps).
+2. Road bed grounding (shoulders, flecks) + textured road fill + pseudo-depth
+   curbs (light north lip, dark south face).
+3. Building foundation pads (diamond), doorstep connectors to roads, then the
+   angled building sprite anchored to the pad.
+4. Wilderness props under fog; fog overlay with depth-tinted tiles, soft
+   frontier skirts, and mist blobs.
 
-Folder layout (all under `public/assets/`):
+All grid<->world conversions route through `src/data/grid.js`
+(`gridToWorldIso`, `worldToGridIso`, `getIsoTileCenter`,
+`getIsoFootprintBounds`) so a future true-diamond projection changes one file.
 
-| Folder        | Contents                                          |
-| ------------- | ------------------------------------------------- |
-| `tiles/`      | ground/terrain tilesets (grass, paths, water)     |
-| `characters/` | hero sprites — later spritesheets with walk/idle  |
-| `buildings/`  | one sprite per building, ground-anchored          |
-| `decor/`      | special locations, props, signs, fences, lamps    |
-| `ui/`         | panel, button, frame nine-patches                 |
-| `icons/`      | resource + misc icons (coin, whale, …)            |
-| `particles/`  | particle textures (coin sparkle, glow, dust)      |
-| `maps/`       | Tiled/LDtk map exports when the town gets a map   |
+## Building art rules
 
-When character spritesheets arrive, change the manifest entry `type` to
-`'spritesheet'` and add a `frameConfig` — the loader already supports it.
+- 160px source, 3/4 angled top-down, grounded base with shadow baked in.
+- Clean pixel outline, readable silhouette at ~100px on screen.
+- Transparent background, no text, no watermark.
+- Reference set (2026-07): `building_tavern`, `building_inn`,
+  `building_market`, `building_guild_hall`, `building_golden_whale`,
+  `building_bank_debt_office`, `building_gem_exchange`.
+- The Golden Whale stays the loudest building in town: white marble, gold
+  trim, giant golden whale on the roof. Premium buildings may be overdone;
+  that is the joke.
 
-## Rules for Claude (and other tooling)
+## Terrain / fog rules
 
-- **Integrate assets, do not invent final art.** When real sprites are
-  provided, wire them in via the manifest; never spend cycles hand-crafting
-  elaborate Graphics art beyond quick readable placeholders.
-- Keep every new visible game object behind an asset key + fallback, following
-  the existing pattern in `src/data/buildings.js` / `src/data/heroes.js`.
-- Mark any new generated art clearly as temporary (`ph-` key prefix + comment).
+- Fog is dark blue-grey with per-tile alpha variation and mist blobs — never
+  a flat black rectangle.
+- Revealed frontier tiles get a soft fog skirt so the boundary looks organic.
+- Wilderness props (trees, rocks, bushes) live under the fog and become
+  clearable land when revealed.
 
-## The Golden Whale Milking Station rule
+## PixelLab prompt template
 
-The station must remain **the strongest visual identity in the scene**, in
-placeholder and final art alike: gold/glowing, whale signage, coin particles,
-red carpet + VIP rope, suspiciously premium. If a visual pass makes another
-building compete with it for attention, the pass is wrong.
-
-Future Golden Whale assets should exaggerate:
-
-- cursed-profit glow
-- whale iconography
-- premium rope/carpet entrance
-- coin/sparkle particles
-- nearby poor-hero queue and refund denial signage
-- a tone of "technically optional, obviously unfair"
+"fantasy city-builder building, slightly angled top-down view, cozy detailed
+pixel art matching a premium fantasy town, grounded base with shadow, clear
+silhouette, transparent background, no text. 1). <building> 2). <building> ..."
+at size 160 (buildings), 64 (props/decals), 48 tiles-pro (terrain).

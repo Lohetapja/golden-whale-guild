@@ -42,8 +42,9 @@ export const BUILDING_CATALOG = [
   core('guildhall', 'Guild Hall', 'Core Buildings', 420, { w: 3, h: 3 }, 'Posts quests and produces heroic paperwork.', {
     capacity: 6,
   }),
-  core('tavern', 'Tavern', 'Rest / Housing', 260, { w: 2, h: 2 }, 'Beds, morale, and chairs reinforced for patch-note discourse.', {
+  core('tavern', 'Tavern', 'Rest / Housing', 260, { w: 2, h: 2 }, 'Adds beds and morale recovery.', {
     capacity: 6,
+    flavor: 'Heroes can now discover the premium feature called indoors.',
   }),
   core('blacksmith', 'Blacksmith', 'Recovery / Support', 320, { w: 2, h: 2 }, 'Improves honest hero power and forge-related optimism.'),
   core('training', 'Training Yard', 'Recovery / Support', 360, { w: 3, h: 2 }, 'Turns time and effort into suspiciously modest numbers.'),
@@ -58,14 +59,18 @@ export const BUILDING_CATALOG = [
   core('dungeon', 'Dungeon Gate', 'Defense / Missions', 500, { w: 3, h: 2 }, 'Quest access, threat control, and a door monsters respect selectively.', {
     kind: 'mixed',
   }),
-  core('whale', 'Golden Whale Milking Station', 'Premium', 680, { w: 3, h: 3 }, 'Fast gold, premium power, and measurable moral distance.', {
+  core('whale', 'Golden Whale Milking Station', 'Premium', 680, { w: 3, h: 3 }, 'Generates gold, corruption, and social collapse.', {
     kind: 'shady',
-    flavor: 'Available immediately because temptation tested well.',
+    flavor: 'Totally optional. Unless you enjoy winning.',
     actions: [
       action('premium_weapon', 'Sell Premium Weapon', '+Gold, whale Power, +Envy.', 0, { gold: 240, corruption: 3, trust: -2 }, 'whalePower', 'item_sword_of_unfair_advantage'),
       action('morale_boost', 'Sell Morale Boost', '+Gold, whale Morale.', 0, { gold: 160, corruption: 2 }, 'whaleMorale', 'item_confidence_booster_soup'),
       action('token_pack', 'Sell Whale Token Pack', 'Large +Gold, +Corruption.', 0, { gold: 300, corruption: 4, trust: -2 }, null, 'item_whale_token_pack'),
       action('optional_bundle', '"Optional" Convenience Bundle', 'Huge +Gold, -Trust, whale Power.', 0, { gold: 380, trust: -4, corruption: 5 }, 'whalePower', 'item_deluxe_struggle_bundle'),
+      {
+        ...action('scout_report', 'Premium Scout Report', 'Reveals fog for money. +Corruption.', 150, { corruption: 3 }, null, 'ui_dayreport_icon'),
+        special: 'scoutReveal',
+      },
     ],
   }),
 
@@ -236,44 +241,44 @@ export const BUILD_MENU_CATEGORIES = [
   },
   {
     id: 'core',
-    label: 'Core',
-    description: 'The services that make this collection of liabilities resemble a town.',
+    label: 'Civic Core',
+    description: 'The services that make this pile of liabilities legally a town.',
     buildingIds: ['guildhall', 'tavern', 'blacksmith', 'market', 'training', 'dungeon'],
   },
   {
     id: 'rest',
-    label: 'Rest',
+    label: 'Rest & Housing',
     description: 'Beds, blankets, and places to process quest trauma.',
     buildingIds: ['inn', 'hero_hostel', 'premium_lodge'],
   },
   {
     id: 'economy',
-    label: 'Shops',
-    description: 'Useful commerce, dynamic suffering, and paperwork with margins.',
+    label: 'Shops & Supply',
+    description: 'Honest commerce, dishonest margins.',
     buildingIds: ['potion_shop', 'bank_debt_office', 'gem_exchange', 'convenience_office'],
   },
   {
     id: 'defense',
-    label: 'Defense',
-    description: 'Places for noticing danger and charging admission to it.',
+    label: 'Defense & Missions',
+    description: 'Notice danger early. Bill it on arrival.',
     buildingIds: ['watchtower', 'arena'],
   },
   {
     id: 'premium',
-    label: 'Premium',
-    description: 'Fast growth with a complimentary moral distance.',
+    label: 'Premium Nonsense',
+    description: 'Fast growth with complimentary moral distance.',
     buildingIds: ['whale', 'vip_lounge', 'lootbox_kiosk'],
   },
   {
     id: 'social',
-    label: 'Social',
-    description: 'Fair progress, mentoring, and officially approved dissent.',
+    label: 'Public Order',
+    description: 'Fair progress, mentoring, and licensed dissent.',
     buildingIds: ['mentor_hall'],
   },
   {
     id: 'decorations',
     label: 'Decor',
-    description: 'Benches, trees, lamps, and other evidence of municipal confidence.',
+    description: 'Benches, trees, lamps, and other municipal confidence.',
     buildingIds: [],
     informational: true,
   },

@@ -20,13 +20,119 @@ export const GRID_WORLD = {
   height: GRID_CONFIG.originY * 2 + GRID_CONFIG.rows * GRID_CONFIG.tileSize,
 };
 
-// Purchasable land, in the order the town is expected to grow.
+// Legacy purchasable land. Kept only so old saves that bought zones can be
+// migrated into revealed fog tiles; new expansion happens through fog-of-war
+// exploration (roads, watchtowers, and heroes lift the fog).
 export const EXPANSION_ZONES = [
   { id: 'east', name: 'Eastern Lot', cost: 900, threat: 4, blurb: 'Room for shops and one questionable kiosk.' },
   { id: 'south', name: 'Southern Fields', cost: 1600, threat: 5, blurb: 'Flat, sunny, and zoned for future districts.' },
   { id: 'frontier', name: 'Eastern Frontier', cost: 2400, threat: 7, blurb: 'Far enough that the monsters call it their side.' },
   { id: 'southeast', name: 'Far Meadows', cost: 3200, threat: 8, blurb: 'Premium emptiness. The surveyor wept with joy.' },
 ];
+
+// --- fog of war ------------------------------------------------------------
+// The whole map exists from day one; only revealed tiles are visible and
+// buildable. Reveal sources and their radii (in tiles):
+export const FOG_REVEAL_RADIUS = {
+  guildhall: 8,
+  watchtower: 7,
+  building: 4,
+  road: 2,
+  heroExplore: 3,
+  premiumScout: 5,
+};
+
+// Reveal a rough circle around a grid cell. Mutates `revealedSet` (Set of
+// gridKey strings) and returns the newly revealed cells.
+export function revealCircle(revealedSet, centerX, centerY, radius) {
+  const added = [];
+  const limit = radius * radius + radius * 0.6; // soft edge, less perfect-circle
+  const minY = Math.max(0, Math.floor(centerY - radius));
+  const maxY = Math.min(GRID_CONFIG.rows - 1, Math.ceil(centerY + radius));
+  const minX = Math.max(0, Math.floor(centerX - radius));
+  const maxX = Math.min(GRID_CONFIG.columns - 1, Math.ceil(centerX + radius));
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const dx = x - centerX;
+      const dy = y - centerY;
+      if (dx * dx + dy * dy > limit) continue;
+      const key = gridKey(x, y);
+      if (revealedSet.has(key)) continue;
+      revealedSet.add(key);
+      added.push({ x, y });
+    }
+  }
+  return added;
+}
+
+// Build the revealed-tiles set for a loaded/new city.
+// - saves with a `revealed` array use it directly (new fog-era saves)
+// - older saves migrate their purchased zones so paid land stays usable
+// - both paths additionally reveal around existing buildings and roads so no
+//   placed content can end up stranded inside fog
+export function buildRevealedTiles(cityState, footprintById = {}) {
+  const revealed = new Set();
+  if (Array.isArray(cityState.revealed)) {
+    for (const key of cityState.revealed) {
+      if (typeof key !== 'string') continue;
+      const [x, y] = key.split(',').map(Number);
+      if (isInsideGrid(x, y)) revealed.add(gridKey(x, y));
+    }
+  } else {
+    for (const zoneId of cityState.unlockedZones || []) {
+      const zone = GRID_CONFIG.zones[zoneId];
+      if (!zone) continue;
+      for (let y = zone.minY; y <= zone.maxY; y += 1) {
+        for (let x = zone.minX; x <= zone.maxX; x += 1) revealed.add(gridKey(x, y));
+      }
+    }
+  }
+  for (const building of cityState.placedBuildings || []) {
+    const footprint = footprintById[building.id] || { w: 2, h: 2 };
+    const radius = building.id === 'guildhall'
+      ? FOG_REVEAL_RADIUS.guildhall
+      : building.id === 'watchtower'
+        ? FOG_REVEAL_RADIUS.watchtower
+        : FOG_REVEAL_RADIUS.building;
+    revealCircle(
+      revealed,
+      building.gridX + footprint.w / 2,
+      building.gridY + footprint.h / 2,
+      radius,
+    );
+  }
+  for (const road of cityState.roads || []) {
+    revealCircle(revealed, road.x, road.y, FOG_REVEAL_RADIUS.road);
+  }
+  return revealed;
+}
+
+// --- isometric projection seam ----------------------------------------------
+// The world currently renders on an orthogonal grid with angled building art.
+// These helpers centralize every grid<->world conversion so a future full
+// isometric (diamond) projection only has to change this one place. Today
+// they delegate to the orthogonal versions.
+export function gridToWorldIso(gridX, gridY, footprint = { w: 1, h: 1 }) {
+  return gridToWorld(gridX, gridY, footprint);
+}
+
+export function worldToGridIso(worldX, worldY) {
+  return worldToGrid(worldX, worldY);
+}
+
+export function getIsoTileCenter(gridX, gridY) {
+  const world = gridToWorld(gridX, gridY);
+  return { x: world.x, y: world.y - GRID_CONFIG.tileSize / 2 };
+}
+
+export function getIsoFootprintBounds(gridX, gridY, footprint = { w: 1, h: 1 }) {
+  return {
+    left: GRID_CONFIG.originX + gridX * GRID_CONFIG.tileSize,
+    top: GRID_CONFIG.originY + gridY * GRID_CONFIG.tileSize,
+    width: footprint.w * GRID_CONFIG.tileSize,
+    height: footprint.h * GRID_CONFIG.tileSize,
+  };
+}
 
 export const ROAD_TYPES = {
   dirt: {
@@ -63,6 +169,9 @@ export const ROAD_TYPES = {
 export const DEFAULT_NEW_CITY = {
   mode: 'builder',
   unlockedZones: ['west'],
+  // empty array = fog-era save: the starting clearing is derived from the
+  // guild hall and starter roads instead of a whole zone rectangle
+  revealed: [],
   roads: [
     ...Array.from({ length: 15 }, (_, x) => ({ x: x + 1, y: 7, type: 'dirt' })),
     ...Array.from({ length: 7 }, (_, y) => ({ x: 8, y: y + 4, type: 'dirt' })),
@@ -201,6 +310,10 @@ export function normalizeCityState(raw, legacyFactory) {
     unlockedZones: Array.isArray(incoming.unlockedZones) && incoming.unlockedZones.length
       ? [...incoming.unlockedZones]
       : ['west'],
+    // null = pre-fog save; buildRevealedTiles migrates purchased zones
+    revealed: Array.isArray(incoming.revealed)
+      ? incoming.revealed.filter((key) => typeof key === 'string')
+      : null,
     roads: Array.isArray(incoming.roads)
       ? incoming.roads
         .filter((road) => Number.isInteger(road.x) && Number.isInteger(road.y) && isInsideGrid(road.x, road.y))

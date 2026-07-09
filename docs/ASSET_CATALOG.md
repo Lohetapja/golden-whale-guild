@@ -240,3 +240,22 @@ pixel-art buildings matching the existing set.
 `ui_panel_parchment.png` (slot `ui_panel`) and `ui_panel_dark.png`
 (slot `ui_panel_dark`), 384x288 PixelLab UI panels, cataloged for future
 panel skinning.
+
+## 2026-07 Isometric Pass
+
+- **Building replacements** (`public/assets/buildings/`, 160px angled):
+  `building_tavern`, `building_inn`, `building_hero_hostel`,
+  `building_potion_shop`, `building_market`, `building_blacksmith`,
+  `building_guild_hall`, `building_dungeon_gate`, `building_golden_whale`,
+  `building_training_yard` - all previously flat/front-facing, now match the
+  angled premium set. New future slots: `building_rngesus_shrine`,
+  `building_pity_chapel` (art ready, catalog wiring pending).
+- **Terrain** (`public/assets/tiles/`): `terrain_grass_base` (seamless meadow
+  base, replaces flat debug grass), `terrain_grass_clover` (variant tile).
+  `terrain_dirt_patch` cataloged but not scattered (reads too square).
+- **Ground decals** (`public/assets/objects/decal_*.png`, 16 pieces): grass
+  tufts, wildflowers, dirt, puddles, rocks, mushrooms, stump, hay, fern etc.
+  Baked once into a static RenderTexture at boot (`buildTerrainVariety`).
+- Road tiles at high top-down were generated and kept in the PixelLab library
+  but not integrated (baked curbs repeat on vertical roads); road depth is
+  procedural instead (north lip + south curb face in `redrawCityRoads`).

@@ -17,15 +17,16 @@ import { ASSET_MANIFEST } from '../data/assetManifest.js';
 import { getItemByName, getRandomPremiumItem } from '../data/itemCatalog.js';
 import { rollMonster } from '../data/monsters.js';
 import {
+  buildRevealedTiles,
   createGridState,
-  EXPANSION_ZONES,
+  FOG_REVEAL_RADIUS,
   getFootprintCells,
   gridKey,
   gridToWorld,
   GRID_CONFIG,
   GRID_WORLD,
   isInsideGrid,
-  isTileUnlocked,
+  revealCircle,
   makeLegacyCityState,
   normalizeCityState,
   occupyBuildingCells,
@@ -458,6 +459,18 @@ export default class TownScene extends Phaser.Scene {
     for (const placement of this.cityState.placedBuildings) {
       const catalog = getBuildingCatalogEntry(placement.id);
       if (catalog) occupyBuildingCells(this.gridCells, placement, catalog.footprint);
+    }
+    // fog of war: revealed tiles are the buildable/visible world; old saves
+    // migrate their purchased zones, new games start with a small clearing
+    this.revealedTiles = buildRevealedTiles(this.cityState, Object.fromEntries(
+      this.cityState.placedBuildings.map((placement) => [
+        placement.id,
+        getBuildingCatalogEntry(placement.id)?.footprint || { w: 2, h: 2 },
+      ]),
+    ));
+    this.cityState.revealed = [...this.revealedTiles];
+    for (const cell of this.gridCells.values()) {
+      cell.unlocked = this.revealedTiles.has(gridKey(cell.x, cell.y));
     }
     this.day = saved?.day || 1;
     this.resources = saved?.resources || { ...BALANCE.startingResources };
@@ -967,6 +980,7 @@ export default class TownScene extends Phaser.Scene {
       cityBuilder: {
         mode: this.cityState.mode,
         unlockedZones: [...this.cityState.unlockedZones],
+        revealed: [...(this.revealedTiles || [])],
         roads: this.cityState.roads.map((road) => ({ ...road })),
         placedBuildings: this.cityState.placedBuildings.map((building) => ({ ...building })),
         buildingRuntime: structuredClone(this.cityState.buildingRuntime || {}),
@@ -1810,12 +1824,15 @@ export default class TownScene extends Phaser.Scene {
   // --- world ------------------------------------------------------------
 
   buildTerrain() {
-    this.add.tileSprite(this.worldWidth / 2, this.worldHeight / 2, this.worldWidth, this.worldHeight, 'grass');
+    // textured meadow base replaces the flat debug grass when the art exists
+    const baseKey = this.isBuilderCity
+      ? resolveTexture(this, 'terrain_grass_base', 'grass')
+      : 'grass';
+    this.add.tileSprite(this.worldWidth / 2, this.worldHeight / 2, this.worldWidth, this.worldHeight, baseKey);
 
     if (this.isBuilderCity) {
-      this.landHighlightGraphics = this.add.graphics().setDepth(1);
+      this.buildTerrainVariety();
       this.terrainDetailGraphics = this.add.graphics().setDepth(2);
-      this.redrawLandHighlight();
       this.redrawTerrainDetails();
       this.redrawWildernessDressing();
       this.redrawCityRoads();
@@ -1875,28 +1892,114 @@ export default class TownScene extends Phaser.Scene {
       wordWrap: { width: 260 },
     }).setOrigin(0.5, 1).setDepth(4860).setVisible(false);
     this.buildPreviewGhost = null;
-    this.redrawLockedLand();
+    this.redrawFog();
     this.redrawBuildGrid();
   }
 
-  redrawLandHighlight() {
-    if (!this.landHighlightGraphics) return;
-    this.landHighlightGraphics.clear();
-    this.landHighlightGraphics.fillStyle(0xb8d98a, 0.08);
-    for (const zoneId of this.cityState.unlockedZones) {
-      const zone = GRID_CONFIG.zones[zoneId];
-      if (!zone) continue;
-      this.landHighlightGraphics.fillRect(
-        GRID_CONFIG.originX + zone.minX * GRID_CONFIG.tileSize,
-        GRID_CONFIG.originY + zone.minY * GRID_CONFIG.tileSize,
-        (zone.maxX - zone.minX + 1) * GRID_CONFIG.tileSize,
-        (zone.maxY - zone.minY + 1) * GRID_CONFIG.tileSize,
-      );
+  // --- fog of war -----------------------------------------------------------
+
+  isRevealed(x, y) {
+    return this.revealedTiles?.has(gridKey(x, y)) || false;
+  }
+
+  // reveal a circle of tiles and refresh everything fog-dependent;
+  // returns how many new tiles appeared
+  revealArea(gridX, gridY, radius, source = '') {
+    if (!this.isBuilderCity || !this.revealedTiles) return 0;
+    const added = revealCircle(this.revealedTiles, gridX, gridY, radius);
+    if (!added.length) return 0;
+    for (const spot of added) {
+      const cell = this.gridCells.get(gridKey(spot.x, spot.y));
+      if (cell) cell.unlocked = true;
     }
+    this.cityState.revealed = [...this.revealedTiles];
+    this.redrawFog();
+    this.redrawTerrainDetails();
+    this.redrawWildernessDressing();
+    if (source) this.addTownLog(`${source} lifted the fog: ${added.length} tiles charted.`, 'unlock');
+    return added.length;
+  }
+
+  // frontier cells: revealed=true gives walkable fog-edge tiles (hero
+  // destinations), revealed=false gives fogged tiles touching the clearing
+  // (scout-report targets)
+  getFogFrontierCells(revealed = true) {
+    const frontier = [];
+    for (const cell of this.gridCells.values()) {
+      if (Boolean(cell.unlocked) !== revealed) continue;
+      const neighbors = [
+        this.gridCells.get(gridKey(cell.x + 1, cell.y)),
+        this.gridCells.get(gridKey(cell.x - 1, cell.y)),
+        this.gridCells.get(gridKey(cell.x, cell.y + 1)),
+        this.gridCells.get(gridKey(cell.x, cell.y - 1)),
+      ];
+      if (neighbors.some((item) => item && Boolean(item.unlocked) !== revealed)) frontier.push(cell);
+    }
+    return frontier;
+  }
+
+  runPremiumScoutReveal() {
+    const targets = this.getFogFrontierCells(false);
+    if (!targets.length) {
+      this.game.events.emit('gwg-event', 'The scouts found no fog left to monetize. Refunds are unavailable.');
+      return;
+    }
+    const spot = Phaser.Utils.Array.GetRandom(targets);
+    const added = this.revealArea(spot.x, spot.y, FOG_REVEAL_RADIUS.premiumScout, 'Premium Scout Report');
+    const world = gridToWorld(spot.x, spot.y);
+    this.floatText(world.x, world.y - 30, 'FOG CHARTED', '#ffe08a');
+    this.game.events.emit(
+      'gwg-event',
+      `Premium Scout Report delivered: ${added} tiles. The fog lifted after being monetized.`,
+    );
   }
 
   getTerrainHash(x, y, salt = 0) {
     return Math.abs(((x + 17) * 73856093) ^ ((y + 31) * 19349663) ^ (salt * 83492791));
+  }
+
+  // one static render pass of terrain variety: clover meadows, dirt patches
+  // and small ground decals baked into a single texture at boot so the world
+  // reads like a natural map instead of flat debug green, at zero per-frame
+  // cost. Roads, buildings, and fog all draw above this layer.
+  buildTerrainVariety() {
+    // dirt squares read as hard 48px stamps; dirt texture comes from the
+    // softer decal set instead, clover stays as a green-on-green variant
+    const variantKeys = ['terrain_grass_clover']
+      .filter((key) => this.textures.exists(key));
+    const decalKeys = [
+      'decal_grass_tuft', 'decal_tall_grass', 'decal_wildflowers', 'decal_dirt_mound',
+      'decal_mud_puddle', 'decal_leaf_litter', 'decal_rock_trio', 'decal_mushrooms',
+      'decal_clover', 'decal_pebbles', 'decal_flowers_yellow', 'decal_flowers_red',
+      'decal_hay_pile', 'decal_tree_stump', 'decal_berry_bush', 'decal_fern',
+    ].filter((key) => this.textures.exists(key));
+    if (!variantKeys.length && !decalKeys.length) return;
+
+    const tile = GRID_CONFIG.tileSize;
+    const rt = this.add.renderTexture(
+      GRID_CONFIG.originX,
+      GRID_CONFIG.originY,
+      GRID_CONFIG.columns * tile,
+      GRID_CONFIG.rows * tile,
+    ).setOrigin(0, 0).setDepth(1);
+    rt.beginDraw();
+    for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
+      for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
+        const hash = this.getTerrainHash(x, y, 11);
+        const roll = hash % 100;
+        if (variantKeys.length && roll < 13) {
+          rt.batchDraw(variantKeys[hash % variantKeys.length], x * tile, y * tile);
+        } else if (decalKeys.length && roll >= 13 && roll < 31) {
+          rt.batchDraw(
+            decalKeys[(hash >> 3) % decalKeys.length],
+            x * tile + ((hash % 9) - 8),
+            y * tile + (((hash >> 2) % 9) - 8),
+          );
+        }
+      }
+    }
+    rt.endDraw();
+    this.terrainVarietyRt = rt;
   }
 
   isRoadOrRoadShoulder(x, y, radius = 1) {
@@ -1918,7 +2021,7 @@ export default class TownScene extends Phaser.Scene {
         if (!cell || cell.road || cell.occupiedBy || this.isRoadOrRoadShoulder(x, y, 1)) continue;
         const world = gridToWorld(x, y);
         const hash = this.getTerrainHash(x, y, 3);
-        const unlocked = isTileUnlocked(x, y, this.cityState.unlockedZones);
+        const unlocked = Boolean(cell.unlocked);
         const edge = x < 2 || y < 2 || x > GRID_CONFIG.columns - 3 || y > GRID_CONFIG.rows - 3;
         const chance = unlocked ? (edge ? 30 : 22) : (edge ? 34 : 10);
         if (hash % 100 >= chance) continue;
@@ -1967,7 +2070,7 @@ export default class TownScene extends Phaser.Scene {
     if (!keys.length) return;
     for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
       for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
-        if (isTileUnlocked(x, y, this.cityState.unlockedZones)) continue;
+        if (this.isRevealed(x, y)) continue;
         const hash = Math.abs((x * 73856093) ^ (y * 19349663)) % 1000;
         if (hash % 100 >= 8) continue;
         const world = gridToWorld(x, y);
@@ -1982,21 +2085,55 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
-  redrawLockedLand() {
+  // unexplored world: layered organic fog instead of a flat dark rectangle.
+  // Depth-tinted tiles + soft edge skirts on revealed frontier tiles keep the
+  // boundary from reading as a hard grid line.
+  redrawFog() {
     if (!this.lockedLandGraphics) return;
-    this.lockedLandGraphics.clear();
+    const g = this.lockedLandGraphics;
+    g.clear();
     if (!this.isBuilderCity) return;
+    const tile = GRID_CONFIG.tileSize;
     for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
       for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
-        if (isTileUnlocked(x, y, this.cityState.unlockedZones)) continue;
-        const world = gridToWorld(x, y);
-        this.lockedLandGraphics.fillStyle(0x18202b, 0.52);
-        this.lockedLandGraphics.fillRect(
-          world.x - GRID_CONFIG.tileSize / 2,
-          world.y - GRID_CONFIG.tileSize,
-          GRID_CONFIG.tileSize,
-          GRID_CONFIG.tileSize,
-        );
+        const cell = this.gridCells.get(gridKey(x, y));
+        const left = GRID_CONFIG.originX + x * tile;
+        const top = GRID_CONFIG.originY + y * tile;
+        if (cell?.unlocked) {
+          // soft fog skirt bleeding onto revealed frontier tiles
+          const foggedSides = {
+            west: !this.isRevealed(x - 1, y) && isInsideGrid(x - 1, y),
+            east: !this.isRevealed(x + 1, y) && isInsideGrid(x + 1, y),
+            north: !this.isRevealed(x, y - 1) && isInsideGrid(x, y - 1),
+            south: !this.isRevealed(x, y + 1) && isInsideGrid(x, y + 1),
+          };
+          g.fillStyle(0x141c28, 0.2);
+          const skirt = 14;
+          if (foggedSides.west) g.fillRect(left, top, skirt, tile);
+          if (foggedSides.east) g.fillRect(left + tile - skirt, top, skirt, tile);
+          if (foggedSides.north) g.fillRect(left, top, tile, skirt);
+          if (foggedSides.south) g.fillRect(left, top + tile - skirt, tile, skirt);
+          continue;
+        }
+        // fog gets deeper the further it sits from the frontier
+        const nearClearing = this.isRevealed(x - 1, y) || this.isRevealed(x + 1, y)
+          || this.isRevealed(x, y - 1) || this.isRevealed(x, y + 1)
+          || this.isRevealed(x - 1, y - 1) || this.isRevealed(x + 1, y + 1)
+          || this.isRevealed(x - 1, y + 1) || this.isRevealed(x + 1, y - 1);
+        const hash = this.getTerrainHash(x, y, 7);
+        const alpha = (nearClearing ? 0.4 : 0.58) + (hash % 7) * 0.012;
+        g.fillStyle(hash % 3 ? 0x131b26 : 0x101722, alpha);
+        g.fillRect(left, top, tile, tile);
+        // faint drifting mist blobs so deep fog is not a flat fill
+        if (!nearClearing && hash % 5 === 0) {
+          g.fillStyle(0x2a3648, 0.14);
+          g.fillEllipse(
+            left + tile / 2 + ((hash % 17) - 8),
+            top + tile / 2 + (((hash >> 3) % 13) - 6),
+            26 + (hash % 20),
+            12 + ((hash >> 4) % 9),
+          );
+        }
       }
     }
   }
@@ -2060,11 +2197,14 @@ export default class TownScene extends Phaser.Scene {
 
   redrawCityRoads() {
     if (!this.cityRoadGraphics) this.cityRoadGraphics = this.add.graphics().setDepth(20);
+    if (!this.cityRoadOverlay) this.cityRoadOverlay = this.add.graphics().setDepth(20.7);
     if (!this.cityRoadImages) this.cityRoadImages = [];
     for (const image of this.cityRoadImages) image.destroy();
     this.cityRoadImages = [];
     const graphics = this.cityRoadGraphics;
+    const overlay = this.cityRoadOverlay;
     graphics.clear();
+    overlay.clear();
     if (!this.isBuilderCity) return;
 
     const roadTextureByType = {
@@ -2096,6 +2236,27 @@ export default class TownScene extends Phaser.Scene {
         const image = this.add.image(left, top, textureKey).setOrigin(0, 0).setDepth(20.5);
         image.setCrop(rect.x - left, rect.y - top, rect.width, rect.height);
         this.cityRoadImages.push(image);
+        // pseudo-depth so roads match the angled buildings: a raised light lip
+        // on open north edges and a darker curb face on open south edges make
+        // the road bed read as a slab instead of a painted strip
+        if (!(mask & 1)) { // north open
+          overlay.fillStyle(0xffffff, 0.13);
+          overlay.fillRect(rect.x + 1, rect.y, rect.width - 2, 2);
+        }
+        if (!(mask & 4)) { // south open
+          overlay.fillStyle(type.edgeColor, 0.85);
+          overlay.fillRect(rect.x + 1, rect.y + rect.height - 2, rect.width - 2, 2);
+          overlay.fillStyle(0x10151d, 0.3);
+          overlay.fillRect(rect.x + 2, rect.y + rect.height, rect.width - 4, 3);
+        }
+        if (!(mask & 8)) { // west open
+          overlay.fillStyle(0x10151d, 0.14);
+          overlay.fillRect(rect.x, rect.y + 1, 2, rect.height - 2);
+        }
+        if (!(mask & 2)) { // east open
+          overlay.fillStyle(0x10151d, 0.14);
+          overlay.fillRect(rect.x + rect.width - 2, rect.y + 1, 2, rect.height - 2);
+        }
         continue;
       }
 
@@ -2226,8 +2387,8 @@ export default class TownScene extends Phaser.Scene {
     if (cells.some((cell) => !isInsideGrid(cell.x, cell.y))) {
       return { valid: false, reason: 'That plan extends beyond approved reality.' };
     }
-    if (cells.some((cell) => !isTileUnlocked(cell.x, cell.y, this.cityState.unlockedZones))) {
-      return { valid: false, reason: 'Land locked. The paperwork has territorial ambitions.' };
+    if (cells.some((cell) => !this.isRevealed(cell.x, cell.y))) {
+      return { valid: false, reason: 'Hidden by fog. Build roads toward it or let heroes explore first.' };
     }
 
     if (this.buildMode.kind === 'road') {
@@ -2437,6 +2598,7 @@ export default class TownScene extends Phaser.Scene {
     });
     this.cityState.roads.push({ x: gridX, y: gridY, type: typeId });
     this.gridCells.get(gridKey(gridX, gridY)).road = typeId;
+    this.revealArea(gridX, gridY, FOG_REVEAL_RADIUS.road);
     this.redrawTerrainDetails();
     this.redrawCityRoads();
     const world = gridToWorld(gridX, gridY);
@@ -2455,6 +2617,12 @@ export default class TownScene extends Phaser.Scene {
     const placement = { id, gridX, gridY };
     this.cityState.placedBuildings.push(placement);
     occupyBuildingCells(this.gridCells, placement, catalog.footprint);
+    this.revealArea(
+      gridX + catalog.footprint.w / 2,
+      gridY + catalog.footprint.h / 2,
+      id === 'watchtower' ? FOG_REVEAL_RADIUS.watchtower : FOG_REVEAL_RADIUS.building,
+      id === 'watchtower' ? 'The new watchtower' : '',
+    );
     const position = gridToWorld(gridX, gridY, catalog.footprint);
     Object.assign(building, position, {
       gridX,
@@ -2700,45 +2868,24 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.emit('gwg-ledger-open', this.getBuildMenuPayload(categoryId));
   }
 
-  // only the next locked zone (in expansion order) is offered, so the town
-  // grows outward instead of buying random far corners first
-  getNextExpansionZone() {
-    return EXPANSION_ZONES.find((zone) => !this.cityState.unlockedZones.includes(zone.id)) || null;
-  }
-
+  // expansion is exploration now: the build menu explains how the fog lifts
+  // instead of selling a rectangle
   getExpansionActions() {
-    const zone = this.getNextExpansionZone();
-    if (!zone) return [{ label: 'All land unlocked', event: 'gwg-cancel-build', disabled: true }];
+    const fogged = this.getFogFrontierCells(false).length;
+    if (!fogged) return [];
     return [{
-      label: `Expand: ${zone.name} - ${zone.cost}g`,
-      event: 'gwg-expand-land',
-      id: zone.id,
-      disabled: this.resources.gold < zone.cost,
+      label: 'Fog: roads, watchtowers & heroes reveal land',
+      event: 'gwg-cancel-build',
+      disabled: true,
     }];
   }
 
-  expandLand(zoneId) {
-    const zone = EXPANSION_ZONES.find((entry) => entry.id === zoneId)
-      || this.getNextExpansionZone();
-    if (!zone || this.cityState.unlockedZones.includes(zone.id)) return;
-    if (this.resources.gold < zone.cost) {
-      this.game.events.emit('gwg-event', `Expansion costs ${zone.cost}g. The surveyor does not accept optimism.`);
-      return;
-    }
-    this.applyDeltas({ gold: -zone.cost, threat: zone.threat });
-    this.cityState.unlockedZones.push(zone.id);
-    for (const cell of this.gridCells.values()) {
-      cell.unlocked = isTileUnlocked(cell.x, cell.y, this.cityState.unlockedZones);
-    }
-    this.redrawLockedLand();
-    this.redrawLandHighlight();
-    this.redrawTerrainDetails();
-    this.redrawWildernessDressing();
-    const text = `${zone.name} unlocked. ${zone.blurb} The monsters noticed the paperwork.`;
-    this.game.events.emit('gwg-event', text);
-    this.addTownLog(text, 'unlock');
-    this.saveGame(false);
-    this.openBuildMenu();
+  // legacy event kept so old UI paths do something sensible
+  expandLand() {
+    this.game.events.emit(
+      'gwg-event',
+      'Land is no longer for sale. Explore: roads, watchtowers, and heroes lift the fog.',
+    );
   }
 
   stampPath(g, x1, y1, x2, y2, radius = 10) {
@@ -3910,8 +4057,19 @@ export default class TownScene extends Phaser.Scene {
     const place = this.placeById?.[id];
     if (!place) return;
     const wasLedger = this.activeInspector?.type === 'ledger';
+    const levelBefore = this.getPlaceLevel(place);
     this.tooltipTarget = place;
     this.tryUpgradeTooltipTarget();
+    // taller watchtowers see further into the fog
+    if (id === 'watchtower' && place.isPlaced && this.getPlaceLevel(place) > levelBefore) {
+      const cell = worldToGrid(place.x, place.y);
+      this.revealArea(
+        cell.x,
+        cell.y,
+        FOG_REVEAL_RADIUS.watchtower + this.getPlaceLevel(place),
+        'The taller watchtower',
+      );
+    }
     if (wasLedger) this.openTownLedger();
     else this.showPlaceInspector(place);
   }
@@ -4040,6 +4198,7 @@ export default class TownScene extends Phaser.Scene {
     this.applyDeltas(deltas);
     this.getBuildingRuntime(placeId).actionDays[actionId] = this.day;
     const heroResult = this.applyBuildingHeroEffect(shopAction.heroEffect, place);
+    if (shopAction.special === 'scoutReveal') this.runPremiumScoutReveal();
     if (catalog.kind === 'shady') this.stats.premiumActions = (this.stats.premiumActions || 0) + 1;
     const text = `${place.name}: ${shopAction.label}. ${shopAction.summary} ${heroResult}`.trim();
     this.game.events.emit('gwg-event', text);
@@ -5851,6 +6010,21 @@ export default class TownScene extends Phaser.Scene {
       const gate = this.doorById.dungeon || { x: PLAZA.x + 120, y: PLAZA.y - 90 };
       return { id: 'wilderness', name: 'Wilderness', x: gate.x + 120, y: Math.max(90, gate.y - 80), h: 40 };
     }
+    // heroes walk to the fog frontier: a revealed tile that borders fog, so
+    // exploration visibly pushes the map outward
+    const frontier = this.getFogFrontierCells(true);
+    if (frontier.length) {
+      const pick = frontier[(this.day * 7 + hero.def.id.length * 13 + hero.def.name.length) % frontier.length];
+      const world = gridToWorld(pick.x, pick.y);
+      return {
+        id: `wilderness-${hero.def.id}`,
+        name: 'Fog Frontier',
+        x: world.x,
+        y: world.y - GRID_CONFIG.tileSize / 2,
+        h: 40,
+      };
+    }
+    // fully charted map: fall back to a spot beyond the founding district
     const west = GRID_CONFIG.zones.west;
     const edgeX = Math.min(GRID_CONFIG.columns - 2, west.maxX + 3 + ((this.day + hero.def.id.length) % 6));
     const edgeY = Phaser.Math.Clamp(
@@ -6140,7 +6314,12 @@ export default class TownScene extends Phaser.Scene {
         }
 
         this.walkTo(hero, spot, () => {
-          if (ev.explore) this.showMonsterEncounter(ev.monster, spot.x, spot.y);
+          if (ev.explore) {
+            this.showMonsterEncounter(ev.monster, spot.x, spot.y);
+            // expeditions chart the land they walked, win or lose
+            const cell = worldToGrid(spot.x, spot.y);
+            this.revealArea(cell.x, cell.y, FOG_REVEAL_RADIUS.heroExplore, `${hero.def.name}'s expedition`);
+          }
           this.say(hero, ev.bubble, true);
           if (ev.leave) this.sendHeroAway(hero, 2);
           else this.scheduleAmbient(hero, Phaser.Math.Between(3000, 6000));

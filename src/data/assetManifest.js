@@ -35,6 +35,9 @@ export const ASSET_MANIFEST = [
   { key: 'building_lootbox_kiosk', path: 'assets/buildings/building_lootbox_kiosk.png', type: 'image', fallback: 'generated ph-lootbox_kiosk' },
   { key: 'building_gem_exchange', path: 'assets/buildings/building_gem_exchange.png', type: 'image', fallback: 'generated ph-gem_exchange' },
   { key: 'building_convenience_office', path: 'assets/buildings/building_convenience_office.png', type: 'image', fallback: 'generated ph-convenience_office' },
+  // future satire buildings (art ready, catalog wiring pending)
+  { key: 'building_rngesus_shrine', path: 'assets/buildings/building_rngesus_shrine.png', type: 'image', fallback: 'not yet buildable' },
+  { key: 'building_pity_chapel', path: 'assets/buildings/building_pity_chapel.png', type: 'image', fallback: 'not yet buildable' },
 
   // --- characters ----------------------------------------------------------
   // hero_default is the shared stand-in used when a personality sheet is
@@ -168,6 +171,9 @@ export const ASSET_MANIFEST = [
   { key: 'tile_road_premium', path: 'assets/tiles/road_premium.png', type: 'image', fallback: 'procedural road rectangles' },
   { key: 'tile_road_plaza', path: 'assets/tiles/road_plaza.png', type: 'image', fallback: 'procedural road rectangles' },
   { key: 'tile_road_plaza_star', path: 'assets/tiles/road_plaza_star.png', type: 'image', fallback: 'plain plaza tile' },
+  { key: 'terrain_grass_base', path: 'assets/tiles/terrain_grass_base.png', type: 'image', fallback: 'generated flat grass' },
+  { key: 'terrain_grass_clover', path: 'assets/tiles/terrain_grass_clover.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'terrain_dirt_patch', path: 'assets/tiles/terrain_dirt_patch.png', type: 'image', fallback: 'terrain detail ellipses' },
 
   // --- ui --------------------------------------------------------------------
   { key: 'ui_panel', path: 'assets/ui/ui_panel_parchment.png', type: 'image', fallback: 'generated rounded rect (tooltip/panels)' },
@@ -258,4 +264,22 @@ export const ASSET_MANIFEST = [
   { key: 'object_campfire', path: 'assets/objects/object_campfire.png', type: 'image', fallback: 'generated lamp' },
   { key: 'object_brazier', path: 'assets/objects/object_brazier.png', type: 'image', fallback: 'generated lamp' },
   { key: 'object_market_stall', path: 'assets/objects/object_market_stall.png', type: 'image', fallback: 'generated table prop' },
+
+  // --- terrain ground decals (PixelLab batch, 64px, baked into one RT) -------
+  { key: 'decal_grass_tuft', path: 'assets/objects/decal_grass_tuft.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_tall_grass', path: 'assets/objects/decal_tall_grass.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_wildflowers', path: 'assets/objects/decal_wildflowers.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_dirt_mound', path: 'assets/objects/decal_dirt_mound.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_mud_puddle', path: 'assets/objects/decal_mud_puddle.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_leaf_litter', path: 'assets/objects/decal_leaf_litter.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_rock_trio', path: 'assets/objects/decal_rock_trio.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_mushrooms', path: 'assets/objects/decal_mushrooms.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_clover', path: 'assets/objects/decal_clover.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_pebbles', path: 'assets/objects/decal_pebbles.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_flowers_yellow', path: 'assets/objects/decal_flowers_yellow.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_flowers_red', path: 'assets/objects/decal_flowers_red.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_hay_pile', path: 'assets/objects/decal_hay_pile.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_tree_stump', path: 'assets/objects/decal_tree_stump.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_berry_bush', path: 'assets/objects/decal_berry_bush.png', type: 'image', fallback: 'terrain detail ellipses' },
+  { key: 'decal_fern', path: 'assets/objects/decal_fern.png', type: 'image', fallback: 'terrain detail ellipses' },
 ];
