@@ -157,7 +157,7 @@ export default class UIScene extends Phaser.Scene {
       this.resourceTexts[meta.key] = { bg, icon, label, value, meta };
     }
 
-    // clicking the day counter reopens the latest day report
+    // clicking the day counter opens the latest weekly report or pending policy
     this.dayText = this.add.text(WIDTH - 16, compact ? 20 : 22, 'Day 1', {
       fontFamily: FONT, fontSize: compact ? this.rsp.font(11) : '16px', fontStyle: 'bold', color: '#fff6dc',
       stroke: '#0c1118', strokeThickness: 2,
@@ -426,12 +426,6 @@ export default class UIScene extends Phaser.Scene {
     this.cycleBg.on('pointerover', () => this.styleButton('hover'));
     this.cycleBg.on('pointerout', () => this.styleButton('normal'));
     this.cycleBg.on('pointerup', () => {
-      // a pending policy redirects the button to the report/policy panel
-      // instead of skipping the day (no forced popups, but a clear path)
-      if (this.policyPending) {
-        this.game.events.emit('gwg-open-report');
-        return;
-      }
       // relative scaling so an asset-backed button (setDisplaySize) pops correctly
       this.tweens.add({
         targets: this.cycleBg,
@@ -845,7 +839,7 @@ export default class UIScene extends Phaser.Scene {
     if (!this.panelEl) return;
     const isBuildCatalog = payload.panelType === 'build-catalog';
     const isTownLedger = payload.panelType === 'town-ledger';
-    const isDayReport = payload.panelType === 'day-report';
+    const isDayReport = payload.panelType === 'day-report' || payload.panelType === 'week-report';
     if (this.currentHtmlPanelType === 'town-ledger') {
       this.townLedgerScrollTop = this.panelBodyEl.scrollTop;
     }
@@ -881,7 +875,7 @@ export default class UIScene extends Phaser.Scene {
     this.cycleBg.setInteractive({ useHandCursor: true });
     this.styleButton('normal');
     this.cycleLabel
-      .setText(this.policyPending ? 'Policy Pending' : (this.cycleReadyLabel || 'Skip Day >'))
+      .setText(this.cycleReadyLabel || 'Skip Day >')
       .setAlpha(1);
   }
 
@@ -952,31 +946,33 @@ export default class UIScene extends Phaser.Scene {
     });
   }
 
-  // compact end-of-day banner: quiet days no longer open the full report panel
-  showDaySummary({ day, summary } = {}) {
+  // compact end-of-day banner: only weekly boundaries offer a report link
+  showDaySummary({ day, summary, reportReady = false } = {}) {
     this.daySummaryGroup?.destroy(true);
     const icon = this.textures.exists('ui_dayreport_icon') ? 'ui_dayreport_icon' : null;
     const container = this.add.container(WIDTH / 2, 132).setDepth(6800);
-    const label = this.add.text(icon ? 14 : 0, -8, `Day ${day} complete   ${summary}`, {
+    const label = this.add.text(icon ? 14 : 0, reportReady ? -8 : 0, `Day ${day} complete   ${summary}`, {
       fontFamily: FONT, fontSize: '14px', fontStyle: 'bold', color: '#fff6dc',
       stroke: '#0c1118', strokeThickness: 3,
     }).setOrigin(0.5, 0.5);
-    const open = this.add.text(icon ? 14 : 0, 12, '[ Open Report ]', {
+    const open = this.add.text(icon ? 14 : 0, 12, '[ Open Week Report ]', {
       fontFamily: FONT, fontSize: '12px', fontStyle: 'bold', color: '#ffe08a',
       stroke: '#0c1118', strokeThickness: 3,
-    }).setOrigin(0.5, 0.5).setInteractive({ useHandCursor: true });
-    const width = Math.max(label.width, open.width) + (icon ? 58 : 24);
-    const bg = this.add.rectangle(icon ? 7 : 0, 2, width, 52, 0x141a24, 0.92)
+    }).setOrigin(0.5, 0.5).setInteractive({ useHandCursor: true }).setVisible(reportReady);
+    const width = Math.max(label.width, reportReady ? open.width : 0) + (icon ? 58 : 24);
+    const bg = this.add.rectangle(icon ? 7 : 0, reportReady ? 2 : 0, width, reportReady ? 52 : 34, 0x141a24, 0.92)
       .setStrokeStyle(1, 0xbf8a38, 0.9);
     container.add([bg, label, open]);
     if (icon) {
       container.add(this.add.image(-width / 2 + 26, 2, icon).setScale(0.7));
     }
-    open.on('pointerup', () => {
-      this.game.events.emit('gwg-open-report');
-      this.daySummaryGroup?.destroy(true);
-      this.daySummaryGroup = null;
-    });
+    if (reportReady) {
+      open.on('pointerup', () => {
+        this.game.events.emit('gwg-open-report');
+        this.daySummaryGroup?.destroy(true);
+        this.daySummaryGroup = null;
+      });
+    }
     container.setAlpha(0);
     this.tweens.add({ targets: container, alpha: 1, duration: 220 });
     this.daySummaryGroup = container;
@@ -994,7 +990,7 @@ export default class UIScene extends Phaser.Scene {
     });
   }
 
-  // compact clickable "! Policy choice pending" / "! Day N report ready"
+  // compact clickable "! Policy Pending" / "! Week Report Ready"
   // badge inside the top bar, left of the Day counter; opens the report panel
   updateNoticeBadge(value) {
     const notice = String(value || '');
@@ -1018,10 +1014,9 @@ export default class UIScene extends Phaser.Scene {
         .setText(`! ${notice}`)
         .setPosition(this.dayText.x - this.dayText.width - (M ? this.rsp.size(12) : 14), this.dayText.y);
     }
-    // Skip Day relabels while a policy blocks the town's attention
-    this.policyPending = notice.startsWith('Policy');
+    this.policyPending = notice.includes('Policy');
     if (this.cycleLabel && this.cycleLabel.text !== 'Resolving...') {
-      this.cycleLabel.setText(this.policyPending ? 'Policy Pending' : (this.cycleReadyLabel || 'Skip Day >'));
+      this.cycleLabel.setText(this.cycleReadyLabel || 'Skip Day >');
     }
   }
 

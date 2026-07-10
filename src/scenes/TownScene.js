@@ -132,6 +132,9 @@ const BALANCE = {
   goldenWhaleTrustLoss: [2, 4],
   goldenWhaleCorruptionGain: [3, 6],
   policyInterval: 3,
+  weekLength: 7,
+  policyNeglectDelay: 2,
+  monsterBaseDailyChance: 0.08,
 };
 
 const HERO_GROUPS = {
@@ -236,6 +239,41 @@ const ACCOUNTANT_NOTES = [
   'Threat exposure increased, but the chart uses heroic colors.',
   'Fairness leakage is down after we stopped measuring it.',
   'Citizen complaints have been bundled into premium insight.',
+];
+
+const WEEKLY_REPORT_LINES = [
+  'Weekly Report: The town survived, technically.',
+  'Weekly Report: Progress detected. Accountability still missing.',
+  'Weekly Report: Heroes completed quests, monsters complained, and the economy remained suspicious.',
+  'Weekly Report: The guild grew, the ledger sighed, and nobody found the ethics drawer.',
+];
+
+const POLICY_NEGLECT_LINES = [
+  'The council postponed the issue until it became a feature.',
+  'The town ignored the complaint. The complaint gained experience.',
+  'No decision was made. Somehow, this was also a decision.',
+  'The committee tabled the issue. The table filed for hazard pay.',
+];
+
+const MONSTER_WARNING_LINES = [
+  'Monster activity near the eastern fog.',
+  'Something in the wilderness is reading the town charter aggressively.',
+  'Tracks appeared outside town. Several were shaped like poor decisions.',
+  'The dungeon coughed politely and sent a visitor.',
+];
+
+const MONSTER_VICTORY_LINES = [
+  'The monster dropped gold and an apology coupon.',
+  'The town called this defense. The monster called it scope creep.',
+  'Heroes won. The paperwork survived with minor bite marks.',
+  'The attacker retreated after discovering the local economy was already hostile.',
+];
+
+const MONSTER_DAMAGE_LINES = [
+  'The monster damaged civic confidence and several loose crates.',
+  'No hero stopped it in time. The city paid the usual emergency convenience fee.',
+  'The attack ended after morale leaked into the road.',
+  'The monster left before anyone could upsell it a permit.',
 ];
 
 const TOWN_IDENTITIES = {
@@ -496,6 +534,12 @@ export default class TownScene extends Phaser.Scene {
       warningEvents: 0,
       questFailures: 0,
       premiumActions: 0,
+      monsterAttacks: 0,
+      monsterVictories: 0,
+      monsterDamageEvents: 0,
+      heroInjuries: 0,
+      heroesLeft: 0,
+      corruptionEvents: 0,
       ...(saved?.stats || {}),
     };
     this.completedObjectives = new Set(saved?.completedObjectives || []);
@@ -505,6 +549,14 @@ export default class TownScene extends Phaser.Scene {
     this.crises = saved?.crises || {};
     this.achievements = new Set(saved?.achievements || []);
     this.pendingPolicy = saved?.pendingPolicy || null;
+    this.weeklyReport = saved?.weeklyReport || null;
+    this.weekReportUnread = Boolean(saved?.weekReportUnread);
+    this.weekTracker = this.normalizeWeekTracker(saved?.weekTracker);
+    this.monsterState = {
+      lastAttackDay: Number(saved?.monsterState?.lastAttackDay) || 0,
+      weekAttackCount: Number(saved?.monsterState?.weekAttackCount) || 0,
+      activeAttacks: Array.isArray(saved?.monsterState?.activeAttacks) ? saved.monsterState.activeAttacks.slice(0, 3) : [],
+    };
     this.tutorial = {
       step: Number(saved?.tutorial?.step) || 0,
       completed: Boolean(saved?.tutorial?.completed),
@@ -578,7 +630,6 @@ export default class TownScene extends Phaser.Scene {
     this.registry.set('townStage', this.getCurrentStage().name);
     this.registry.set('townIdentity', this.getTownIdentity().name);
     this.registry.set('simulationSpeed', this.simulationSpeed);
-    this.reportUnread = false;
     this.updateTownNotice();
     this.publishObjectives();
     this.publishTownHint();
@@ -679,6 +730,10 @@ export default class TownScene extends Phaser.Scene {
         crises: parsed.crises || {},
         achievements: Array.isArray(parsed.achievements) ? parsed.achievements : [],
         pendingPolicy: parsed.pendingPolicy || null,
+        weeklyReport: parsed.weeklyReport || null,
+        weekReportUnread: Boolean(parsed.weekReportUnread),
+        weekTracker: parsed.weekTracker || null,
+        monsterState: parsed.monsterState || null,
         tutorial: parsed.tutorial || {},
         cityBuilder: parsed.cityBuilder || null,
       };
@@ -966,6 +1021,47 @@ export default class TownScene extends Phaser.Scene {
     };
   }
 
+  getWeekStartDay(day = this.day) {
+    return Math.max(1, day - ((day - 1) % BALANCE.weekLength));
+  }
+
+  getStatsSnapshot() {
+    const keys = [
+      'questsCompleted',
+      'questFailures',
+      'whaleEvents',
+      'premiumActions',
+      'policiesChosen',
+      'monsterAttacks',
+      'monsterVictories',
+      'monsterDamageEvents',
+      'heroInjuries',
+      'heroesLeft',
+      'corruptionEvents',
+    ];
+    return Object.fromEntries(keys.map((key) => [key, Number(this.stats?.[key]) || 0]));
+  }
+
+  normalizeWeekTracker(savedTracker = null) {
+    const weekStartDay = Number(savedTracker?.weekStartDay) || this.getWeekStartDay(this.day);
+    return {
+      weekStartDay,
+      startResources: { ...this.resources, ...(savedTracker?.startResources || {}) },
+      startStats: { ...this.getStatsSnapshot(), ...(savedTracker?.startStats || {}) },
+      lines: Array.isArray(savedTracker?.lines) ? savedTracker.lines.slice(-24) : [],
+    };
+  }
+
+  resetWeekTracker(nextStartDay = this.day + 1) {
+    this.weekTracker = {
+      weekStartDay: nextStartDay,
+      startResources: { ...this.resources },
+      startStats: this.getStatsSnapshot(),
+      lines: [],
+    };
+    if (this.monsterState) this.monsterState.weekAttackCount = 0;
+  }
+
   getSavePayload() {
     return {
       saveVersion: SAVE_VERSION,
@@ -983,6 +1079,14 @@ export default class TownScene extends Phaser.Scene {
       crises: { ...this.crises },
       achievements: [...(this.achievements || [])],
       pendingPolicy: this.pendingPolicy,
+      weeklyReport: this.weeklyReport,
+      weekReportUnread: Boolean(this.weekReportUnread),
+      weekTracker: this.weekTracker ? structuredClone(this.weekTracker) : null,
+      monsterState: {
+        lastAttackDay: Number(this.monsterState?.lastAttackDay) || 0,
+        weekAttackCount: Number(this.monsterState?.weekAttackCount) || 0,
+        activeAttacks: Array.isArray(this.monsterState?.activeAttacks) ? this.monsterState.activeAttacks.slice(0, 3) : [],
+      },
       tutorial: { ...this.tutorial },
       cityBuilder: {
         mode: this.cityState.mode,
@@ -1244,9 +1348,20 @@ export default class TownScene extends Phaser.Scene {
   }
 
   addReportLine(section, text) {
-    if (!this.cycleReport || !text) return;
-    if (!Array.isArray(this.cycleReport[section])) this.cycleReport[section] = [];
-    this.cycleReport[section].push(text);
+    if (!text) return;
+    if (this.cycleReport) {
+      if (!Array.isArray(this.cycleReport[section])) this.cycleReport[section] = [];
+      this.cycleReport[section].push(text);
+    }
+    this.addWeekLine(section, text);
+  }
+
+  addWeekLine(category, text) {
+    if (!text) return;
+    this.weekTracker = this.weekTracker || this.normalizeWeekTracker();
+    this.weekTracker.lines = Array.isArray(this.weekTracker.lines) ? this.weekTracker.lines : [];
+    this.weekTracker.lines.push({ day: this.day, category, text });
+    while (this.weekTracker.lines.length > 36) this.weekTracker.lines.shift();
   }
 
   beginCycleReport() {
@@ -1261,6 +1376,7 @@ export default class TownScene extends Phaser.Scene {
       crises: [],
       achievements: [],
       policies: [],
+      monsters: [],
     };
   }
 
@@ -1325,21 +1441,65 @@ export default class TownScene extends Phaser.Scene {
     return ACCOUNTANT_NOTES[index];
   }
 
-  getCycleReportPayload() {
-    const report = this.cycleReport;
-    const deltas = this.getResourceDeltaSummary(report?.start || this.resources);
-    const formatDelta = ({ key, value }) => {
-      const sign = value > 0 ? '+' : '';
-      const label = key.charAt(0).toUpperCase() + key.slice(1);
-      const className = (
-        (key === 'gold' && value >= 0)
-        || (['trust', 'morale'].includes(key) && value >= 0)
-        || (['corruption', 'threat'].includes(key) && value <= 0)
-      ) ? 'gwg-good' : 'gwg-bad';
-      return { text: `${label}: ${sign}${value}`, className };
-    };
+  makeWeeklyReportIfDue() {
+    const tracker = this.weekTracker || this.normalizeWeekTracker();
+    const endDay = this.day;
+    if (endDay < tracker.weekStartDay + BALANCE.weekLength - 1) return false;
 
-    const sections = [
+    const startDay = tracker.weekStartDay;
+    const week = Math.floor((endDay - 1) / BALANCE.weekLength) + 1;
+    const statsNow = this.getStatsSnapshot();
+    const statDelta = Object.fromEntries(Object.entries(statsNow).map(([key, value]) => [
+      key,
+      value - (tracker.startStats?.[key] || 0),
+    ]));
+    const importantCategories = new Set([
+      'quest', 'policy', 'stage', 'achievement', 'unlock', 'crisis', 'monster', 'golden_whale', 'economy', 'npc',
+    ]);
+    const importantLog = (this.townLog || [])
+      .filter((entry) => entry.day >= startDay && entry.day <= endDay && importantCategories.has(entry.category))
+      .slice(-8)
+      .map((entry) => `Day ${entry.day}: ${entry.text}`);
+    const headline = Phaser.Utils.Array.GetRandom(WEEKLY_REPORT_LINES);
+    const pendingPolicy = this.getPendingPolicy();
+    const pendingAge = this.getPendingPolicyAge();
+    this.weeklyReport = {
+      week,
+      startDay,
+      endDay,
+      createdDay: this.day,
+      startResources: { ...(tracker.startResources || this.resources) },
+      endResources: { ...this.resources },
+      statDelta,
+      lines: (tracker.lines || []).slice(-12),
+      importantLog,
+      pendingPolicy: pendingPolicy
+        ? `${pendingPolicy.title} (${pendingAge} day${pendingAge === 1 ? '' : 's'} pending)`
+        : 'No pending policy. Suspiciously decisive.',
+      note: `"${this.getAccountantNote()}"`,
+      headline,
+    };
+    this.weekReportUnread = true;
+    this.addTownLog(`${headline} Week ${week} report is ready.`, 'report');
+    this.game.events.emit('gwg-event', `Week Report Ready: Week ${week}. The town survived, technically.`);
+    this.resetWeekTracker(endDay + 1);
+    return true;
+  }
+
+  formatDeltaLine({ key, value }) {
+    const sign = value > 0 ? '+' : '';
+    const label = key.charAt(0).toUpperCase() + key.slice(1);
+    const className = (
+      (key === 'gold' && value >= 0)
+      || (['trust', 'morale'].includes(key) && value >= 0)
+      || (['corruption', 'threat'].includes(key) && value <= 0)
+    ) ? 'gwg-good' : 'gwg-bad';
+    return { text: `${label}: ${sign}${value}`, className };
+  }
+
+  getCycleReportPayload() {
+    const report = this.weeklyReport;
+    const sections = report ? [
       {
         title: 'Town Identity',
         lines: [{
@@ -1349,42 +1509,58 @@ export default class TownScene extends Phaser.Scene {
       },
       {
         title: 'Resource Changes',
-        lines: deltas.map(formatDelta),
+        lines: this.getResourceDeltaSummary(report.startResources, report.endResources).map((entry) => this.formatDeltaLine(entry)),
       },
       {
-        title: 'Quest Results',
-        lines: report?.quests?.length ? report.quests.map((line) => `- ${line}`) : ['- No posted quests resolved. The town learned less than hoped.'],
+        title: 'Week Counts',
+        lines: [
+          `Quests completed: ${report.statDelta.questsCompleted || 0}`,
+          `Quest failures: ${report.statDelta.questFailures || 0}`,
+          `Monster events: ${report.statDelta.monsterAttacks || 0}`,
+          `Hero injuries/leaves: ${(report.statDelta.heroInjuries || 0) + (report.statDelta.heroesLeft || 0)}`,
+          `Premium purchases/actions: ${(report.statDelta.whaleEvents || 0) + (report.statDelta.premiumActions || 0)}`,
+          `Corruption events: ${(report.statDelta.corruptionEvents || 0) + (report.statDelta.whaleEvents || 0)}`,
+          `Policies chosen: ${report.statDelta.policiesChosen || 0}`,
+        ],
       },
       {
-        title: 'NPC Changes',
-        lines: report?.npc?.length ? report.npc.map((line) => `- ${line}`) : ['- No major personal spiral was filed today.'],
+        title: 'Highlights',
+        lines: report.lines?.length
+          ? report.lines.slice(-7).map((entry) => `Day ${entry.day}: ${entry.text}`)
+          : ['No major incidents. The report is suspicious of this.'],
+      },
+      {
+        title: 'Town Log Picks',
+        lines: report.importantLog?.length
+          ? report.importantLog
+          : ['The town log mostly contained ordinary panic.'],
+      },
+      {
+        title: 'Policy Status',
+        lines: [report.pendingPolicy],
+      },
+      {
+        title: 'Town Accountant Note',
+        lines: [{ text: report.note, className: 'gwg-whale' }],
+      },
+    ] : [
+      {
+        title: 'Week Report',
+        lines: ['No week report is ready yet. Reports arrive every 7 days and no longer interrupt the town.'],
       },
     ];
-
-    const extraSections = [
-      ['Stage', 'stage'],
-      ['New Unlocks', 'unlocks'],
-      ['Town Crises', 'crises'],
-      ['Achievements', 'achievements'],
-      ['Warnings', 'warnings'],
-    ];
-    for (const [title, key] of extraSections) {
-      const lines = report?.[key] || [];
-      if (lines.length) sections.push({ title, lines: lines.map((line) => `- ${line}`) });
-    }
 
     const pendingPolicy = this.getPendingPolicy();
     if (pendingPolicy) {
+      const age = this.getPendingPolicyAge();
       sections.push({
-        title: pendingPolicy.title,
-        lines: [pendingPolicy.description],
+        title: `${pendingPolicy.title} - Pending`,
+        lines: [
+          pendingPolicy.description,
+          `Ignored for ${age} day${age === 1 ? '' : 's'}. Time continues either way.`,
+        ],
       });
     }
-
-    sections.push({
-      title: 'Town Accountant Note',
-      lines: [{ text: `"${this.getAccountantNote()}"`, className: 'gwg-whale' }],
-    });
 
     const rows = pendingPolicy ? pendingPolicy.options.map((option) => ({
       title: option.label,
@@ -1399,37 +1575,36 @@ export default class TownScene extends Phaser.Scene {
     })) : [];
 
     return {
-      panelType: 'day-report',
-      title: report?.crises?.length ? `Town Crisis - Day ${this.day}` : `Day ${this.day} Report`,
-      subtitle: `${this.getCurrentStage().name} - compact consequences ledger`,
+      panelType: 'week-report',
+      title: report ? `Week ${report.week} Report` : (pendingPolicy ? 'Policy Pending' : 'Reports'),
+      subtitle: report
+        ? `Days ${report.startDay}-${report.endDay} - ${report.headline}`
+        : 'Reports are weekly now; policies can wait, but consequences do not.',
       sections,
       rows,
     };
   }
 
   showCycleReport() {
-    if (!this.cycleReport) {
-      this.game.events.emit('gwg-event', 'No day report yet. The scribe is still sharpening the quill.');
+    if (!this.weeklyReport && !this.getPendingPolicy()) {
+      this.game.events.emit('gwg-event', 'No week report or policy is pending. The scribe is enjoying a rare quiet minute.');
       return;
     }
     this.activeInspector = { type: 'report' };
     this.clearSelection(false);
     this.game.events.emit('gwg-inspector-open', this.getCycleReportPayload());
-    this.reportUnread = false;
+    this.weekReportUnread = false;
     this.updateTownNotice();
   }
 
-  // end-of-day: quiet days get a compact banner; policies and crises still
-  // open the full report because they demand a decision
-  // end-of-day is never a forced modal: every day gets the compact banner
-  // plus a persistent top-bar notice badge; the full report/policy panel only
-  // opens when the player clicks either of them
-  presentCycleReport() {
+  // End-of-day is never a forced modal. Daily summaries are small; detailed
+  // reports are generated only at weekly boundaries.
+  presentCycleReport(weekReady = false) {
     if (!this.cycleReport) return;
-    this.reportUnread = true;
     const attention = [];
     if (this.getPendingPolicy()) attention.push('Policy choice pending');
     if (this.cycleReport.crises?.length) attention.push('Town crisis!');
+    if (this.cycleReport.monsters?.length) attention.push(`${this.cycleReport.monsters.length} monster event${this.cycleReport.monsters.length === 1 ? '' : 's'}`);
     const deltas = this.getResourceDeltaSummary(this.cycleReport.start || this.resources)
       .filter((entry) => entry.value !== 0)
       .slice(0, 4)
@@ -1437,6 +1612,7 @@ export default class TownScene extends Phaser.Scene {
       .join('   ');
     this.game.events.emit('gwg-day-summary', {
       day: this.day,
+      reportReady: weekReady,
       summary: attention.length
         ? `${attention.join('  ')}   ${deltas}`.trim()
         : (deltas || 'A quiet day. Suspiciously quiet.'),
@@ -1444,13 +1620,12 @@ export default class TownScene extends Phaser.Scene {
     this.updateTownNotice();
   }
 
-  // compact "! ..." badge next to the Day counter; policy trumps report
+  // compact "! ..." badge next to the Day counter
   updateTownNotice() {
-    const notice = this.getPendingPolicy()
-      ? 'Policy choice pending'
-      : this.reportUnread
-        ? `Day ${this.day} report ready`
-        : '';
+    const parts = [];
+    if (this.getPendingPolicy()) parts.push('Policy Pending');
+    if (this.weekReportUnread) parts.push('Week Report Ready');
+    const notice = parts.join(' / ');
     this.registry.set('townNotice', notice);
   }
 
@@ -1459,12 +1634,50 @@ export default class TownScene extends Phaser.Scene {
     return POLICY_EVENTS.find((policy) => policy.id === id) || null;
   }
 
+  getPendingPolicyAge() {
+    if (!this.pendingPolicy) return 0;
+    const offeredDay = typeof this.pendingPolicy === 'string'
+      ? this.day
+      : Number(this.pendingPolicy.offeredDay) || this.day;
+    return Math.max(0, this.day - offeredDay);
+  }
+
   maybeOfferPolicy() {
     if (this.pendingPolicy || this.day < 4 || this.day % BALANCE.policyInterval !== 0) return;
     const policy = POLICY_EVENTS[(Math.floor(this.day / BALANCE.policyInterval) + this.getStageIndex()) % POLICY_EVENTS.length];
-    this.pendingPolicy = policy.id;
+    this.pendingPolicy = { id: policy.id, offeredDay: this.day, ignoredDays: 0, lastNeglectDay: 0 };
     this.addTownLog(`Policy offered: ${policy.title}.`, 'policy');
     this.addReportLine('policies', `${policy.title} is waiting for a choice.`);
+    this.updateTownNotice();
+  }
+
+  applyPendingPolicyNeglect() {
+    const policy = this.getPendingPolicy();
+    if (!policy) return;
+    const pending = typeof this.pendingPolicy === 'string'
+      ? { id: this.pendingPolicy, offeredDay: this.day, ignoredDays: 0, lastNeglectDay: 0 }
+      : this.pendingPolicy;
+    const age = Math.max(0, this.day - (Number(pending.offeredDay) || this.day));
+    if (age < BALANCE.policyNeglectDelay || age % 2 !== 0 || pending.lastNeglectDay === this.day) {
+      this.pendingPolicy = pending;
+      return;
+    }
+    const deltas = {
+      trust: -1,
+      morale: -1,
+      threat: policy.id === 'ethics-hearing' ? 1 : 2,
+      corruption: ['ethics-hearing', 'debt-day'].includes(policy.id) ? 1 : 0,
+    };
+    pending.ignoredDays = age;
+    pending.lastNeglectDay = this.day;
+    this.pendingPolicy = pending;
+    this.applyDeltas(deltas);
+    const text = Phaser.Utils.Array.GetRandom(POLICY_NEGLECT_LINES);
+    this.game.events.emit('gwg-event', `${text} (${policy.title} still pending.)`);
+    this.addTownLog(`${text} Pending: ${policy.title}.`, 'policy');
+    this.addReportLine('policies', `${policy.title} ignored for ${age} days. ${text}`);
+    this.floatDeltas(PLAZA.x, PLAZA.y - 74, deltas);
+    this.updateTownNotice();
   }
 
   choosePolicyFromUi(optionId) {
@@ -1739,7 +1952,7 @@ export default class TownScene extends Phaser.Scene {
   getTownHint() {
     const R = this.resources;
     if (this.cycleRunning) return 'Town Problem: gates are open. Watch the consequences.';
-    if (this.pendingPolicy) return 'Policy choice pending: open the Day Report and pick a compromise.';
+    if (this.pendingPolicy) return 'Policy pending: choose when ready, or let the town keep making it worse.';
     if (R.threat >= RESOURCE_THRESHOLDS.threatWarning) return 'Warning: Threat is rising. Post safer quests.';
     if (R.trust < RESOURCE_THRESHOLDS.trustWarning) return 'Warning: Trust is low. Honest heroes may leave.';
     if (R.morale < RESOURCE_THRESHOLDS.moraleWarning) return 'Town Problem: heroes are losing morale.';
@@ -5975,25 +6188,33 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
-  showMonsterAttack(monster, gate) {
-    if (!monster || !gate) return;
+  showMonsterAttack(monster, target, spawn = null) {
+    if (!monster || !target) return;
     const textureKey = this.textures.exists(monster.assetKey)
       ? monster.assetKey
       : resolveTexture(this, 'icon_warning', 'chevron');
     if (!textureKey) return;
     const source = this.textures.get(textureKey)?.getSourceImage?.();
     const scale = source?.height ? Phaser.Math.Clamp(42 / source.height, 0.35, 1.4) : 1;
-    const sprite = this.add.image(gate.x, gate.y - 28, textureKey)
+    const start = spawn || target;
+    const sprite = this.add.image(start.x, start.y - 28, textureKey)
       .setScale(scale)
       .setDepth(5200);
     this.tweens.add({
       targets: sprite,
-      x: Phaser.Math.Linear(gate.x, PLAZA.x, 0.35),
-      y: Phaser.Math.Linear(gate.y, PLAZA.y, 0.35),
-      alpha: 0,
-      duration: 1800,
-      ease: 'Sine.easeIn',
-      onComplete: () => sprite.destroy(),
+      x: target.x,
+      y: target.y - 28,
+      duration: 1250 / Math.max(0.55, monster.speed || 1),
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        this.tweens.add({
+          targets: sprite,
+          scale: scale * 1.24,
+          alpha: 0,
+          duration: 520,
+          onComplete: () => sprite.destroy(),
+        });
+      },
     });
   }
 
@@ -6018,6 +6239,202 @@ export default class TownScene extends Phaser.Scene {
       hold: 1050,
       onComplete: () => sprite.destroy(),
     });
+  }
+
+  getMonsterAttackChance() {
+    if (this.day <= 2) return 0.04;
+    const placedCount = this.isBuilderCity
+      ? this.cityState.placedBuildings.filter((building) => this.isBuildingPlaced(building.id)).length
+      : Object.values(this.buildingById || {}).filter((place) => place?.isPlaced !== false).length;
+    const watchtower = this.getPlaceLevel(this.buildingById.watchtower);
+    const activeHeroes = this.getActiveHeroes().length;
+    const openedFog = this.isBuilderCity && this.revealedTiles
+      ? Math.max(0, this.revealedTiles.size - 140) / 900
+      : 0;
+    const recentCooldown = this.day - (this.monsterState?.lastAttackDay || 0) <= 1 ? 0.45 : 1;
+    const weeklyThrottle = (this.monsterState?.weekAttackCount || 0) >= 3 ? 0.45 : 1;
+    const chance = (
+      BALANCE.monsterBaseDailyChance
+      + this.resources.threat * 0.0022
+      + placedCount * 0.004
+      + this.resources.corruption * 0.0007
+      + (this.isBuildingPlaced('dungeon') ? 0.035 : 0)
+      + openedFog
+      - watchtower * 0.035
+      - activeHeroes * 0.006
+      - this.resources.morale * 0.0005
+    ) * recentCooldown * weeklyThrottle;
+    return Phaser.Math.Clamp(chance, 0.02, this.resources.threat >= 90 ? 0.55 : 0.34);
+  }
+
+  maybeTriggerMonsterAttack(force = false) {
+    const chance = this.getMonsterAttackChance();
+    if (!force && Math.random() > chance) return false;
+    return this.resolveMonsterAttack({ forced: force, chance });
+  }
+
+  getMonsterSpawnSpot(target) {
+    if (this.isBuilderCity && this.gridCells) {
+      const frontier = this.getFogFrontierCells(true);
+      if (frontier.length) {
+        const sorted = frontier
+          .map((cell) => {
+            const world = gridToWorld(cell.x, cell.y);
+            return {
+              x: world.x,
+              y: world.y - GRID_CONFIG.tileSize / 2,
+              dist: Phaser.Math.Distance.Between(world.x, world.y, target.x, target.y),
+            };
+          })
+          .sort((a, b) => b.dist - a.dist);
+        return sorted[Math.floor(Math.random() * Math.min(8, sorted.length))] || sorted[0];
+      }
+    }
+    const side = Phaser.Math.Between(0, 3);
+    if (side === 0) return { x: 38, y: Phaser.Math.Between(110, this.worldHeight - 120) };
+    if (side === 1) return { x: this.worldWidth - 38, y: Phaser.Math.Between(110, this.worldHeight - 120) };
+    if (side === 2) return { x: Phaser.Math.Between(110, this.worldWidth - 120), y: 72 };
+    return { x: Phaser.Math.Between(110, this.worldWidth - 120), y: this.worldHeight - 72 };
+  }
+
+  getMonsterTarget(monster) {
+    const prefer = monster?.targetPreference || 'random_building';
+    const candidates = [];
+    const addPlace = (id) => {
+      const place = this.getOperationalPlace(id);
+      if (place?.isPlaced !== false) candidates.push(place);
+    };
+    if (prefer === 'hero') {
+      const hero = Phaser.Utils.Array.GetRandom(this.getActiveHeroes());
+      if (hero) return { id: hero.def.id, name: hero.def.name, x: hero.container.x, y: hero.container.y, h: 42, heroTarget: hero };
+    } else if (prefer === 'random_road' && this.cityState?.roads?.length) {
+      const road = Phaser.Utils.Array.GetRandom(this.cityState.roads);
+      const world = gridToWorld(road.x, road.y);
+      return { id: `road-${road.x}-${road.y}`, name: 'town road', x: world.x, y: world.y - GRID_CONFIG.tileSize / 2, h: 28 };
+    } else {
+      const preferenceMap = {
+        tavern: ['tavern', 'inn', 'hero_hostel'],
+        market: ['market', 'gem_exchange', 'convenience_office'],
+        whale: ['whale', 'vip_lounge', 'premium_temple'],
+        watchtower: ['watchtower'],
+        guildhall: ['guildhall', 'notice_board'],
+        bank_debt_office: ['bank_debt_office', 'debt_collector_booth'],
+        lootbox_kiosk: ['lootbox_kiosk', 'refund_denial_desk'],
+        training: ['training', 'arena'],
+        vip_rope_entrance: ['vip_rope_entrance', 'whale'],
+      };
+      for (const id of preferenceMap[prefer] || [prefer]) addPlace(id);
+    }
+    if (!candidates.length) {
+      for (const place of Object.values(this.placeById || {})) {
+        if (place?.isPlaced !== false && this.isLocationUnlocked(place.id) && place.id !== 'notice_board') candidates.push(place);
+      }
+    }
+    return Phaser.Utils.Array.GetRandom(candidates) || this.getOperationalPlace('guildhall');
+  }
+
+  getMonsterResponders(target) {
+    return this.getActiveHeroes()
+      .filter((hero) => hero.state !== 'inside' && hero.state !== 'away')
+      .map((hero) => ({
+        hero,
+        dist: Phaser.Math.Distance.Between(hero.container.x, hero.container.y, target.x, target.y),
+      }))
+      .sort((a, b) => a.dist - b.dist)
+      .map((entry) => entry.hero)
+      .slice(0, Phaser.Math.Between(1, 3));
+  }
+
+  getDefenseBonus() {
+    return this.getPlaceLevel(this.buildingById.watchtower) * 3
+      + this.getPlaceLevel(this.buildingById.training)
+      + this.getPlaceLevel(this.buildingById.arena) * 2
+      + Math.floor(this.getPlaceLevel(this.buildingById.blacksmith) / 2);
+  }
+
+  resolveMonsterAttack({ forced = false, chance = 0 } = {}) {
+    const monster = rollMonster();
+    const target = this.getMonsterTarget(monster);
+    const spawn = this.getMonsterSpawnSpot(target);
+    const warning = Phaser.Utils.Array.GetRandom(MONSTER_WARNING_LINES);
+    const attackText = `${warning} ${monster.name} approached ${target.name}. ${monster.flavour}`;
+    this.stats.monsterAttacks = (this.stats.monsterAttacks || 0) + 1;
+    this.monsterState.lastAttackDay = this.day;
+    this.monsterState.weekAttackCount = (this.monsterState.weekAttackCount || 0) + 1;
+    this.addTownLog(attackText, 'monster');
+    this.addReportLine('monsters', attackText);
+    this.game.events.emit('gwg-event', attackText);
+    this.floatText(target.x, target.y - (target.h || 42) - 40, 'MONSTER', '#f0938f');
+    this.showMonsterAttack(monster, target, spawn);
+
+    const responders = this.getMonsterResponders(target);
+    const defenseBonus = this.getDefenseBonus();
+    let defeated = false;
+    let remainingPower = Math.max(3, monster.power || monster.threat * 4);
+    const deltas = { gold: 0, trust: 0, morale: 0, threat: 0, corruption: 0 };
+    const stepLines = [];
+    let responseIndex = 0;
+
+    for (const hero of responders) {
+      const tiredPenalty = hero.stats.morale < 30 ? 3 : 0;
+      const premiumBonus = hero.stats.whaleAccess ? 3 : 0;
+      const roll = Phaser.Math.Between(0, 8);
+      const score = hero.stats.power + Math.floor(defenseBonus / 2) + premiumBonus + roll - tiredPenalty;
+      const wonThisRound = score >= remainingPower;
+      stepLines.push(`${hero.def.name} intercepted ${monster.name}.`);
+      this.addHeroHistory(hero, `Intercepted ${monster.name} near ${target.name}.`);
+      const responseDelay = responseIndex * 620;
+      responseIndex += 1;
+      this.time.delayedCall(responseDelay, () => {
+        this.walkTo(hero, { id: target.id, name: target.name, x: target.x, y: target.y }, () => {
+          this.say(hero, wonThisRound ? 'Handled it.' : 'That had teeth.', true);
+        });
+      });
+      if (wonThisRound) {
+        defeated = true;
+        const gold = Math.max(12, monster.reward || monster.threat * 18);
+        deltas.gold += gold;
+        deltas.threat += monster.threatImpact || -Math.max(2, monster.threat * 2);
+        deltas.trust += this.isHonestHero(hero.def) ? 1 : 0;
+        deltas.morale += 1;
+        hero.stats.power += this.isHonestHero(hero.def) || this.isVeteranHero(hero.def) ? 1 : 0;
+        hero.stats.fame = Phaser.Math.Clamp((hero.stats.fame || 0) + monster.threat * 3, 0, 100);
+        this.addHeroHistory(hero, `Defeated ${monster.name}.`);
+        stepLines.push(`${hero.def.name} defeated ${monster.name}. ${Phaser.Utils.Array.GetRandom(MONSTER_VICTORY_LINES)}`);
+        this.stats.monsterVictories = (this.stats.monsterVictories || 0) + 1;
+        break;
+      }
+      remainingPower = Math.max(2, remainingPower - Math.max(1, Math.floor(score * 0.45)));
+      hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - (5 + monster.threat), 0, 100);
+      hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty - 2, 0, 100);
+      this.stats.heroInjuries = (this.stats.heroInjuries || 0) + 1;
+      this.addHeroHistory(hero, `Injured by ${monster.name}.`);
+      stepLines.push(`${hero.def.name} was injured. The next hero checked the fine print.`);
+    }
+
+    if (!defeated) {
+      const watchtowerLevel = this.getPlaceLevel(this.buildingById.watchtower);
+      const mitigation = Phaser.Math.Clamp(1 - watchtowerLevel * 0.12, 0.45, 1);
+      const loss = Math.ceil((45 + monster.threat * 28) * mitigation);
+      deltas.gold -= Math.min(this.resources.gold, loss);
+      deltas.trust -= Math.max(1, Math.floor(monster.threat / 2));
+      deltas.morale -= 2 + monster.threat;
+      deltas.threat += Math.max(2, Math.ceil(monster.threat / 2));
+      if (monster.id === 'debt_wraith' || monster.id === 'audit_imp') deltas.corruption += 1;
+      this.stats.monsterDamageEvents = (this.stats.monsterDamageEvents || 0) + 1;
+      stepLines.push(`${monster.name} damaged ${target.name}. ${Phaser.Utils.Array.GetRandom(MONSTER_DAMAGE_LINES)}`);
+    }
+
+    this.applyDeltas(deltas);
+    this.floatDeltas(target.x, target.y - (target.h || 58) - 12, deltas);
+    const summary = stepLines.join(' ');
+    this.addTownLog(summary, defeated ? 'monster' : 'crisis');
+    this.addReportLine('monsters', summary);
+    this.game.events.emit('gwg-event', summary);
+    if (!defeated) this.floatText(target.x, target.y - (target.h || 42) - 58, 'DAMAGED', '#e74c3c');
+    else this.floatText(target.x, target.y - (target.h || 42) - 58, 'DEFENDED', '#7fdc93');
+    if (forced || chance > 0.28) this.stats.threatEventsSurvived = (this.stats.threatEventsSurvived || 0) + 1;
+    return true;
   }
 
   // --- ambient chatter -------------------------------------------------------
@@ -6109,6 +6526,7 @@ export default class TownScene extends Phaser.Scene {
     for (const [key, value] of Object.entries(deltas)) {
       R[key] += value;
       if (key === 'gold' && value > 0 && this.stats) this.stats.totalGoldEarned += value;
+      if (key === 'corruption' && value > 0 && this.stats) this.stats.corruptionEvents = (this.stats.corruptionEvents || 0) + 1;
     }
     for (const key of ['trust', 'corruption', 'morale', 'threat']) {
       R[key] = Phaser.Math.Clamp(R[key], 0, 100);
@@ -6324,6 +6742,7 @@ export default class TownScene extends Phaser.Scene {
     hero.container.setAlpha(0.28);
     hero.stats.loyalty = Math.max(0, hero.stats.loyalty - 18);
     hero.stats.resentment = Phaser.Math.Clamp((hero.stats.resentment || 0) + 12, 0, 100);
+    this.stats.heroesLeft = (this.stats.heroesLeft || 0) + 1;
     this.addHeroHistory(hero, `Left town until Day ${hero.awayUntil}.`);
     this.updateHeroMood(hero);
     this.refreshHeroStatusMarker(hero);
@@ -6801,25 +7220,10 @@ export default class TownScene extends Phaser.Scene {
         this.floatDeltas(tavern.x, tavern.y - tavern.h - 10, d);
         this.game.events.emit('gwg-event', 'A hero retired to become a tutorial warning.');
       }
-      if (R.threat >= 80) {
-        const gate = this.getOperationalPlace('dungeon');
-        const defenseFactor = Phaser.Math.Clamp(1 - watchtowerLevel * 0.16, 0.35, 1);
-        const monster = rollMonster();
-        const d = {
-          gold: -Math.ceil(Math.min(260, Math.floor(R.gold * 0.16)) * defenseFactor),
-          trust: -Math.max(1, 4 - watchtowerLevel),
-          morale: -Math.max(2, 5 - watchtowerLevel),
-          threat: -22 - watchtowerLevel * 3,
-        };
-        this.applyDeltas(d);
-        this.floatDeltas(gate.x, gate.y - gate.h - 14, d);
-        this.floatText(gate.x, gate.y - gate.h - 34, 'TOWN ATTACK', '#e74c3c');
-        this.stats.threatEventsSurvived += 1;
-        this.showMonsterAttack(monster, gate);
-        this.game.events.emit(
-          'gwg-event',
-          `${monster.name} attacked. ${monster.flavour}${watchtowerLevel ? ` Watchtowers reduced losses by ${Math.round((1 - defenseFactor) * 100)}%.` : ''}`,
-        );
+      this.applyPendingPolicyNeglect();
+      const forceAttack = R.threat >= 92 && this.day - (this.monsterState?.lastAttackDay || 0) > 1;
+      const monsterAttackHappened = this.maybeTriggerMonsterAttack(forceAttack);
+      if (monsterAttackHappened && R.threat >= 80) {
         const candidates = this.heroes.filter((h) => h.state !== 'inside' && !h.bubble);
         if (candidates.length > 0) {
           this.say(
@@ -6848,10 +7252,11 @@ export default class TownScene extends Phaser.Scene {
       this.checkTownIdentity();
       this.checkAchievements();
       this.maybeOfferPolicy();
+      const weekReady = this.makeWeeklyReportIfDue();
       this.publishTownHint();
       this.refreshActivePanel();
       this.saveGame(false);
-      this.presentCycleReport();
+      this.presentCycleReport(weekReady);
       this.game.events.emit('gwg-cycle-done');
     });
 
