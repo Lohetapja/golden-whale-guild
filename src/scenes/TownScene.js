@@ -68,6 +68,15 @@ import {
 } from '../systems/roadRenderer.js';
 import { resolveInteractionTarget } from '../systems/interactionResolver.js';
 import { getResponsiveUi } from '../ui/responsive.js';
+import {
+  getIsoDepth,
+  getIsoDiamondPoints,
+  getIsoFootprintAnchor,
+  getIsoFootprintPolygon,
+  getIsoTileCenter,
+  isoToGrid,
+  USE_ISO_RENDERING,
+} from '../utils/isometric.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -75,6 +84,14 @@ const PLAZA = TOWN_WORLD.plaza;
 const CAMERA_MAX_ZOOM = 2;
 const CAMERA_DEFAULT_ZOOM = 0.82;
 const CAMERA_HOME_ZOOM = 0.78;
+const ISO_TILE_WIDTH = 64;
+const ISO_TILE_HEIGHT = 32;
+const ISO_RENDER_OPTIONS = {
+  originX: GRID_CONFIG.originX + (GRID_CONFIG.rows - 1) * (ISO_TILE_WIDTH / 2) - 16,
+  originY: GRID_CONFIG.originY + 24,
+  tileWidth: ISO_TILE_WIDTH,
+  tileHeight: ISO_TILE_HEIGHT,
+};
 const EXPLORATION_CHANCE = 0.22;
 const ROAD_WIDTH = LAYOUT_CONSTANTS.ROAD_WIDTH;
 const NPC_SCALE = LAYOUT_CONSTANTS.NPC_SCALE;
@@ -757,9 +774,9 @@ export default class TownScene extends Phaser.Scene {
           isPlaced: false,
         };
       }
-      const position = placement.legacyPosition
+      const position = placement.legacyPosition || !this.useIsoRendering()
         ? { x: building.x, y: building.y }
-        : gridToWorld(placement.gridX, placement.gridY, catalog?.footprint);
+        : this.gridToVisual(placement.gridX, placement.gridY, catalog?.footprint);
       return {
         ...building,
         ...position,
@@ -770,6 +787,105 @@ export default class TownScene extends Phaser.Scene {
         isPlaced: true,
       };
     });
+  }
+
+  useIsoRendering() {
+    return USE_ISO_RENDERING && this.isBuilderCity;
+  }
+
+  gridToVisual(gridX, gridY, footprint = { w: 1, h: 1 }) {
+    if (!this.useIsoRendering()) return gridToWorld(gridX, gridY, footprint);
+    return getIsoFootprintAnchor(
+      gridX,
+      gridY,
+      footprint.w || 1,
+      footprint.h || 1,
+      ISO_RENDER_OPTIONS,
+    );
+  }
+
+  gridTileVisualCenter(gridX, gridY) {
+    if (!this.useIsoRendering()) {
+      const world = gridToWorld(gridX, gridY);
+      return { x: world.x, y: world.y - GRID_CONFIG.tileSize / 2 };
+    }
+    return getIsoTileCenter(gridX, gridY, ISO_RENDER_OPTIONS);
+  }
+
+  worldToBuildGrid(worldX, worldY) {
+    if (!this.useIsoRendering()) return worldToGrid(worldX, worldY);
+    const cell = isoToGrid(worldX, worldY, ISO_RENDER_OPTIONS);
+    return {
+      x: Math.floor(cell.x),
+      y: Math.floor(cell.y),
+    };
+  }
+
+  getVisualTilePoints(gridX, gridY) {
+    if (this.useIsoRendering()) return getIsoDiamondPoints(gridX, gridY, ISO_RENDER_OPTIONS);
+    const left = GRID_CONFIG.originX + gridX * GRID_CONFIG.tileSize;
+    const top = GRID_CONFIG.originY + gridY * GRID_CONFIG.tileSize;
+    return [
+      { x: left, y: top },
+      { x: left + GRID_CONFIG.tileSize, y: top },
+      { x: left + GRID_CONFIG.tileSize, y: top + GRID_CONFIG.tileSize },
+      { x: left, y: top + GRID_CONFIG.tileSize },
+    ];
+  }
+
+  getVisualFootprintPolygon(gridX, gridY, footprint = { w: 1, h: 1 }) {
+    if (this.useIsoRendering()) {
+      return getIsoFootprintPolygon(
+        gridX,
+        gridY,
+        footprint.w || 1,
+        footprint.h || 1,
+        ISO_RENDER_OPTIONS,
+      );
+    }
+    const left = GRID_CONFIG.originX + gridX * GRID_CONFIG.tileSize;
+    const top = GRID_CONFIG.originY + gridY * GRID_CONFIG.tileSize;
+    const width = (footprint.w || 1) * GRID_CONFIG.tileSize;
+    const height = (footprint.h || 1) * GRID_CONFIG.tileSize;
+    return [
+      { x: left, y: top },
+      { x: left + width, y: top },
+      { x: left + width, y: top + height },
+      { x: left, y: top + height },
+    ];
+  }
+
+  getVisualDepth(gridX, gridY) {
+    return this.useIsoRendering() ? getIsoDepth(gridX, gridY) : gridToWorld(gridX, gridY).y;
+  }
+
+  drawPolygon(graphics, points, fillColor, fillAlpha = 1, strokeColor = null, strokeAlpha = 1, strokeWidth = 1) {
+    if (!graphics || !points?.length) return;
+    if (fillColor !== null && fillColor !== undefined && fillAlpha > 0) graphics.fillStyle(fillColor, fillAlpha);
+    graphics.beginPath();
+    graphics.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i += 1) graphics.lineTo(points[i].x, points[i].y);
+    graphics.closePath();
+    if (fillColor !== null && fillColor !== undefined && fillAlpha > 0) graphics.fillPath();
+    if (strokeColor !== null && strokeColor !== undefined && strokeAlpha > 0) {
+      graphics.lineStyle(strokeWidth, strokeColor, strokeAlpha);
+      graphics.beginPath();
+      graphics.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i += 1) graphics.lineTo(points[i].x, points[i].y);
+      graphics.closePath();
+      graphics.strokePath();
+    }
+  }
+
+  insetPoints(points, inset = 0.82) {
+    const center = points.reduce((acc, point) => ({
+      x: acc.x + point.x / points.length,
+      y: acc.y + point.y / points.length,
+    }), { x: 0, y: 0 });
+    return points.map((point) => ({
+      x: center.x + (point.x - center.x) * inset,
+      y: center.y + (point.y - center.y) * inset,
+    }));
   }
 
   applyBuilderDecorationState(decorations) {
@@ -961,7 +1077,7 @@ export default class TownScene extends Phaser.Scene {
     cam.scrollY = worldFocus.y - focusY / next;
     this.clampCameraToWorld();
     if (this.buildMode && this.buildPreviewCell) {
-      const world = gridToWorld(this.buildPreviewCell.x, this.buildPreviewCell.y);
+      const world = this.gridTileVisualCenter(this.buildPreviewCell.x, this.buildPreviewCell.y);
       this.updateBuildPreview(world.x, world.y);
     }
   }
@@ -2152,6 +2268,7 @@ export default class TownScene extends Phaser.Scene {
     }
     this.cityState.revealed = [...this.revealedTiles];
     this.redrawFog();
+    this.redrawBuildGrid();
     this.redrawTerrainDetails();
     this.redrawWildernessDressing();
     if (source) this.addTownLog(`${source} lifted the fog: ${added.length} tiles charted.`, 'unlock');
@@ -2184,7 +2301,7 @@ export default class TownScene extends Phaser.Scene {
     }
     const spot = Phaser.Utils.Array.GetRandom(targets);
     const added = this.revealArea(spot.x, spot.y, FOG_REVEAL_RADIUS.premiumScout, 'Premium Scout Report');
-    const world = gridToWorld(spot.x, spot.y);
+    const world = this.gridTileVisualCenter(spot.x, spot.y);
     this.floatText(world.x, world.y - 30, 'FOG CHARTED', '#ffe08a');
     this.game.events.emit(
       'gwg-event',
@@ -2359,6 +2476,43 @@ export default class TownScene extends Phaser.Scene {
     if (!this.terrainDetailGraphics || !this.isBuilderCity) return;
     const g = this.terrainDetailGraphics;
     g.clear();
+    if (this.useIsoRendering()) {
+      for (const placement of this.cityState.placedBuildings) {
+        const footprint = getBuildingCatalogEntry(placement.id)?.footprint || { w: 2, h: 2 };
+        const polygon = this.getVisualFootprintPolygon(placement.gridX, placement.gridY, footprint);
+        this.drawPolygon(g, polygon, 0x6b5a3a, 0.1, null);
+        this.drawPolygon(g, this.insetPoints(polygon, 0.82), 0x55462e, 0.08, null);
+      }
+      for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
+        for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
+          const cell = this.gridCells.get(gridKey(x, y));
+          if (!cell || cell.road || cell.occupiedBy || this.isRoadOrRoadShoulder(x, y, 1)) continue;
+          const world = this.gridTileVisualCenter(x, y);
+          const hash = this.getTerrainHash(x, y, 3);
+          const unlocked = Boolean(cell.unlocked);
+          const edge = x < 2 || y < 2 || x > GRID_CONFIG.columns - 3 || y > GRID_CONFIG.rows - 3;
+          const chance = unlocked ? (edge ? 30 : 22) : (edge ? 34 : 10);
+          if (hash % 100 >= chance) continue;
+          const color = unlocked
+            ? ([0x79b760, 0x5f9b45, 0x86be67, 0xa2b873][hash % 4])
+            : ([0x4f7442, 0x3f6338, 0x6d7b50][hash % 3]);
+          const alpha = unlocked ? 0.18 : 0.22;
+          const rx = ((hash % 19) - 9);
+          const ry = (((hash >> 4) % 11) - 5);
+          g.fillStyle(color, alpha);
+          g.fillEllipse(world.x + rx, world.y + ry, 16 + (hash % 18), 7 + ((hash >> 3) % 7));
+          if (unlocked && hash % 11 === 0) {
+            g.fillStyle(hash % 2 ? 0x836f45 : 0x4c7e3d, 0.08);
+            g.fillEllipse(world.x - rx * 0.35, world.y - ry * 0.25, 34 + (hash % 22), 12 + ((hash >> 5) % 8));
+          }
+          if (unlocked && hash % 7 === 0) {
+            g.fillStyle(0xd8e28d, 0.16);
+            g.fillCircle(world.x + rx * 0.6, world.y + ry, 2);
+          }
+        }
+      }
+      return;
+    }
     // worn-earth patch under every building footprint: grounds the sprite in
     // the terrain itself instead of relying on shadows alone
     for (const placement of this.cityState.placedBuildings) {
@@ -2440,11 +2594,11 @@ export default class TownScene extends Phaser.Scene {
           if (coreDistance < 11 || this.isRoadOrRoadShoulder(x, y, 1)) continue;
           if (hash % 100 >= 3) continue;
         } else if (hash % 100 >= 8) continue;
-        const world = gridToWorld(x, y);
+        const world = this.gridTileVisualCenter(x, y);
         const key = keys[hash % keys.length];
         const image = this.add.image(
           world.x + ((hash % 27) - 13),
-          world.y - 10 + (((hash >> 4) % 15) - 7),
+          world.y + (((hash >> 4) % 15) - 7),
           key,
         ).setScale(0.55 + ((hash >> 6) % 9) * 0.05).setAlpha(revealed ? 1 : 0.9);
         this.wildernessContainer.add(image);
@@ -2460,6 +2614,44 @@ export default class TownScene extends Phaser.Scene {
     const g = this.lockedLandGraphics;
     g.clear();
     if (!this.isBuilderCity) return;
+    if (this.useIsoRendering()) {
+      for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
+        for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
+          const cell = this.gridCells.get(gridKey(x, y));
+          const points = this.getVisualTilePoints(x, y);
+          if (cell?.unlocked) {
+            const foggedSides = [
+              !this.isRevealed(x - 1, y) && isInsideGrid(x - 1, y),
+              !this.isRevealed(x, y - 1) && isInsideGrid(x, y - 1),
+              !this.isRevealed(x + 1, y) && isInsideGrid(x + 1, y),
+              !this.isRevealed(x, y + 1) && isInsideGrid(x, y + 1),
+            ];
+            if (foggedSides.some(Boolean)) {
+              this.drawPolygon(g, points, 0x141c28, 0.05, 0x2a3648, 0.18, 1);
+            }
+            continue;
+          }
+          const nearClearing = this.isRevealed(x - 1, y) || this.isRevealed(x + 1, y)
+            || this.isRevealed(x, y - 1) || this.isRevealed(x, y + 1)
+            || this.isRevealed(x - 1, y - 1) || this.isRevealed(x + 1, y + 1)
+            || this.isRevealed(x - 1, y + 1) || this.isRevealed(x + 1, y - 1);
+          const hash = this.getTerrainHash(x, y, 7);
+          const alpha = (nearClearing ? 0.4 : 0.58) + (hash % 7) * 0.012;
+          this.drawPolygon(g, points, hash % 3 ? 0x131b26 : 0x101722, alpha, 0x2a3648, nearClearing ? 0.12 : 0.06, 1);
+          if (!nearClearing && hash % 5 === 0) {
+            const center = this.gridTileVisualCenter(x, y);
+            g.fillStyle(0x2a3648, 0.14);
+            g.fillEllipse(
+              center.x + ((hash % 17) - 8),
+              center.y + (((hash >> 3) % 13) - 6),
+              26 + (hash % 20),
+              10 + ((hash >> 4) % 8),
+            );
+          }
+        }
+      }
+      return;
+    }
     const tile = GRID_CONFIG.tileSize;
     for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
       for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
@@ -2508,6 +2700,16 @@ export default class TownScene extends Phaser.Scene {
   redrawBuildGrid() {
     if (!this.gridGraphics) return;
     this.gridGraphics.clear();
+    if (this.useIsoRendering()) {
+      this.gridGraphics.lineStyle(1, 0xfff6dc, 0.16);
+      for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
+        for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
+          if (!this.isRevealed(x, y)) continue;
+          this.drawPolygon(this.gridGraphics, this.getVisualTilePoints(x, y), null, 0, 0xfff6dc, 0.16, 1);
+        }
+      }
+      return;
+    }
     this.gridGraphics.lineStyle(1, 0xfff6dc, 0.2);
     for (let x = 0; x <= GRID_CONFIG.columns; x += 1) {
       const px = GRID_CONFIG.originX + x * GRID_CONFIG.tileSize;
@@ -2562,6 +2764,54 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
+  drawIsoRoadTile(graphics, overlay, road) {
+    const type = ROAD_TYPES[road.type] || ROAD_TYPES.dirt;
+    const plaza = isRoadPlazaTile(this.gridCells, road.x, road.y);
+    const tile = this.getVisualTilePoints(road.x, road.y);
+    const center = this.gridTileVisualCenter(road.x, road.y);
+    const hash = this.getTerrainHash(road.x, road.y, 19);
+    const shoulderColor = road.type === 'premium' ? 0xf0c94a : type.edgeColor;
+    const surfaceAlpha = road.type === 'premium' ? 0.96 : road.type === 'stone' ? 0.94 : 0.9;
+    const inner = this.insetPoints(tile, plaza ? 0.96 : 0.78);
+    const core = this.insetPoints(tile, plaza ? 0.82 : 0.62);
+
+    this.drawPolygon(
+      graphics,
+      tile.map((point) => ({ x: point.x, y: point.y + 4 })),
+      0x10151d,
+      0.18,
+      null,
+    );
+    this.drawPolygon(graphics, tile, shoulderColor, plaza ? 0.34 : 0.26, shoulderColor, 0.2, 1);
+    this.drawPolygon(graphics, inner, type.edgeColor, road.type === 'premium' ? 0.68 : 0.52, type.edgeColor, 0.48, 1);
+    this.drawPolygon(graphics, core, type.color, surfaceAlpha, 0xfff6dc, road.type === 'premium' ? 0.22 : 0.1, 1);
+
+    if (road.type === 'stone') {
+      overlay.lineStyle(1, 0xf2ead8, 0.14);
+      overlay.lineBetween(inner[0].x + 5, inner[0].y + 3, inner[2].x - 5, inner[2].y - 3);
+      overlay.lineStyle(1, type.edgeColor, 0.2);
+      overlay.lineBetween(inner[1].x - 5, inner[1].y + 2, inner[3].x + 5, inner[3].y - 2);
+    } else if (road.type === 'premium') {
+      overlay.fillStyle(0xfff1a6, 0.42);
+      overlay.fillCircle(center.x, center.y, plaza ? 3 : 2);
+      overlay.lineStyle(1, 0xfff1a6, 0.18);
+      overlay.strokeEllipse(center.x, center.y + 1, plaza ? 30 : 22, plaza ? 12 : 8);
+    } else {
+      graphics.fillStyle(type.edgeColor, 0.18);
+      graphics.fillEllipse(
+        center.x + ((hash % 13) - 6),
+        center.y + (((hash >> 4) % 9) - 4),
+        plaza ? 9 : 6,
+        plaza ? 4 : 3,
+      );
+    }
+
+    if (plaza) {
+      overlay.lineStyle(1, 0xfff6dc, 0.12);
+      this.drawPolygon(overlay, this.insetPoints(tile, 0.55), null, 0, 0xfff6dc, 0.1, 1);
+    }
+  }
+
   redrawCityRoads() {
     if (!this.cityRoadGraphics) this.cityRoadGraphics = this.add.graphics().setDepth(20);
     if (!this.cityRoadOverlay) this.cityRoadOverlay = this.add.graphics().setDepth(20.7);
@@ -2573,6 +2823,11 @@ export default class TownScene extends Phaser.Scene {
     graphics.clear();
     overlay.clear();
     if (!this.isBuilderCity) return;
+
+    if (this.useIsoRendering()) {
+      for (const road of this.cityState.roads) this.drawIsoRoadTile(graphics, overlay, road);
+      return;
+    }
 
     const roadTextureByType = {
       dirt: 'tile_road_dirt',
@@ -2653,10 +2908,10 @@ export default class TownScene extends Phaser.Scene {
 
   setupBuildInput() {
     this.buildInputZone = this.add.zone(
-      GRID_CONFIG.originX + GRID_CONFIG.columns * GRID_CONFIG.tileSize / 2,
-      GRID_CONFIG.originY + GRID_CONFIG.rows * GRID_CONFIG.tileSize / 2,
-      GRID_CONFIG.columns * GRID_CONFIG.tileSize,
-      GRID_CONFIG.rows * GRID_CONFIG.tileSize,
+      this.worldWidth / 2,
+      this.worldHeight / 2,
+      this.worldWidth,
+      this.worldHeight,
     ).setDepth(4900).setVisible(false);
 
     this.buildInputZone.on('pointermove', (pointer) => {
@@ -2668,7 +2923,7 @@ export default class TownScene extends Phaser.Scene {
         && pointer.primaryDown
         && !this.input.pointer2?.isDown // never paint mid-pinch
       ) {
-        const cell = worldToGrid(world.x, world.y);
+        const cell = this.worldToBuildGrid(world.x, world.y);
         this.addRoadPlanCell(cell.x, cell.y);
       }
     });
@@ -2687,14 +2942,14 @@ export default class TownScene extends Phaser.Scene {
         // a clean tap toggles a single planned tile; drags already painted
         if (!painted && !this.wasDragGesture(pointer)) {
           const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-          const cell = worldToGrid(world.x, world.y);
+          const cell = this.worldToBuildGrid(world.x, world.y);
           this.toggleRoadPlanCell(cell.x, cell.y);
         }
         return;
       }
       if (this.wasDragGesture(pointer)) return;
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-      const cell = worldToGrid(world.x, world.y);
+      const cell = this.worldToBuildGrid(world.x, world.y);
       this.tryPlaceBuildItem(cell.x, cell.y);
     });
     this.input.keyboard?.on('keydown-ESC', this.cancelBuildMode, this);
@@ -2832,7 +3087,7 @@ export default class TownScene extends Phaser.Scene {
 
   updateBuildPreview(worldX, worldY) {
     if (!this.buildMode || !this.buildPreviewGraphics) return;
-    const cell = worldToGrid(worldX, worldY);
+    const cell = this.worldToBuildGrid(worldX, worldY);
     if (this.buildPreviewCell?.x === cell.x && this.buildPreviewCell?.y === cell.y) return;
     this.buildPreviewCell = cell;
     const result = this.validateBuildPlacement(cell.x, cell.y);
@@ -2840,25 +3095,51 @@ export default class TownScene extends Phaser.Scene {
     // delete mode highlights in amber: a valid target means "will remove"
     const validColor = this.buildMode.kind === 'delete' ? 0xf6c945 : 0x7fdc93;
     this.buildPreviewGraphics.clear().setVisible(true);
-    this.buildPreviewGraphics.fillStyle(result.valid ? validColor : 0xf0938f, 0.28);
-    this.buildPreviewGraphics.lineStyle(2, result.valid ? validColor : 0xf0938f, 0.95);
-    for (const pos of getFootprintCells(cell.x, cell.y, footprint)) {
-      const world = gridToWorld(pos.x, pos.y);
-      const left = world.x - GRID_CONFIG.tileSize / 2 + 2;
-      const top = world.y - GRID_CONFIG.tileSize + 2;
-      this.buildPreviewGraphics.fillRect(left, top, GRID_CONFIG.tileSize - 4, GRID_CONFIG.tileSize - 4);
-      this.buildPreviewGraphics.strokeRect(left, top, GRID_CONFIG.tileSize - 4, GRID_CONFIG.tileSize - 4);
+    const previewColor = result.valid ? validColor : 0xf0938f;
+    if (this.useIsoRendering()) {
+      this.drawPolygon(
+        this.buildPreviewGraphics,
+        this.getVisualFootprintPolygon(cell.x, cell.y, footprint),
+        previewColor,
+        0.26,
+        previewColor,
+        0.95,
+        2,
+      );
+      for (const pos of getFootprintCells(cell.x, cell.y, footprint)) {
+        this.drawPolygon(
+          this.buildPreviewGraphics,
+          this.getVisualTilePoints(pos.x, pos.y),
+          null,
+          0,
+          0xfff6dc,
+          0.16,
+          1,
+        );
+      }
+    } else {
+      this.buildPreviewGraphics.fillStyle(previewColor, 0.28);
+      this.buildPreviewGraphics.lineStyle(2, previewColor, 0.95);
+      for (const pos of getFootprintCells(cell.x, cell.y, footprint)) {
+        const world = gridToWorld(pos.x, pos.y);
+        const left = world.x - GRID_CONFIG.tileSize / 2 + 2;
+        const top = world.y - GRID_CONFIG.tileSize + 2;
+        this.buildPreviewGraphics.fillRect(left, top, GRID_CONFIG.tileSize - 4, GRID_CONFIG.tileSize - 4);
+        this.buildPreviewGraphics.strokeRect(left, top, GRID_CONFIG.tileSize - 4, GRID_CONFIG.tileSize - 4);
+      }
     }
 
     const definition = this.getBuildModeDefinition();
-    const anchor = gridToWorld(cell.x, cell.y, footprint);
+    const anchor = this.gridToVisual(cell.x, cell.y, footprint);
     const name = definition?.name || 'Construction';
     const cost = result.cost ?? definition?.cost ?? 0;
     const costLabel = cost < 0 ? `+${-cost}g refund` : `${cost}g`;
     const view = this.getVisibleWorldRect();
     const labelX = Phaser.Math.Clamp(anchor.x, view.left + 138, view.right - 138);
     const labelY = Phaser.Math.Clamp(
-      anchor.y - footprint.h * GRID_CONFIG.tileSize - 4,
+      anchor.y - (this.useIsoRendering()
+        ? Math.max(46, (footprint.w + footprint.h) * ISO_TILE_HEIGHT / 2 + 18)
+        : footprint.h * GRID_CONFIG.tileSize + 4),
       view.top + 82,
       view.bottom - 54,
     );
@@ -2997,7 +3278,7 @@ export default class TownScene extends Phaser.Scene {
     const result = this.validateBuildPlacement(gridX, gridY);
     if (!result.valid) {
       this.game.events.emit('gwg-event', result.reason);
-      const world = gridToWorld(gridX, gridY);
+      const world = this.gridTileVisualCenter(gridX, gridY);
       this.floatText(world.x, world.y - 28, 'INVALID', '#f0938f');
       return;
     }
@@ -3008,10 +3289,8 @@ export default class TownScene extends Phaser.Scene {
     } else {
       this.placeCatalogBuilding(gridX, gridY, this.buildMode.id, result.cost);
     }
-    this.updateBuildPreview(
-      gridToWorld(gridX, gridY).x,
-      gridToWorld(gridX, gridY).y - GRID_CONFIG.tileSize / 2,
-    );
+    const world = this.gridTileVisualCenter(gridX, gridY);
+    this.updateBuildPreview(world.x, world.y);
   }
 
   // --- road plan: drag/tap to preview, confirm to place ----------------------
@@ -3064,12 +3343,24 @@ export default class TownScene extends Phaser.Scene {
     }
     for (const spot of plan.values()) {
       const valid = this.isRoadPlanCellValid(spot.x, spot.y);
-      const left = GRID_CONFIG.originX + spot.x * GRID_CONFIG.tileSize + 3;
-      const top = GRID_CONFIG.originY + spot.y * GRID_CONFIG.tileSize + 3;
-      g.fillStyle(valid ? 0x7fdc93 : 0xf0938f, 0.34);
-      g.fillRect(left, top, GRID_CONFIG.tileSize - 6, GRID_CONFIG.tileSize - 6);
-      g.lineStyle(2, valid ? 0xd7f3d0 : 0xf0938f, 0.9);
-      g.strokeRect(left, top, GRID_CONFIG.tileSize - 6, GRID_CONFIG.tileSize - 6);
+      if (this.useIsoRendering()) {
+        this.drawPolygon(
+          g,
+          this.insetPoints(this.getVisualTilePoints(spot.x, spot.y), 0.86),
+          valid ? 0x7fdc93 : 0xf0938f,
+          0.34,
+          valid ? 0xd7f3d0 : 0xf0938f,
+          0.9,
+          2,
+        );
+      } else {
+        const left = GRID_CONFIG.originX + spot.x * GRID_CONFIG.tileSize + 3;
+        const top = GRID_CONFIG.originY + spot.y * GRID_CONFIG.tileSize + 3;
+        g.fillStyle(valid ? 0x7fdc93 : 0xf0938f, 0.34);
+        g.fillRect(left, top, GRID_CONFIG.tileSize - 6, GRID_CONFIG.tileSize - 6);
+        g.lineStyle(2, valid ? 0xd7f3d0 : 0xf0938f, 0.9);
+        g.strokeRect(left, top, GRID_CONFIG.tileSize - 6, GRID_CONFIG.tileSize - 6);
+      }
     }
     this.emitBuildModeState();
   }
@@ -3137,6 +3428,7 @@ export default class TownScene extends Phaser.Scene {
     if (revealedAny) {
       this.cityState.revealed = [...this.revealedTiles];
       this.redrawFog();
+      this.redrawBuildGrid();
     }
     this.redrawTerrainDetails();
     this.redrawTerrainVariety();
@@ -3170,7 +3462,7 @@ export default class TownScene extends Phaser.Scene {
     this.redrawCityRoads();
     this.redrawTerrainDetails();
     this.redrawTerrainVariety();
-    const world = gridToWorld(gridX, gridY);
+    const world = this.gridTileVisualCenter(gridX, gridY);
     this.floatText(world.x, world.y - 30, refund > 0 ? `+${refund}g` : 'REMOVED', '#f6c945');
 
     // warn when a service building just lost its last road connection
@@ -3200,7 +3492,7 @@ export default class TownScene extends Phaser.Scene {
     this.redrawTerrainDetails();
     this.redrawTerrainVariety();
     this.redrawCityRoads();
-    const world = gridToWorld(gridX, gridY);
+    const world = this.gridTileVisualCenter(gridX, gridY);
     this.floatText(world.x, world.y - 30, `-${cost}g`, '#f6c945');
     const text = `${road.name} placed. Access has become ${typeId === 'premium' ? 'a luxury texture' : 'slightly less theoretical'}.`;
     this.game.events.emit('gwg-event', text);
@@ -3222,7 +3514,7 @@ export default class TownScene extends Phaser.Scene {
       id === 'watchtower' ? FOG_REVEAL_RADIUS.watchtower : FOG_REVEAL_RADIUS.building,
       id === 'watchtower' ? 'The new watchtower' : '',
     );
-    const position = gridToWorld(gridX, gridY, catalog.footprint);
+    const position = this.gridToVisual(gridX, gridY, catalog.footprint);
     Object.assign(building, position, {
       gridX,
       gridY,
@@ -3739,50 +4031,34 @@ export default class TownScene extends Phaser.Scene {
     const access = this.getBuildingRoadAccess(b);
     if (this.isBuilderCity && Number.isInteger(b.gridX) && Number.isInteger(b.gridY)) {
       const footprint = catalog?.footprint || b.footprint || { w: 1, h: 1 };
-      const left = GRID_CONFIG.originX + b.gridX * GRID_CONFIG.tileSize;
-      const top = GRID_CONFIG.originY + b.gridY * GRID_CONFIG.tileSize;
-      const width = footprint.w * GRID_CONFIG.tileSize;
-      const height = footprint.h * GRID_CONFIG.tileSize;
-      const foundation = this.add.graphics().setDepth(b.y - 5);
+      const polygon = this.getVisualFootprintPolygon(b.gridX, b.gridY, footprint);
+      const foundation = this.add.graphics().setDepth(this.getVisualDepth(b.gridX, b.gridY) + 18);
       const shady = catalog?.kind === 'shady';
-      const padInset = 5;
       const padColor = shady ? 0x9c7a32 : 0x8d805e;
       const trimColor = shady ? 0xf0c94a : 0xc5b58c;
-      const padTop = top + 8;
-      const padMidY = top + height * 0.56;
-      const padBottom = top + height - 4;
-      const padLeft = left + padInset;
-      const padRight = left + width - padInset;
-      foundation.fillStyle(0x162116, 0.16);
-      foundation.beginPath();
-      foundation.moveTo(left + width / 2, padTop + 3);
-      foundation.lineTo(padRight + 4, padMidY + 3);
-      foundation.lineTo(left + width / 2, padBottom + 5);
-      foundation.lineTo(padLeft - 4, padMidY + 3);
-      foundation.closePath();
-      foundation.fillPath();
-      foundation.fillStyle(padColor, shady ? 0.34 : 0.27);
-      foundation.beginPath();
-      foundation.moveTo(left + width / 2, padTop);
-      foundation.lineTo(padRight, padMidY);
-      foundation.lineTo(left + width / 2, padBottom);
-      foundation.lineTo(padLeft, padMidY);
-      foundation.closePath();
-      foundation.fillPath();
-      foundation.lineStyle(1, trimColor, shady ? 0.42 : 0.3);
-      foundation.beginPath();
-      foundation.moveTo(left + width / 2, padTop);
-      foundation.lineTo(padRight, padMidY);
-      foundation.lineTo(left + width / 2, padBottom);
-      foundation.lineTo(padLeft, padMidY);
-      foundation.closePath();
-      foundation.strokePath();
+      const inner = this.insetPoints(polygon, 0.88);
+      const core = this.insetPoints(polygon, 0.76);
+      this.drawPolygon(
+        foundation,
+        polygon.map((point) => ({ x: point.x, y: point.y + 5 })),
+        0x162116,
+        0.18,
+        null,
+      );
+      this.drawPolygon(foundation, polygon, padColor, shady ? 0.25 : 0.2, trimColor, shady ? 0.28 : 0.2, 1);
+      this.drawPolygon(foundation, inner, padColor, shady ? 0.36 : 0.29, trimColor, shady ? 0.44 : 0.32, 1);
+      this.drawPolygon(foundation, core, shady ? 0xf0c94a : 0xd1bd8d, shady ? 0.12 : 0.09, null);
       foundation.fillStyle(shady ? 0xf0c94a : 0xd1bd8d, shady ? 0.16 : 0.12);
-      foundation.fillEllipse(b.x, b.y - 6, Math.min(width * 0.76, b.w * 0.86), 9);
+      foundation.fillEllipse(
+        b.x,
+        b.y - 5,
+        Math.min((footprint.w + footprint.h) * ISO_TILE_WIDTH * 0.34, b.w * 0.84),
+        8,
+      );
       if (access.roadCell) {
-        const road = gridToWorld(access.roadCell.x, access.roadCell.y);
+        const road = this.gridTileVisualCenter(access.roadCell.x, access.roadCell.y);
         const roadX = road.x;
-        const roadY = road.y - GRID_CONFIG.tileSize / 2;
+        const roadY = road.y;
         const doorX = b.doorX ?? b.x;
         const doorY = b.doorY ?? b.y + (b.doorOffsetY ? 4 : 2);
         const dx = roadX - doorX;
@@ -3807,27 +4083,32 @@ export default class TownScene extends Phaser.Scene {
       this.buildingObjectsById[b.id].push(foundation);
 
       if (!access.connected) {
-        const warning = this.add.text(left + width - 7, top + 8, '!', {
+        const topPoint = polygon.reduce((best, point) => (point.y < best.y ? point : best), polygon[0]);
+        const rightPoint = polygon.reduce((best, point) => (point.x > best.x ? point : best), polygon[0]);
+        const warning = this.add.text(rightPoint.x - 6, topPoint.y + 8, '!', {
           fontFamily: '"Courier New", monospace',
           fontSize: '14px',
           fontStyle: 'bold',
           color: '#ffd0cc',
           backgroundColor: '#5b1e25dd',
           padding: { x: 4, y: 1 },
-        }).setOrigin(1, 0).setDepth(b.y + 3);
+        }).setOrigin(1, 0).setDepth(this.getVisualDepth(b.gridX, b.gridY) + 34);
         this.buildingObjectsById[b.id].push(warning);
       }
     }
+    const placeDepth = this.isBuilderCity && Number.isInteger(b.gridX) && Number.isInteger(b.gridY)
+      ? this.getVisualDepth(b.gridX, b.gridY) + 40
+      : b.y;
     const shadowWidth = Math.min(
       Math.max(54, (catalog?.footprint?.w || 2) * GRID_CONFIG.tileSize * 0.72),
       b.w * 0.86,
     );
-    const shadow = this.add.ellipse(b.x, b.y - 8, shadowWidth, 8, 0x10151d, 0.1).setDepth(b.y - 2);
+    const shadow = this.add.ellipse(b.x, b.y - 8, shadowWidth, 8, 0x10151d, 0.1).setDepth(placeDepth - 2);
     this.buildingObjectsById[b.id].push(shadow);
     const textureKey = buildingTexture(this, b);
     const img = this.add.image(b.x, b.y, textureKey)
       .setOrigin(0.5, 1)
-      .setDepth(b.y);
+      .setDepth(placeDepth);
     const baseScale = this.getPlaceSpriteScale(b, textureKey, b.visualScale ?? LAYOUT_CONSTANTS.BUILDING_SCALE);
     img.setScale(baseScale);
     img.setData('baseScaleX', img.scaleX);
@@ -4661,7 +4942,9 @@ export default class TownScene extends Phaser.Scene {
     this.tryUpgradeTooltipTarget();
     // taller watchtowers see further into the fog
     if (id === 'watchtower' && place.isPlaced && this.getPlaceLevel(place) > levelBefore) {
-      const cell = worldToGrid(place.x, place.y);
+      const cell = Number.isInteger(place.gridX) && Number.isInteger(place.gridY)
+        ? { x: place.gridX, y: place.gridY }
+        : worldToGrid(place.x, place.y);
       this.revealArea(
         cell.x,
         cell.y,
@@ -4821,10 +5104,24 @@ export default class TownScene extends Phaser.Scene {
     this.selectedPlaceId = place.id;
     this.showPlaceLabel(place);
     const marker = this.add.graphics().setDepth(4990);
-    marker.lineStyle(3, place.id === 'whale' ? 0xf6c945 : 0x7fdc93, 0.95);
-    marker.strokeEllipse(place.x, place.y - (place.h || 60) / 2, (place.w || 70) + 26, (place.h || 60) + 22);
-    marker.fillStyle(place.id === 'whale' ? 0xf6c945 : 0x7fdc93, 0.12);
-    marker.fillEllipse(place.x, place.y - (place.h || 60) / 2, (place.w || 70) + 26, (place.h || 60) + 22);
+    const color = place.id === 'whale' ? 0xf6c945 : 0x7fdc93;
+    if (this.useIsoRendering() && Number.isInteger(place.gridX) && Number.isInteger(place.gridY)) {
+      const footprint = getBuildingCatalogEntry(place.id)?.footprint || place.footprint || { w: 1, h: 1 };
+      this.drawPolygon(
+        marker,
+        this.getVisualFootprintPolygon(place.gridX, place.gridY, footprint),
+        color,
+        0.1,
+        color,
+        0.95,
+        3,
+      );
+    } else {
+      marker.lineStyle(3, color, 0.95);
+      marker.strokeEllipse(place.x, place.y - (place.h || 60) / 2, (place.w || 70) + 26, (place.h || 60) + 22);
+      marker.fillStyle(color, 0.12);
+      marker.fillEllipse(place.x, place.y - (place.h || 60) / 2, (place.w || 70) + 26, (place.h || 60) + 22);
+    }
     this.selectionMarker = marker;
     this.tweens.add({ targets: marker, alpha: 0.45, duration: 620, yoyo: true, repeat: -1 });
   }
@@ -5829,7 +6126,7 @@ export default class TownScene extends Phaser.Scene {
   getNearestRoadCell(worldX, worldY) {
     if (!this.cityState.roads.length) return null;
     return this.cityState.roads.reduce((best, road) => {
-      const center = gridToWorld(road.x, road.y);
+      const center = this.gridTileVisualCenter(road.x, road.y);
       const distance = Phaser.Math.Distance.Between(worldX, worldY, center.x, center.y);
       return !best || distance < best.distance ? { ...road, distance } : best;
     }, null);
@@ -5864,10 +6161,10 @@ export default class TownScene extends Phaser.Scene {
     }
     const points = route.map((key) => {
       const [x, y] = key.split(',').map(Number);
-      const world = gridToWorld(x, y);
+      const world = this.gridTileVisualCenter(x, y);
       return {
         x: world.x,
-        y: world.y - GRID_CONFIG.tileSize / 2,
+        y: world.y,
         roadType: this.gridCells.get(key)?.road || 'dirt',
       };
     });
@@ -6279,10 +6576,10 @@ export default class TownScene extends Phaser.Scene {
       if (frontier.length) {
         const sorted = frontier
           .map((cell) => {
-            const world = gridToWorld(cell.x, cell.y);
+            const world = this.gridTileVisualCenter(cell.x, cell.y);
             return {
               x: world.x,
-              y: world.y - GRID_CONFIG.tileSize / 2,
+              y: world.y,
               dist: Phaser.Math.Distance.Between(world.x, world.y, target.x, target.y),
             };
           })
@@ -6309,8 +6606,8 @@ export default class TownScene extends Phaser.Scene {
       if (hero) return { id: hero.def.id, name: hero.def.name, x: hero.container.x, y: hero.container.y, h: 42, heroTarget: hero };
     } else if (prefer === 'random_road' && this.cityState?.roads?.length) {
       const road = Phaser.Utils.Array.GetRandom(this.cityState.roads);
-      const world = gridToWorld(road.x, road.y);
-      return { id: `road-${road.x}-${road.y}`, name: 'town road', x: world.x, y: world.y - GRID_CONFIG.tileSize / 2, h: 28 };
+      const world = this.gridTileVisualCenter(road.x, road.y);
+      return { id: `road-${road.x}-${road.y}`, name: 'town road', x: world.x, y: world.y, h: 28 };
     } else {
       const preferenceMap = {
         tavern: ['tavern', 'inn', 'hero_hostel'],
@@ -6820,12 +7117,12 @@ export default class TownScene extends Phaser.Scene {
     const frontier = this.getFogFrontierCells(true);
     if (frontier.length) {
       const pick = frontier[(this.day * 7 + hero.def.id.length * 13 + hero.def.name.length) % frontier.length];
-      const world = gridToWorld(pick.x, pick.y);
+      const world = this.gridTileVisualCenter(pick.x, pick.y);
       return {
         id: `wilderness-${hero.def.id}`,
         name: 'Fog Frontier',
         x: world.x,
-        y: world.y - GRID_CONFIG.tileSize / 2,
+        y: world.y,
         h: 40,
       };
     }
@@ -6837,12 +7134,12 @@ export default class TownScene extends Phaser.Scene {
       1,
       GRID_CONFIG.rows - 2,
     );
-    const world = gridToWorld(edgeX, edgeY);
+    const world = this.gridTileVisualCenter(edgeX, edgeY);
     return {
       id: `wilderness-${hero.def.id}`,
       name: 'Wilderness Edge',
       x: world.x,
-      y: world.y - GRID_CONFIG.tileSize / 2,
+      y: world.y,
       h: 40,
     };
   }
@@ -7122,7 +7419,7 @@ export default class TownScene extends Phaser.Scene {
           if (ev.explore) {
             this.showMonsterEncounter(ev.monster, spot.x, spot.y);
             // expeditions chart the land they walked, win or lose
-            const cell = worldToGrid(spot.x, spot.y);
+            const cell = this.worldToBuildGrid(spot.x, spot.y);
             this.revealArea(cell.x, cell.y, FOG_REVEAL_RADIUS.heroExplore, `${hero.def.name}'s expedition`);
           }
           this.say(hero, ev.bubble, true);
