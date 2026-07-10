@@ -8,7 +8,7 @@ const game = new Phaser.Game({
   parent: 'game',
   width: 1280,
   height: 720,
-  backgroundColor: '#6fae4e',
+  backgroundColor: '#030508',
   pixelArt: true,
   roundPixels: true,
   scale: {

@@ -119,18 +119,18 @@ export default class UIScene extends Phaser.Scene {
 
   buildTopBar() {
     const compact = this.rsp?.compact;
-    const barHeight = compact ? 68 : 54;
+    const barHeight = compact ? 72 : 62;
     const barCenterY = barHeight / 2;
     this.add.rectangle(WIDTH / 2, barCenterY, WIDTH, barHeight, 0x0f1521, 0.94);
     this.add.rectangle(WIDTH / 2, barHeight, WIDTH, 2, 0xbf8a38, 0.68);
     this.resourceTexts = {};
-    const slotW = compact ? 132 : 154;
-    const slotH = compact ? 46 : 36;
+    const slotW = compact ? 134 : 162;
+    const slotH = compact ? 48 : 42;
     const startX = compact ? 10 : 14;
     const gap = compact ? 6 : 8;
-    const labelFont = compact ? this.rsp.font(8) : '9px';
-    const valueFont = compact ? this.rsp.font(12) : '16px';
-    const iconTarget = compact ? Math.min(32, this.rsp.size(14)) : 17;
+    const labelFont = compact ? this.rsp.font(8) : '10px';
+    const valueFont = compact ? this.rsp.font(12) : '18px';
+    const iconTarget = compact ? Math.min(32, this.rsp.size(14)) : 20;
     for (const [index, meta] of RESOURCE_META.entries()) {
       const x = startX + index * (slotW + gap);
       const cx = x + slotW / 2;
@@ -141,11 +141,11 @@ export default class UIScene extends Phaser.Scene {
       const icon = this.add.image(x + (compact ? 21 : 18), barCenterY, iconKey)
         .setScale(this.getHudIconScale(iconKey, iconTarget))
         .setInteractive({ useHandCursor: true });
-      const label = this.add.text(x + (compact ? 42 : 34), compact ? 23 : 16, meta.label.toUpperCase(), {
+      const label = this.add.text(x + (compact ? 42 : 38), compact ? 24 : 19, meta.label.toUpperCase(), {
         fontFamily: FONT, fontSize: labelFont, fontStyle: 'bold', color: '#d4dae2',
         stroke: '#0c1118', strokeThickness: 2,
       }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-      const value = this.add.text(x + (compact ? 42 : 34), compact ? 43 : 32, '0', {
+      const value = this.add.text(x + (compact ? 42 : 38), compact ? 45 : 39, '0', {
         fontFamily: FONT, fontSize: valueFont, fontStyle: 'bold', color: meta.color,
         stroke: '#0c1118', strokeThickness: 2,
       }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
@@ -158,7 +158,7 @@ export default class UIScene extends Phaser.Scene {
     }
 
     // clicking the day counter opens the latest weekly report or pending policy
-    this.dayText = this.add.text(WIDTH - 16, compact ? 20 : 22, 'Day 1', {
+    this.dayText = this.add.text(WIDTH - 16, compact ? 22 : 25, 'Day 1', {
       fontFamily: FONT, fontSize: compact ? this.rsp.font(11) : '16px', fontStyle: 'bold', color: '#fff6dc',
       stroke: '#0c1118', strokeThickness: 2,
     }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
@@ -166,7 +166,7 @@ export default class UIScene extends Phaser.Scene {
     this.dayText.on('pointerout', () => this.dayText.setColor('#fff6dc'));
     this.dayText.on('pointerup', () => this.game.events.emit('gwg-open-report'));
 
-    this.warningText = this.add.text(16, compact ? 72 : 59, '', {
+    this.warningText = this.add.text(16, compact ? 76 : 67, '', {
       fontFamily: FONT,
       fontSize: compact ? this.rsp.font(8) : '12px',
       fontStyle: 'bold',
@@ -176,7 +176,7 @@ export default class UIScene extends Phaser.Scene {
       wordWrap: { width: compact ? 650 : 520 },
     }).setDepth(6000);
 
-    this.stageText = this.add.text(WIDTH - 16, compact ? 70 : 60, '', {
+    this.stageText = this.add.text(WIDTH - 16, compact ? 76 : 68, '', {
       fontFamily: FONT,
       fontSize: compact ? this.rsp.font(8) : '12px',
       fontStyle: 'bold',
@@ -232,7 +232,7 @@ export default class UIScene extends Phaser.Scene {
   }
 
   buildObjectives() {
-    this.objectiveText = this.add.text(WIDTH - 16, 140, '', {
+    this.objectiveText = this.add.text(WIDTH - 16, 152, '', {
       fontFamily: FONT,
       fontSize: '12px',
       fontStyle: 'bold',
@@ -253,7 +253,7 @@ export default class UIScene extends Phaser.Scene {
   }
 
   buildTownHint() {
-    this.townHintText = this.add.text(WIDTH - 16, 100, '', {
+    this.townHintText = this.add.text(WIDTH - 16, 108, '', {
       fontFamily: FONT,
       fontSize: '13px',
       fontStyle: 'bold',
@@ -300,7 +300,7 @@ export default class UIScene extends Phaser.Scene {
     const text = hasTouch
       ? 'Drag to pan - Pinch or +/- to zoom - Build roads/services - Tap heroes'
       : 'Drag/WASD to pan - Wheel to zoom - Build roads/services - Inspect heroes';
-    this.helperText = this.add.text(WIDTH / 2, this.rsp?.compact ? 78 : 54, text, {
+    this.helperText = this.add.text(WIDTH / 2, this.rsp?.compact ? 82 : 74, text, {
       fontFamily: FONT,
       fontSize: this.rsp?.compact ? this.rsp.font(8) : '12px',
       fontStyle: 'bold',
@@ -316,6 +316,17 @@ export default class UIScene extends Phaser.Scene {
   }
 
   // --- bottom event ticker ----------------------------------------------
+
+  addBottomGroupLabel(x, y, text, width) {
+    this.add.text(x - width / 2 + 10, y - 30, text.toUpperCase(), {
+      fontFamily: FONT,
+      fontSize: '9px',
+      fontStyle: 'bold',
+      color: '#d4dae2',
+      stroke: '#0c1118',
+      strokeThickness: 2,
+    }).setOrigin(0, 0.5);
+  }
 
   buildBottomFrame() {
     if (this.rsp?.compact) {
@@ -333,10 +344,18 @@ export default class UIScene extends Phaser.Scene {
     const controlY = HEIGHT - 64;
     this.add.rectangle(WIDTH / 2, controlY, WIDTH - 28, 48, 0x101721, 0.84)
       .setStrokeStyle(1, 0x31405a, 0.9);
-    this.add.rectangle(176, controlY, 330, 36, 0x17202d, 0.74)
+    this.add.rectangle(176, controlY, 330, 38, 0x17202d, 0.78)
       .setStrokeStyle(1, 0x273244, 0.9);
-    this.add.rectangle(598, controlY, 440, 36, 0x17202d, 0.74)
+    this.addBottomGroupLabel(176, controlY, 'Info', 330);
+    this.add.rectangle(474, controlY, 214, 38, 0x17202d, 0.78)
       .setStrokeStyle(1, 0x273244, 0.9);
+    this.addBottomGroupLabel(474, controlY, 'Management', 214);
+    this.add.rectangle(666, controlY, 150, 38, 0x17202d, 0.78)
+      .setStrokeStyle(1, 0x273244, 0.9);
+    this.addBottomGroupLabel(666, controlY, 'System', 150);
+    this.add.rectangle(936, controlY, 430, 38, 0x17202d, 0.76)
+      .setStrokeStyle(1, 0x273244, 0.9);
+    this.addBottomGroupLabel(936, controlY, 'Time', 430);
     this.add.rectangle(WIDTH - 104, controlY, 184, 48, 0x231b13, 0.74)
       .setStrokeStyle(1, 0xbf8a38, 0.9);
   }
@@ -443,11 +462,11 @@ export default class UIScene extends Phaser.Scene {
 
   buildUtilityButtons() {
     // row squeezed slightly to fit the Delete tool before the time controls
-    this.makeUtilityButton(386, HEIGHT - 64, 'Save', 'gwg-save');
-    this.makeUtilityButton(456, HEIGHT - 64, 'Reset', 'gwg-reset', 58);
-    this.makeUtilityButton(520, HEIGHT - 64, 'Build', 'gwg-open-build', 62);
-    this.makeUtilityButton(584, HEIGHT - 64, 'Roads', 'gwg-open-roads', 58);
-    this.makeUtilityButton(646, HEIGHT - 64, 'Delete', 'gwg-open-delete', 58);
+    this.makeUtilityButton(408, HEIGHT - 64, 'Build', 'gwg-open-build', 62);
+    this.makeUtilityButton(474, HEIGHT - 64, 'Roads', 'gwg-open-roads', 58);
+    this.makeUtilityButton(540, HEIGHT - 64, 'Delete', 'gwg-open-delete', 60);
+    this.makeUtilityButton(630, HEIGHT - 64, 'Save', 'gwg-save');
+    this.makeUtilityButton(702, HEIGHT - 64, 'Reset', 'gwg-reset', 58);
     // camera zoom lives on the right edge, clear of panels and the day button
     this.makeUtilityButton(WIDTH - 26, HEIGHT - 250, 'Home', 'gwg-camera-home', 46);
     const zoomIn = this.makeUtilityButton(WIDTH - 26, HEIGHT - 210, '+', 'gwg-zoom', 36, 1);
@@ -468,10 +487,10 @@ export default class UIScene extends Phaser.Scene {
 
   buildTimeControls() {
     const controls = [
-      { x: 704, label: '||', speed: 0, width: 42 },
-      { x: 750, label: '1x', speed: 1, width: 42 },
-      { x: 796, label: '2x', speed: 2, width: 42 },
-      { x: 842, label: '4x', speed: 4, width: 42 },
+      { x: 790, label: '||', speed: 0, width: 42 },
+      { x: 836, label: '1x', speed: 1, width: 42 },
+      { x: 882, label: '2x', speed: 2, width: 42 },
+      { x: 928, label: '4x', speed: 4, width: 42 },
     ];
     this.timeButtons = {};
     for (const control of controls) {
@@ -484,7 +503,7 @@ export default class UIScene extends Phaser.Scene {
         control.speed,
       );
     }
-    this.buildModeText = this.add.text(874, HEIGHT - 64, '', {
+    this.buildModeText = this.add.text(970, HEIGHT - 64, '', {
       fontFamily: FONT,
       fontSize: '10px',
       fontStyle: 'bold',
@@ -492,7 +511,7 @@ export default class UIScene extends Phaser.Scene {
       stroke: '#0c1118',
       strokeThickness: 2,
       lineSpacing: 2,
-      wordWrap: { width: 126 },
+      wordWrap: { width: 118 },
     }).setOrigin(0, 0.5);
     this.cancelBuildButton = this.makeUtilityButton(
       1042,
@@ -601,10 +620,10 @@ export default class UIScene extends Phaser.Scene {
 
   makeUtilityButton(x, y, label, eventName, width = 64, eventValue = undefined, options = {}) {
     const compact = this.rsp?.compact;
-    const height = options.height ?? (compact ? Math.min(58, this.rsp.buttonHeight) : 32);
+    const height = options.height ?? (compact ? Math.min(58, this.rsp.buttonHeight) : 34);
     const fontSize = options.fontSize ?? (compact
       ? `${Math.min(26, Math.max(17, this.rsp.size(8)))}px`
-      : '12px');
+      : '13px');
     const bg = this.add.rectangle(x, y, width, height, 0x223047, 0.96)
       .setStrokeStyle(1, 0xbf8a38)
       .setInteractive({ useHandCursor: true });

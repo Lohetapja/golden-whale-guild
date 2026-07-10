@@ -128,7 +128,7 @@ const IMPORTANT_BUBBLE_DURATION_MS = 5600;
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
 const SAVE_KEY = 'golden-whale-guild-save-v2';
-const SAVE_VERSION = 6;
+const SAVE_VERSION = 7;
 const TAP_MOVE_THRESHOLD = 14;
 const SIMULATION_DAY_MS = 45000;
 const HERO_LABEL_DEFAULT_ALPHA = 0;
@@ -138,6 +138,18 @@ const PRIMARY_LABEL_IDS = new Set(['whale', 'guildhall', 'dungeon']);
 const DEFAULT_SPECIAL_LABEL_IDS = new Set(['notice_board', 'complaint_barrel']);
 const COMPACT_SPECIAL_LABEL_IDS = new Set(['notice_board']);
 const SHOW_MOVEMENT_MARKERS = false;
+const ROAD_UPGRADE_ORDER = ['dirt', 'stone', 'premium'];
+const NORMAL_GRID_STROKE_ALPHA = 0;
+const BUILD_GRID_STROKE_ALPHA = 0.13;
+const HERO_ANIMATION_STATES = ['idle', 'walk', 'interact', 'carry', 'hurt', 'happy'];
+const HERO_STATE_SUFFIXES = {
+  idle: ['idle_default'],
+  walk: ['walk_1', 'walk_2', 'walk_3', 'walk_4'],
+  interact: ['interact'],
+  carry: ['carry'],
+  hurt: ['hurt'],
+  happy: ['happy'],
+};
 const LEGACY_BUILDING_IDS = new Set([
   'tavern', 'blacksmith', 'guildhall', 'market', 'training', 'whale', 'dungeon',
 ]);
@@ -634,6 +646,9 @@ export default class TownScene extends Phaser.Scene {
     this.discoveredPois = new Set(saved?.discoveredPois || []);
     // town stores + service-walker state (walkers regenerate from buildings)
     this.townInventory = normalizeInventory(saved?.townInventory);
+    this.areaReputation = this.normalizeAreaReputation(saved?.areaReputation);
+    this.townReputation = Number.isFinite(saved?.townReputation) ? saved.townReputation : 50;
+    this.townPrestige = Number.isFinite(saved?.townPrestige) ? saved.townPrestige : 0;
     this.serviceWalkers = [];
     this.walkerRotation = 0;
     this.walkerDailyTally = { threatReduction: 0, evangelistGold: 0 };
@@ -728,6 +743,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-save', this.saveGame, this);
     this.game.events.on('gwg-reset', this.resetGame, this);
     this.game.events.on('gwg-upgrade-place', this.upgradePlaceFromUi, this);
+    this.game.events.on('gwg-upgrade-road', this.upgradeRoadFromUi, this);
     this.game.events.on('gwg-post-quest', this.postQuestFromUi, this);
     this.game.events.on('gwg-open-quests', this.openQuestsFromUi, this);
     this.game.events.on('gwg-open-ledger', this.openTownLedger, this);
@@ -761,6 +777,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-save', this.saveGame, this);
       this.game.events.off('gwg-reset', this.resetGame, this);
       this.game.events.off('gwg-upgrade-place', this.upgradePlaceFromUi, this);
+      this.game.events.off('gwg-upgrade-road', this.upgradeRoadFromUi, this);
       this.game.events.off('gwg-post-quest', this.postQuestFromUi, this);
       this.game.events.off('gwg-open-quests', this.openQuestsFromUi, this);
       this.game.events.off('gwg-open-ledger', this.openTownLedger, this);
@@ -822,6 +839,9 @@ export default class TownScene extends Phaser.Scene {
         pendingPolicy: parsed.pendingPolicy || null,
         discoveredPois: Array.isArray(parsed.discoveredPois) ? parsed.discoveredPois : [],
         townInventory: parsed.townInventory || null,
+        areaReputation: parsed.areaReputation || {},
+        townReputation: Number.isFinite(parsed.townReputation) ? parsed.townReputation : null,
+        townPrestige: Number.isFinite(parsed.townPrestige) ? parsed.townPrestige : null,
         weeklyReport: parsed.weeklyReport || null,
         weekReportUnread: Boolean(parsed.weekReportUnread),
         weekTracker: parsed.weekTracker || null,
@@ -832,6 +852,62 @@ export default class TownScene extends Phaser.Scene {
     } catch {
       return null;
     }
+  }
+
+  normalizeAreaReputation(raw = {}) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    return Object.fromEntries(Object.entries(source)
+      .filter(([key]) => typeof key === 'string' && key.length > 0)
+      .map(([key, value]) => [key, Phaser.Math.Clamp(Number(value) || 0, 0, 100)]));
+  }
+
+  getAreaReputation(areaId = 'frontier') {
+    return Phaser.Math.Clamp(Number(this.areaReputation?.[areaId]) || 0, 0, 100);
+  }
+
+  changeAreaReputation(areaId = 'frontier', delta = 0, reason = '') {
+    if (!areaId || !Number.isFinite(delta) || delta === 0) return 0;
+    this.areaReputation = this.areaReputation || {};
+    const before = this.getAreaReputation(areaId);
+    const after = Phaser.Math.Clamp(before + delta, 0, 100);
+    this.areaReputation[areaId] = after;
+    if (after >= 45 && before < 45) {
+      const text = `${reason || 'A dangerous area'} gained a bad reputation. Heroes will squint before entering.`;
+      this.game.events.emit('gwg-event', text);
+      this.addTownLog(text, 'threat');
+    }
+    return after - before;
+  }
+
+  calculateTownPrestige() {
+    const buildingLevels = Object.values(this.placeById || {})
+      .filter((place) => place?.isPlaced !== false)
+      .reduce((sum, place) => sum + this.getPlaceLevel(place), 0);
+    const discovered = this.discoveredPois?.size || 0;
+    const victories = Number(this.stats?.monsterVictories) || 0;
+    return Phaser.Math.Clamp(Math.round(buildingLevels * 2 + discovered * 3 + victories * 4), 0, 100);
+  }
+
+  calculateTownReputation() {
+    const serviceQuality = Object.values(this.cityState?.buildingRuntime || {})
+      .reduce((sum, runtime) => sum + (Number(runtime.serviceQuality) || 0), 0);
+    const dangerPenalty = Math.max(0, this.resources.threat - 45) * 0.35
+      + Math.max(0, this.resources.corruption - 55) * 0.22;
+    return Phaser.Math.Clamp(Math.round(
+      42
+      + this.resources.trust * 0.34
+      + this.resources.morale * 0.18
+      + this.calculateTownPrestige() * 0.22
+      + serviceQuality * 0.45
+      - dangerPenalty,
+    ), 0, 100);
+  }
+
+  updateTownReputationStats() {
+    this.townPrestige = this.calculateTownPrestige();
+    this.townReputation = this.calculateTownReputation();
+    this.stats.townPrestige = this.townPrestige;
+    this.stats.townReputation = this.townReputation;
   }
 
   applyBuildingPlacements(buildings) {
@@ -1108,7 +1184,12 @@ export default class TownScene extends Phaser.Scene {
         return;
       }
       if (this.cameraDrag.moved) this.suppressTapUntil = this.time.now + 120;
-      else if (over.length === 0 && this.activeInspector) this.hideTooltip();
+      else if (over.length === 0 && !this.buildMode) {
+        const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const cell = this.worldToBuildGrid(world.x, world.y);
+        if (this.getRoadAt(cell.x, cell.y)) this.showRoadInspector(cell.x, cell.y);
+        else if (this.activeInspector) this.hideTooltip();
+      }
       this.cameraDrag.active = false;
     });
     this.input.on('gameout', () => this.clearWorldInteractionHover());
@@ -1280,6 +1361,9 @@ export default class TownScene extends Phaser.Scene {
       pendingPolicy: this.pendingPolicy,
       discoveredPois: [...(this.discoveredPois || [])],
       townInventory: { ...(this.townInventory || {}) },
+      areaReputation: { ...(this.areaReputation || {}) },
+      townReputation: this.townReputation,
+      townPrestige: this.townPrestige,
       weeklyReport: this.weeklyReport,
       weekReportUnread: Boolean(this.weekReportUnread),
       weekTracker: this.weekTracker ? structuredClone(this.weekTracker) : null,
@@ -1329,6 +1413,10 @@ export default class TownScene extends Phaser.Scene {
         admiredId: hero.stats.admiredId || null,
         resentmentTargetId: hero.stats.resentmentTargetId || null,
         injuredUntilDay: hero.stats.injuredUntilDay || 0,
+        injuryState: hero.stats.injuryState || 'healthy',
+        deathDay: hero.stats.deathDay || 0,
+        intent: hero.intent ? { ...hero.intent } : null,
+        animationState: hero.animationState || hero.stats.animationState || 'idle',
         premiumExposure: hero.stats.premiumExposure || 0,
         awayUntil: hero.awayUntil || 0,
       }])),
@@ -2163,6 +2251,15 @@ export default class TownScene extends Phaser.Scene {
         hero.container.setAlpha(1);
         hero.stats.loyalty = Math.max(25, hero.stats.loyalty - 8);
         hero.currentAction = `Returned near ${this.getPlaceName(hero.at)}`;
+        hero.intent = {
+          action: 'Returned',
+          destinationId: hero.at,
+          destinationName: this.getPlaceName(hero.at),
+          reason: 'Back from being temporarily unprofitable.',
+          risk: this.isHeroInjured(hero) ? 'Moderate' : 'Low',
+        };
+        if (!this.isHeroInjured(hero)) hero.stats.injuryState = 'healthy';
+        this.setHeroAnimationState(hero, this.isHeroInjured(hero) ? 'hurt' : 'idle');
         this.addHeroHistory(hero, 'Returned to town despite the evidence.');
         this.refreshHeroStatusMarker(hero);
         this.say(hero, 'I came back. The economy did not improve.', true);
@@ -2315,11 +2412,15 @@ export default class TownScene extends Phaser.Scene {
   // --- world ------------------------------------------------------------
 
   buildTerrain() {
-    // textured meadow base replaces the flat debug grass when the art exists
-    const baseKey = this.isBuilderCity
-      ? resolveTexture(this, 'terrain_grass_base', 'grass')
-      : 'grass';
-    this.add.tileSprite(this.worldWidth / 2, this.worldHeight / 2, this.worldWidth, this.worldHeight, baseKey);
+    this.cameras.main.setBackgroundColor(this.isBuilderCity ? '#030508' : '#2f5f32');
+    if (this.isBuilderCity) {
+      // The fog/shroud layers own all visible terrain in builder mode. A dark
+      // base prevents the old rectangular meadow from leaking at far zoom.
+      this.add.rectangle(this.worldWidth / 2, this.worldHeight / 2, this.worldWidth, this.worldHeight, 0x030508, 1)
+        .setDepth(0);
+    } else {
+      this.add.tileSprite(this.worldWidth / 2, this.worldHeight / 2, this.worldWidth, this.worldHeight, 'grass');
+    }
 
     if (this.isBuilderCity) {
       this.isoGroundGraphics = this.add.graphics().setDepth(1.15);
@@ -2392,7 +2493,7 @@ export default class TownScene extends Phaser.Scene {
           0x3f4b3d,
         ][hash % 4];
         const fillAlpha = state === 'active' ? 0.6 : 0.24;
-        const strokeAlpha = state === 'active' ? 0.14 : 0.05;
+        const strokeAlpha = NORMAL_GRID_STROKE_ALPHA;
         const tint = state === 'active' ? activeTint : memoryTint;
         const points = this.getVisualTilePoints(x, y);
         this.drawPolygon(g, points, tint, fillAlpha, 0xfff6dc, strokeAlpha, 1);
@@ -2997,11 +3098,14 @@ export default class TownScene extends Phaser.Scene {
     if (!this.gridGraphics) return;
     this.gridGraphics.clear();
     if (this.useIsoRendering()) {
-      this.gridGraphics.lineStyle(1, 0xfff6dc, 0.24);
+      this.gridGraphics.lineStyle(1, 0xfff6dc, BUILD_GRID_STROKE_ALPHA);
+      const activeSet = this.getActiveVisibilitySet();
       for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
         for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
           if (!this.isRevealed(x, y)) continue;
-          this.drawPolygon(this.gridGraphics, this.getVisualTilePoints(x, y), null, 0, 0xfff6dc, 0.24, 1);
+          const state = this.getVisibilityState(x, y, activeSet);
+          const alpha = state === 'active' ? BUILD_GRID_STROKE_ALPHA : BUILD_GRID_STROKE_ALPHA * 0.42;
+          this.drawPolygon(this.gridGraphics, this.getVisualTilePoints(x, y), null, 0, 0xfff6dc, alpha, 1);
         }
       }
       return;
@@ -3060,9 +3164,32 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
+  drawIsoRoadConnectors(graphics, tile, mask, fillColor, fillAlpha, inset = 0.72) {
+    if (!mask || fillAlpha <= 0) return;
+    const inner = this.insetPoints(tile, inset);
+    const edges = [
+      { bit: 1, index: 0 }, // north shares edge 0-1
+      { bit: 2, index: 1 }, // east shares edge 1-2
+      { bit: 4, index: 2 }, // south shares edge 2-3
+      { bit: 8, index: 3 }, // west shares edge 3-0
+    ];
+    for (const edge of edges) {
+      if (!(mask & edge.bit)) continue;
+      const next = (edge.index + 1) % 4;
+      this.drawPolygon(
+        graphics,
+        [inner[edge.index], tile[edge.index], tile[next], inner[next]],
+        fillColor,
+        fillAlpha,
+        null,
+      );
+    }
+  }
+
   drawIsoRoadTile(graphics, overlay, road) {
     const type = ROAD_TYPES[road.type] || ROAD_TYPES.dirt;
     const plaza = isRoadPlazaTile(this.gridCells, road.x, road.y);
+    const mask = getRoadMask(this.gridCells, road.x, road.y);
     const tile = this.getVisualTilePoints(road.x, road.y);
     const center = this.gridTileVisualCenter(road.x, road.y);
     const hash = this.getTerrainHash(road.x, road.y, 19);
@@ -3079,8 +3206,11 @@ export default class TownScene extends Phaser.Scene {
       null,
     );
     this.drawPolygon(graphics, tile, shoulderColor, plaza ? 0.34 : 0.26, shoulderColor, 0.2, 1);
+    this.drawIsoRoadConnectors(graphics, tile, mask, shoulderColor, plaza ? 0.33 : 0.28, plaza ? 0.94 : 0.76);
     this.drawPolygon(graphics, inner, type.edgeColor, road.type === 'premium' ? 0.68 : 0.52, type.edgeColor, 0.48, 1);
+    this.drawIsoRoadConnectors(graphics, tile, mask, type.edgeColor, road.type === 'premium' ? 0.66 : 0.56, plaza ? 0.82 : 0.68);
     this.drawPolygon(graphics, core, type.color, surfaceAlpha, 0xfff6dc, road.type === 'premium' ? 0.22 : 0.1, 1);
+    this.drawIsoRoadConnectors(graphics, tile, mask, type.color, road.type === 'premium' ? 0.92 : 0.86, plaza ? 0.72 : 0.58);
 
     if (road.type === 'stone') {
       overlay.lineStyle(1, 0xf2ead8, 0.14);
@@ -3239,7 +3369,13 @@ export default class TownScene extends Phaser.Scene {
         if (!painted && !this.wasDragGesture(pointer)) {
           const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
           const cell = this.worldToBuildGrid(world.x, world.y);
-          this.toggleRoadPlanCell(cell.x, cell.y);
+          if (this.getRoadAt(cell.x, cell.y)) {
+            const upgrade = this.getRoadUpgradeInfo(cell.x, cell.y, this.buildMode.id);
+            if (upgrade.target) this.upgradeRoadAt(cell.x, cell.y, upgrade.target.id);
+            else this.showRoadInspector(cell.x, cell.y);
+          } else {
+            this.toggleRoadPlanCell(cell.x, cell.y);
+          }
         }
         return;
       }
@@ -3285,6 +3421,44 @@ export default class TownScene extends Phaser.Scene {
     const roadCell = this.getRoadAccessCells(place.gridX, place.gridY, catalog.footprint)
       .find((cell) => this.gridCells.get(gridKey(cell.x, cell.y))?.road);
     return { connected: Boolean(roadCell), roadCell: roadCell || null };
+  }
+
+  getRoadAt(gridX, gridY) {
+    if (!Number.isInteger(gridX) || !Number.isInteger(gridY)) return null;
+    return (this.cityState?.roads || []).find((road) => road.x === gridX && road.y === gridY) || null;
+  }
+
+  getRoadTypeRank(typeId) {
+    const index = ROAD_UPGRADE_ORDER.indexOf(typeId);
+    return index < 0 ? 0 : index;
+  }
+
+  getRoadUpgradeTarget(currentType, requestedType = null) {
+    const currentRank = this.getRoadTypeRank(currentType);
+    if (requestedType && ROAD_TYPES[requestedType] && this.getRoadTypeRank(requestedType) > currentRank) {
+      return requestedType;
+    }
+    return ROAD_UPGRADE_ORDER[currentRank + 1] || null;
+  }
+
+  getRoadUpgradeInfo(gridX, gridY, requestedType = null) {
+    const road = this.getRoadAt(gridX, gridY);
+    if (!road) return { road: null, valid: false, reason: 'No road here. The commute is theoretical.' };
+    const current = ROAD_TYPES[road.type] || ROAD_TYPES.dirt;
+    const targetId = this.getRoadUpgradeTarget(current.id, requestedType);
+    if (!targetId) return { road, current, target: null, valid: false, reason: 'Road already at maximum municipal shininess.' };
+    const target = ROAD_TYPES[targetId];
+    const cost = target.cost;
+    return {
+      road,
+      current,
+      target,
+      cost,
+      valid: this.resources.gold >= cost,
+      reason: this.resources.gold >= cost
+        ? ''
+        : `Need ${cost} gold to upgrade this road. Infrastructure refuses exposure.`
+    };
   }
 
   getAverageHeroPower() {
@@ -3337,9 +3511,20 @@ export default class TownScene extends Phaser.Scene {
     if (this.buildMode.kind === 'road') {
       const cell = this.gridCells.get(gridKey(gridX, gridY));
       if (cell?.occupiedBy) return { valid: false, reason: 'A building already owns that argument.' };
-      if (cell?.road) return { valid: false, reason: 'Road already present. It refuses a second commute.' };
-      // gold is only charged on Confirm, so planning stays green regardless
       const road = ROAD_TYPES[this.buildMode.id];
+      if (cell?.road) {
+        const upgrade = this.getRoadUpgradeInfo(gridX, gridY, this.buildMode.id);
+        if (!upgrade.target) return { valid: false, reason: upgrade.reason, footprint };
+        return {
+          valid: upgrade.valid,
+          reason: upgrade.reason,
+          cost: upgrade.cost,
+          footprint,
+          roadUpgrade: true,
+          targetRoadType: upgrade.target.id,
+        };
+      }
+      // gold is only charged on Confirm, so planning stays green regardless
       return { valid: true, reason: '', cost: road.cost, footprint };
     }
 
@@ -3445,7 +3630,9 @@ export default class TownScene extends Phaser.Scene {
       ? (this.buildMode.kind === 'delete'
         ? 'Tap to remove'
         : isRoad
-          ? (planCount
+          ? (result.roadUpgrade
+            ? 'Tap to upgrade this road'
+            : planCount
             ? `Plan: ${planCount} tiles / ${this.getRoadPlanCost()}g - Confirm to build`
             : 'Drag or tap to plan, then Confirm')
           : 'Ready to place')
@@ -3525,6 +3712,7 @@ export default class TownScene extends Phaser.Scene {
     this.clearRoadPlan(); // switching tools always drops any pending plan
     this.buildMode = { kind, id };
     this.buildPreviewCell = null;
+    this.resetAllPlaceLabels();
     this.gridGraphics.setVisible(true);
     this.buildPreviewGraphics.setVisible(true);
     this.buildInputZone.setVisible(true).setInteractive({ useHandCursor: true });
@@ -3552,6 +3740,7 @@ export default class TownScene extends Phaser.Scene {
     this.buildPreviewLabel?.setVisible(false);
     this.buildPreviewGhost?.setVisible(false);
     this.buildInputZone?.disableInteractive().setVisible(false);
+    this.resetAllPlaceLabels();
     this.game.events.emit('gwg-build-mode', { active: false, label: '' });
   }
 
@@ -3579,7 +3768,8 @@ export default class TownScene extends Phaser.Scene {
       return;
     }
     if (this.buildMode.kind === 'road') {
-      this.placeRoad(gridX, gridY, this.buildMode.id, result.cost);
+      if (result.roadUpgrade) this.upgradeRoadAt(gridX, gridY, result.targetRoadType || this.buildMode.id);
+      else this.placeRoad(gridX, gridY, this.buildMode.id, result.cost);
     } else if (this.buildMode.kind === 'delete') {
       this.deleteRoadAt(gridX, gridY);
     } else {
@@ -3798,6 +3988,50 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.emit('gwg-event', text);
     this.addTownLog(text, 'economy');
     this.saveGame(false);
+  }
+
+  upgradeRoadAt(gridX, gridY, targetTypeId = null) {
+    const upgrade = this.getRoadUpgradeInfo(gridX, gridY, targetTypeId);
+    if (!upgrade.road || !upgrade.target) {
+      this.game.events.emit('gwg-event', upgrade.reason || 'That road cannot be upgraded. It has achieved pavement enlightenment.');
+      return false;
+    }
+    if (!upgrade.valid) {
+      const world = this.gridTileVisualCenter(gridX, gridY);
+      this.floatText(world.x, world.y - 30, 'NO GOLD', '#f0938f');
+      this.game.events.emit('gwg-event', upgrade.reason);
+      return false;
+    }
+    const previousName = upgrade.current.name;
+    upgrade.road.type = upgrade.target.id;
+    const cell = this.gridCells.get(gridKey(gridX, gridY));
+    if (cell) cell.road = upgrade.target.id;
+    this.applyDeltas({
+      gold: -upgrade.cost,
+      trust: upgrade.target.trust || 0,
+      corruption: upgrade.target.corruption || 0,
+    });
+    this.redrawCityRoads();
+    this.redrawTerrainDetails();
+    this.redrawTerrainVariety();
+    this.redrawWildernessDressing();
+    const world = this.gridTileVisualCenter(gridX, gridY);
+    this.floatText(world.x, world.y - 30, upgrade.target.name.toUpperCase(), upgrade.target.id === 'premium' ? '#ffe08a' : '#d7f3d0');
+    const text = `${previousName} upgraded to ${upgrade.target.name} for ${upgrade.cost}g.${upgrade.target.id === 'premium' ? ' The commute got faster and ethics got shinier.' : ''}`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.saveGame(false);
+    if (this.activeInspector?.type === 'road') this.showRoadInspector(gridX, gridY);
+    else this.refreshActivePanel();
+    return true;
+  }
+
+  upgradeRoadFromUi(token) {
+    const [x, y, targetType] = String(token || '').split(':');
+    const gridX = Number(x);
+    const gridY = Number(y);
+    if (!Number.isInteger(gridX) || !Number.isInteger(gridY)) return;
+    this.upgradeRoadAt(gridX, gridY, targetType || null);
   }
 
   placeCatalogBuilding(gridX, gridY, id, cost) {
@@ -4119,8 +4353,11 @@ export default class TownScene extends Phaser.Scene {
     };
   }
 
-  getPlaceLabelText(place) {
-    return place.shortLabel || place.name || place.id;
+  getPlaceLabelText(place, includeLevel = false) {
+    const base = place.shortLabel || place.name || place.id;
+    if (!includeLevel || place?.mapPoint) return base;
+    const level = this.getPlaceLevel?.(place) || 1;
+    return level > 1 ? `${base}\nLv ${level}` : base;
   }
 
   isCompactView() {
@@ -4138,16 +4375,19 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getDefaultPlaceLabelAlpha(place) {
-    if (place?.mapPoint) return this.isRevealed(place.gridX, place.gridY) ? 0.28 : 0;
+    if (place?.mapPoint) return 0;
     const priority = this.getPlaceLabelPriority(place);
-    if (priority <= 1) return 0.96;
+    if (this.buildMode && priority <= 3 && this.isLocationUnlocked(place.id)) {
+      return priority <= 1 ? 0.72 : 0.46;
+    }
+    if (priority <= 1) return this.isCompactView() ? 0.38 : 0.52;
     if (priority === 2) {
-      if (this.useIsoRendering()) return this.isCompactView() ? 0.18 : 0.56;
-      return this.isCompactView() ? 0.78 : 0.88;
+      if (this.useIsoRendering()) return 0;
+      return this.isCompactView() ? 0.42 : 0.58;
     }
     if (priority === 3) {
       const visibleIds = this.isCompactView() ? COMPACT_SPECIAL_LABEL_IDS : DEFAULT_SPECIAL_LABEL_IDS;
-      return visibleIds.has(place.id) && this.isLocationUnlocked(place.id) ? 0.74 : 0;
+      return visibleIds.has(place.id) && this.isLocationUnlocked(place.id) ? 0.54 : 0;
     }
     return 0;
   }
@@ -4155,6 +4395,7 @@ export default class TownScene extends Phaser.Scene {
   showPlaceLabel(place, alpha = 1) {
     const label = this.placeLabelsById?.[place?.id];
     if (!label) return;
+    label.setText(this.getPlaceLabelText(place, true));
     label.setAlpha(alpha);
     label.setDepth(4700);
   }
@@ -4162,6 +4403,7 @@ export default class TownScene extends Phaser.Scene {
   resetPlaceLabel(place) {
     const label = this.placeLabelsById?.[place?.id];
     if (!label) return;
+    label.setText(this.getPlaceLabelText(place, this.buildMode && this.getPlaceLabelPriority(place) <= 3));
     label.setAlpha(this.getDefaultPlaceLabelAlpha(place));
     label.setDepth(2000);
   }
@@ -4888,18 +5130,6 @@ export default class TownScene extends Phaser.Scene {
     const g = this.add.graphics();
     container.add(g);
 
-    g.fillStyle(0x141a24, 0.9);
-    g.fillRoundedRect(-w / 2 + 8, -h - 18, 44, 17, 4);
-    g.lineStyle(1, 0xf6c945, 0.9);
-    g.strokeRoundedRect(-w / 2 + 8, -h - 18, 44, 17, 4);
-    const badge = this.add.text(-w / 2 + 14, -h - 17, `Lv ${level}`, {
-      fontFamily: '"Courier New", monospace',
-      fontSize: '10px',
-      fontStyle: 'bold',
-      color: '#ffe08a',
-    });
-    container.add(badge);
-
     const addImage = (lx, ly, key, scale = 1, depthOffset = 0) => {
       if (!this.textures.exists(key)) return;
       const img = this.add.image(lx, ly, key).setScale(scale).setDepth((place.y || 0) + depthOffset);
@@ -5181,6 +5411,70 @@ export default class TownScene extends Phaser.Scene {
     this.activeInspector = { type: 'place', id: place.id };
     this.selectPlace(place);
     this.game.events.emit('gwg-inspector-open', this.getPlaceInspectorPayload(place));
+  }
+
+  getRoadInspectorPayload(gridX, gridY) {
+    const road = this.getRoadAt(gridX, gridY);
+    const type = ROAD_TYPES[road?.type] || ROAD_TYPES.dirt;
+    const upgrade = this.getRoadUpgradeInfo(gridX, gridY);
+    const nextLines = upgrade.target
+      ? [
+        `Next: ${upgrade.target.name}`,
+        `Cost: ${upgrade.cost} gold`,
+        `Effect: movement speed x${upgrade.target.speed}.`,
+        ...(upgrade.target.corruption ? ['Consequence: shiny infrastructure adds corruption and trims trust.'] : []),
+        ...(upgrade.valid ? [] : [{ text: upgrade.reason, className: 'gwg-bad' }]),
+      ]
+      : ['MAX: this road is as premium as public infrastructure gets.'];
+    return {
+      title: type.name,
+      subtitle: `Road tile (${gridX}, ${gridY})`,
+      sections: [
+        {
+          title: 'Current',
+          lines: [
+            type.description,
+            `Movement/service speed: x${type.speed}.`,
+            type.id === 'premium'
+              ? { text: 'Premium road: fastest path, slightly worse civic soul.', className: 'gwg-whale' }
+              : 'Road access lets buildings serve nearby heroes.',
+          ],
+        },
+        {
+          title: 'Upgrade',
+          lines: nextLines,
+        },
+      ],
+      actions: upgrade.target ? [{
+        label: upgrade.valid ? `Upgrade to ${upgrade.target.name}` : `Need ${upgrade.cost}g`,
+        event: 'gwg-upgrade-road',
+        id: `${gridX}:${gridY}:${upgrade.target.id}`,
+        disabled: !upgrade.valid,
+      }] : [],
+    };
+  }
+
+  showRoadInspector(gridX, gridY) {
+    const road = this.getRoadAt(gridX, gridY);
+    if (!road) return;
+    this.tooltipTarget = null;
+    this.heroTooltipTarget = null;
+    this.clearSelection(false);
+    this.activeInspector = { type: 'road', x: gridX, y: gridY };
+    const world = this.gridTileVisualCenter(gridX, gridY);
+    this.selectionMarker?.destroy();
+    this.selectionMarker = this.add.graphics().setDepth(4750);
+    this.drawPolygon(
+      this.selectionMarker,
+      this.insetPoints(this.getVisualTilePoints(gridX, gridY), 0.88),
+      null,
+      0,
+      0xffe08a,
+      0.95,
+      2,
+    );
+    this.floatText(world.x, world.y - 26, (ROAD_TYPES[road.type] || ROAD_TYPES.dirt).name, '#ffe08a');
+    this.game.events.emit('gwg-inspector-open', this.getRoadInspectorPayload(gridX, gridY));
   }
 
   getQuestInspectorPayload() {
@@ -5538,6 +5832,7 @@ export default class TownScene extends Phaser.Scene {
     hero.container.add(marker);
     this.selectionMarker = marker;
     this.setHeroLabelFocus(hero, true);
+    this.drawSelectedHeroIntentLine(hero);
     this.tweens.add({ targets: marker, alpha: 0.45, duration: 620, yoyo: true, repeat: -1 });
   }
 
@@ -5545,6 +5840,10 @@ export default class TownScene extends Phaser.Scene {
     if (this.selectionMarker) {
       this.selectionMarker.destroy();
       this.selectionMarker = null;
+    }
+    if (this.heroIntentLine) {
+      this.heroIntentLine.destroy();
+      this.heroIntentLine = null;
     }
     this.selectedPlaceId = null;
     this.selectedHeroId = null;
@@ -5555,6 +5854,23 @@ export default class TownScene extends Phaser.Scene {
       this.heroTooltipTarget = null;
       this.activeInspector = null;
     }
+  }
+
+  drawSelectedHeroIntentLine(hero) {
+    if (!hero?.intent) return;
+    const destination = hero.intent.destinationId
+      ? (this.doorById?.[hero.intent.destinationId] || this.placeById?.[hero.intent.destinationId])
+      : null;
+    if (!destination || Phaser.Math.Distance.Between(hero.container.x, hero.container.y, destination.x, destination.y) < 28) return;
+    const g = this.add.graphics().setDepth(4690);
+    g.lineStyle(2, 0xffe08a, 0.5);
+    g.beginPath();
+    g.moveTo(hero.container.x, hero.container.y - 28);
+    g.lineTo(destination.x, destination.y - 22);
+    g.strokePath();
+    g.fillStyle(0xffe08a, 0.72);
+    g.fillCircle(destination.x, destination.y - 22, 4);
+    this.heroIntentLine = g;
   }
 
   refreshActivePanel() {
@@ -5574,6 +5890,7 @@ export default class TownScene extends Phaser.Scene {
       const actor = this.activeMonsterActors?.find((item) => item.id === this.activeInspector.id);
       if (actor) this.showMonsterInspector(actor);
     }
+    else if (this.activeInspector.type === 'road') this.showRoadInspector(this.activeInspector.x, this.activeInspector.y);
     else if (this.activeInspector.type === 'onboarding') this.maybeShowOnboarding(true);
     else if (this.activeInspector.type === 'place') {
       const place = this.placeById?.[this.activeInspector.id];
@@ -5816,6 +6133,43 @@ export default class TownScene extends Phaser.Scene {
     return `Idle near ${this.getPlaceName(hero.at)}`;
   }
 
+  getHeroDestinationReason(hero, spot) {
+    const id = spot?.id || '';
+    if (/wilderness|frontier|poi|camp|ruins|cave|pit/i.test(id) || spot?.explore) return 'Exploring fog edge for loot, danger, and narrative liability.';
+    if (id === 'tavern' || id === 'inn' || id === 'hero_hostel') return hero?.stats?.morale < 48 ? 'Needs rest and a chair with legal padding.' : 'Social visit.';
+    if (id === 'blacksmith') return 'Needs gear access.';
+    if (id === 'training' || id === 'arena') return 'Training for honest progress.';
+    if (id === 'whale' || id === 'vip_rope_entrance' || id === 'vip_lounge') return 'Premium temptation detected.';
+    if (id === 'market') return 'Converting loot, gossip, or both.';
+    if (id === 'dungeon') return 'Responding to threat pressure.';
+    if (id === 'complaint_barrel' || id === 'hero_union_tent') return 'Needs approved complaint infrastructure.';
+    if (id === 'loot') return 'Greedy opportunity.';
+    return 'Routine wandering between questionable services.';
+  }
+
+  getHeroDestinationRisk(hero, spot) {
+    const areaRep = this.getAreaReputation(spot?.areaId || spot?.id || 'frontier');
+    if (spot?.risk) return spot.risk;
+    if (spot?.monster || /wilderness|frontier|camp|ruins|cave|pit|dungeon/i.test(spot?.id || '')) {
+      const danger = this.resources.threat + areaRep + (this.isHeroInjured(hero) ? 20 : 0);
+      if (danger >= 100) return 'Extreme';
+      if (danger >= 70) return 'High';
+      if (danger >= 42) return 'Moderate';
+      return 'Low';
+    }
+    return 'Low';
+  }
+
+  getHeroIntentLines(hero) {
+    const intent = hero.intent || {};
+    return [
+      `Action: ${this.getHeroActionText(hero)}`,
+      `Destination: ${intent.destinationName || this.getPlaceName(hero.destination || hero.at)}`,
+      `Reason: ${intent.reason || this.getHeroDestinationReason(hero, { id: hero.destination || hero.at })}`,
+      `Risk: ${intent.risk || 'Low'}`,
+    ];
+  }
+
   getPlaceName(id) {
     return this.placeById?.[id]?.name || this.decorationById?.[id]?.name || id || 'town';
   }
@@ -5841,7 +6195,7 @@ export default class TownScene extends Phaser.Scene {
             `Originally: ${hero.stats.originalPersonality || hero.def.personality}`,
             `Current: ${hero.stats.currentPersonality || hero.stats.status || hero.def.personality}`,
             `Mood: ${hero.stats.currentMood || 'Wary'}`,
-            `Action: ${this.getHeroActionText(hero)}`,
+            ...this.getHeroIntentLines(hero),
           ],
         },
         {
@@ -5857,6 +6211,8 @@ export default class TownScene extends Phaser.Scene {
             `Envy: ${hero.stats.envy || 0}`,
             `Whale Access: ${whaleAccess}`,
             `Cycles Active: ${hero.stats.cyclesActive || 0}`,
+            `Injury: ${this.isHeroInjured(hero) ? hero.stats.injuryState || 'injured' : 'healthy'}`,
+            `Animation: ${hero.animationState || 'idle'}${hero.hasStateFrames ? ' (state frames)' : ' (static fallback)'}`,
             this.getHeroRelationshipLine(hero),
           ],
         },
@@ -6057,6 +6413,74 @@ export default class TownScene extends Phaser.Scene {
     });
   }
 
+  getHeroStateFrameKey(def, suffix) {
+    const assetKey = def?.assetKey || '';
+    const candidates = [
+      `${assetKey}_${suffix}`,
+      `${def?.id || assetKey}_${suffix}`,
+      `hero_default_${suffix}`,
+    ].filter(Boolean);
+    return candidates.find((key) => this.textures.exists(key)) || null;
+  }
+
+  getHeroStateFrames(def) {
+    return Object.fromEntries(HERO_ANIMATION_STATES.map((state) => {
+      const frames = (HERO_STATE_SUFFIXES[state] || [state])
+        .map((suffix) => this.getHeroStateFrameKey(def, suffix))
+        .filter(Boolean);
+      return [state, frames];
+    }));
+  }
+
+  prepareHeroAnimation(hero) {
+    if (!hero?.sprite) return;
+    hero.stateFrames = this.getHeroStateFrames(hero.def);
+    hero.hasStateFrames = Object.values(hero.stateFrames).some((frames) => frames.length > 0);
+    this.setHeroAnimationState(hero, this.isHeroInjured(hero) ? 'hurt' : (hero.stats.animationState || 'idle'));
+  }
+
+  stopHeroAnimation(hero) {
+    if (hero?.animTimer) {
+      hero.animTimer.remove();
+      hero.animTimer = null;
+    }
+  }
+
+  applyHeroStateTexture(hero, textureKey) {
+    if (!hero?.sprite || !textureKey || !this.textures.exists(textureKey)) return;
+    hero.sprite.setTexture(textureKey);
+    const scale = this.getTextureScaleForHeight(textureKey, 34, NPC_SCALE);
+    hero.sprite.setScale(scale);
+    hero.sprite.setData('baseScaleX', scale);
+    hero.sprite.setData('baseScaleY', scale);
+    this.applyHeroTint(hero);
+  }
+
+  setHeroAnimationState(hero, state = 'idle') {
+    if (!hero?.sprite) return;
+    const safeState = HERO_ANIMATION_STATES.includes(state) ? state : 'idle';
+    this.stopHeroAnimation(hero);
+    hero.animationState = safeState;
+    hero.stats.animationState = safeState;
+    const frames = hero.stateFrames?.[safeState] || [];
+    if (!frames.length) {
+      this.applyHeroStateTexture(hero, heroTexture(this, hero.def));
+      return;
+    }
+    hero.animationFrameIndex = 0;
+    this.applyHeroStateTexture(hero, frames[0]);
+    if (frames.length > 1) {
+      hero.animTimer = this.time.addEvent({
+        delay: safeState === 'walk' ? 170 : 420,
+        loop: true,
+        callback: () => {
+          hero.animationFrameIndex = (hero.animationFrameIndex + 1) % frames.length;
+          this.applyHeroStateTexture(hero, frames[hero.animationFrameIndex]);
+        },
+      });
+    }
+  }
+
   buildHeroes() {
     this.heroes = this.heroDefinitions.map((def, i) => {
       const spot = this.getInitialHeroSpot(def, i);
@@ -6106,6 +6530,11 @@ export default class TownScene extends Phaser.Scene {
           rivalId: null,
           admiredId: null,
           resentmentTargetId: null,
+          injuredUntilDay: 0,
+          injuryState: 'healthy',
+          deathDay: 0,
+          premiumExposure: 0,
+          animationState: 'idle',
           ...def.stats,
           ...savedStats,
           originalPersonality: savedStats.originalPersonality || def.personality,
@@ -6119,13 +6548,27 @@ export default class TownScene extends Phaser.Scene {
           rivalId: savedStats.rivalId || null,
           admiredId: savedStats.admiredId || null,
           resentmentTargetId: savedStats.resentmentTargetId || null,
+          injuredUntilDay: Number(savedStats.injuredUntilDay) || 0,
+          injuryState: savedStats.injuryState || (Number(savedStats.injuredUntilDay) > this.day ? 'injured' : 'healthy'),
+          deathDay: Number(savedStats.deathDay) || 0,
+          premiumExposure: Number(savedStats.premiumExposure) || 0,
+          animationState: savedStats.animationState || 'idle',
         },
         at: spot.id, pathNode: this.getPathNodeForPlaceId(spot.id)?.id || null, destination: null, state: 'idle',
         currentAction: `Idle near ${this.getPlaceName(spot.id)}`,
+        intent: savedStats.intent || {
+          action: 'Idle',
+          destinationId: spot.id,
+          destinationName: this.getPlaceName(spot.id),
+          reason: 'Waiting for the economy to become someone else\'s problem.',
+          risk: 'Low',
+        },
         moveTween: null, bobTween: null, timer: null,
+        animTimer: null, animationFrameIndex: 0, animationState: savedStats.animationState || 'idle',
         destMarker: null, bubble: null, bubbleTimer: null,
         awayUntil: savedStats.awayUntil || 0,
       };
+      this.prepareHeroAnimation(hero);
       if (hero.awayUntil > this.day) {
         hero.state = 'away';
         hero.container.setAlpha(0.28);
@@ -6175,12 +6618,14 @@ export default class TownScene extends Phaser.Scene {
       this.applyInteractionDebugStyle(hit, 0xf6c945);
 
       // idle breathing — replace with a real idle animation later
-      const spriteScaleY = sprite.getData('baseScaleY') || sprite.scaleY || NPC_SCALE;
-      this.tweens.add({
-        targets: sprite, scaleY: { from: spriteScaleY, to: spriteScaleY * 1.04 },
-        duration: Phaser.Math.Between(700, 1000), yoyo: true, repeat: -1,
-        ease: 'Sine.easeInOut', delay: Phaser.Math.Between(0, 600),
-      });
+      if (!hero.hasStateFrames) {
+        const spriteScaleY = sprite.getData('baseScaleY') || sprite.scaleY || NPC_SCALE;
+        this.tweens.add({
+          targets: sprite, scaleY: { from: spriteScaleY, to: spriteScaleY * 1.04 },
+          duration: Phaser.Math.Between(700, 1000), yoyo: true, repeat: -1,
+          ease: 'Sine.easeInOut', delay: Phaser.Math.Between(0, 600),
+        });
+      }
 
       this.refreshHeroStatusMarker(hero);
       if (hero.stats.active) this.scheduleAmbient(hero, Phaser.Math.Between(300, 2500));
@@ -6213,7 +6658,9 @@ export default class TownScene extends Phaser.Scene {
   applyHeroTint(hero) {
     if (!hero?.sprite) return;
     const status = hero.stats.status || '';
-    if (hero.stats.active === false || status === 'Left Town') hero.sprite.setTint(0x7a7d85);
+    if (hero.stats.deathDay) hero.sprite.setTint(0x4a4f59);
+    else if (this.isHeroInjured(hero)) hero.sprite.setTint(0xf0a08f);
+    else if (hero.stats.active === false || status === 'Left Town') hero.sprite.setTint(0x7a7d85);
     else if (/Whale|Premium|Brand|Sponsored/.test(status)) hero.sprite.setTint(0xffe08a);
     else if (/Debt|Contract|Cursed/.test(status)) hero.sprite.setTint(0xc99aec);
     else if (/Protest|Angry|Balance/.test(status)) hero.sprite.setTint(0xf0938f);
@@ -6342,6 +6789,7 @@ export default class TownScene extends Phaser.Scene {
     this.maybeInviteArrival();
     this.maybeResolveItemConflict();
     this.buildRelationship(null, 'mentor');
+    this.updateTownReputationStats();
     if (this.heroTooltipTarget) this.showHeroInspector(this.heroTooltipTarget);
   }
 
@@ -6379,7 +6827,24 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
+  getHeroArrivalTier() {
+    this.updateTownReputationStats();
+    const serviceQuality = Object.values(this.cityState?.buildingRuntime || {})
+      .reduce((sum, runtime) => sum + (Number(runtime.serviceQuality) || 0), 0);
+    const safety = Phaser.Math.Clamp(100 - this.resources.threat, 0, 100);
+    const score = this.townReputation * 0.42
+      + this.townPrestige * 0.34
+      + safety * 0.18
+      + serviceQuality * 0.5;
+    if (this.getPlaceLevel(this.buildingById.whale) >= 4 && this.resources.corruption > 58) return 'Whale Champion';
+    if (score >= 82) return 'Champion';
+    if (score >= 64 || this.resources.threat > 70) return 'Veteran';
+    if (score >= 42) return 'Regular';
+    return 'Rookie';
+  }
+
   maybeInviteArrival() {
+    this.updateTownReputationStats();
     const activeCount = this.heroes.filter((hero) => hero.stats.active !== false).length;
     const lodgingCapacity = ['tavern', 'inn', 'hero_hostel', 'premium_lodge']
       .filter((id) => this.isBuildingPlaced(id))
@@ -6388,29 +6853,50 @@ export default class TownScene extends Phaser.Scene {
     const townCapacity = Math.min(28, guildCapacity + lodgingCapacity);
     if (activeCount >= townCapacity) return;
     const arrivalChance = Phaser.Math.Clamp(
-      0.3 + this.resources.trust / 250 + this.getPlaceLevel(this.buildingById.guildhall) * 0.04,
+      0.18
+        + this.resources.trust / 300
+        + this.townReputation / 260
+        + this.townPrestige / 420
+        + this.getPlaceLevel(this.buildingById.guildhall) * 0.035
+        - Math.max(0, this.resources.threat - 60) / 280,
       0.25,
-      0.82,
+      0.9,
     );
     if (Math.random() > arrivalChance) return;
-    const candidate = this.heroes.find((hero) => hero.stats.active === false);
+    const candidate = this.heroes.find((hero) => hero.stats.active === false && !hero.stats.deathDay);
     if (!candidate) return;
+    const tier = this.getHeroArrivalTier();
+    const tierPower = { Rookie: 2, Regular: 5, Veteran: 9, Champion: 14, 'Whale Champion': 18 }[tier] || 2;
     candidate.stats.active = true;
-    candidate.stats.status = 'New Arrival';
-    candidate.stats.currentPersonality = candidate.stats.originalPersonality || candidate.def.personality;
-    candidate.stats.morale = 58;
-    candidate.stats.loyalty = 55;
+    candidate.stats.status = tier === 'Rookie' ? 'New Arrival' : tier;
+    candidate.stats.currentPersonality = candidate.stats.status;
+    candidate.stats.power = Math.max(candidate.stats.power || 1, tierPower);
+    candidate.stats.fame = Math.max(candidate.stats.fame || 0, tier === 'Champion' || tier === 'Whale Champion' ? 28 : tier === 'Veteran' ? 14 : 0);
+    candidate.stats.whaleAccess = candidate.stats.whaleAccess || tier === 'Whale Champion';
+    candidate.stats.morale = tier === 'Rookie' ? 58 : 66;
+    candidate.stats.loyalty = Math.max(candidate.stats.loyalty || 0, tier === 'Champion' ? 66 : 55);
     candidate.stats.resentment = Math.max(0, (candidate.stats.resentment || 0) - 20);
+    candidate.stats.injuryState = 'healthy';
+    candidate.stats.injuredUntilDay = 0;
     candidate.awayUntil = this.day;
     candidate.state = 'idle';
     candidate.currentAction = `Arrived near ${this.getPlaceName(candidate.at)}`;
+    candidate.intent = {
+      action: 'Arrived',
+      destinationId: candidate.at,
+      destinationName: this.getPlaceName(candidate.at),
+      reason: `Attracted by ${tier === 'Whale Champion' ? 'premium glow and dangerous liquidity' : 'town reputation and service quality'}.`,
+      risk: 'Low',
+    };
     candidate.container.setVisible(true).setAlpha(1);
-    this.addHeroHistory(candidate, 'Returned as a new arrival, suspiciously informed.');
+    this.setHeroAnimationState(candidate, 'happy');
+    this.addHeroHistory(candidate, `Returned as ${candidate.stats.status}, suspiciously informed.`);
     this.refreshHeroStatusMarker(candidate);
     this.game.events.emit(
       'gwg-event',
-      `${candidate.def.name} arrived, still unaware of the full business model. Capacity ${activeCount + 1}/${townCapacity}.`,
+      `${candidate.def.name} arrived as ${candidate.stats.status}. Capacity ${activeCount + 1}/${townCapacity}.`,
     );
+    this.scheduleAmbient(candidate, Phaser.Math.Between(1200, 3200));
   }
 
   // stop whatever the hero is doing so a new order can take over cleanly
@@ -6419,11 +6905,20 @@ export default class TownScene extends Phaser.Scene {
     if (hero.bobTween) { hero.bobTween.stop(); hero.bobTween = null; }
     if (hero.timer) { hero.timer.remove(); hero.timer = null; }
     if (hero.destMarker) { hero.destMarker.destroy(); hero.destMarker = null; }
+    this.stopHeroAnimation(hero);
     hero.sprite.setAngle(0);
     hero.container.setAlpha(1);
     hero.destination = null;
     hero.state = 'idle';
     hero.currentAction = `Idle near ${this.getPlaceName(hero.at)}`;
+    hero.intent = {
+      action: 'Idle',
+      destinationId: hero.at,
+      destinationName: this.getPlaceName(hero.at),
+      reason: 'Waiting for the next bad municipal idea.',
+      risk: 'Low',
+    };
+    this.setHeroAnimationState(hero, this.isHeroInjured(hero) ? 'hurt' : 'idle');
   }
 
   scheduleAmbient(hero, delay) {
@@ -6609,6 +7104,13 @@ export default class TownScene extends Phaser.Scene {
     hero.destination = spot.id;
     const spotName = spot.name || this.getPlaceName(spot.id);
     hero.currentAction = `Walking to ${spotName}`;
+    hero.intent = {
+      action: hero.currentAction,
+      destinationId: spot.id,
+      destinationName: spotName,
+      reason: spot.reason || this.getHeroDestinationReason(hero, spot),
+      risk: spot.risk || this.getHeroDestinationRisk(hero, spot),
+    };
 
     const tx = spot.x + Phaser.Math.Between(-38, 38);
     const ty = spot.y + Phaser.Math.Between(-4, 18);
@@ -6626,10 +7128,13 @@ export default class TownScene extends Phaser.Scene {
 
     hero.sprite.setFlipX(tx < hero.container.x);
     // waddle while walking — replace with a real walk animation later
-    hero.bobTween = this.tweens.add({
-      targets: hero.sprite, angle: { from: -4, to: 4 },
-      duration: 160, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
-    });
+    this.setHeroAnimationState(hero, 'walk');
+    if (!hero.hasStateFrames) {
+      hero.bobTween = this.tweens.add({
+        targets: hero.sprite, angle: { from: -4, to: 4 },
+        duration: 160, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      });
+    }
 
     const moveSegment = (index) => {
       const point = route[index];
@@ -6643,6 +7148,14 @@ export default class TownScene extends Phaser.Scene {
         hero.destination = null;
         hero.state = 'idle';
         hero.currentAction = `Idle near ${spotName}`;
+        hero.intent = {
+          action: 'Idle',
+          destinationId: spot.id,
+          destinationName: spotName,
+          reason: 'Reached destination.',
+          risk: 'Low',
+        };
+        this.setHeroAnimationState(hero, this.isHeroInjured(hero) ? 'hurt' : 'idle');
         onArrive?.();
         return;
       }
@@ -6744,12 +7257,28 @@ export default class TownScene extends Phaser.Scene {
     }
     hero.state = 'inside';
     hero.currentAction = `Visiting ${this.getPlaceName(hero.at)}`;
+    hero.intent = {
+      action: 'Visiting',
+      destinationId: hero.at,
+      destinationName: this.getPlaceName(hero.at),
+      reason: 'Using town services.',
+      risk: 'Low',
+    };
+    this.setHeroAnimationState(hero, 'interact');
     this.tweens.add({ targets: hero.container, alpha: 0, duration: 250 });
     hero.timer = this.time.delayedCall(Phaser.Math.Between(1500, 4000), () => {
       if (runtime) runtime.visitorsNow = Math.max(0, runtime.visitorsNow - 1);
       this.tweens.add({ targets: hero.container, alpha: 1, duration: 250 });
       hero.state = 'idle';
       hero.currentAction = `Idle near ${this.getPlaceName(hero.at)}`;
+      hero.intent = {
+        action: 'Idle',
+        destinationId: hero.at,
+        destinationName: this.getPlaceName(hero.at),
+        reason: 'Recovered from service interaction.',
+        risk: 'Low',
+      };
+      this.setHeroAnimationState(hero, this.isHeroInjured(hero) ? 'hurt' : 'idle');
       this.scheduleAmbient(hero, Phaser.Math.Between(800, 3000));
     });
   }
@@ -7567,7 +8096,15 @@ export default class TownScene extends Phaser.Scene {
       const responseDelay = responseIndex * 620;
       responseIndex += 1;
       this.time.delayedCall(responseDelay, () => {
-        this.walkTo(hero, { id: target.id, name: target.name, x: target.x, y: target.y }, () => {
+        this.walkTo(hero, {
+          id: target.id,
+          name: target.name,
+          x: target.x,
+          y: target.y,
+          reason: `Intercepting ${monster.name}.`,
+          risk: monster.threat >= 6 ? 'High' : monster.threat >= 3 ? 'Moderate' : 'Low',
+          monster,
+        }, () => {
           this.say(hero, wonThisRound ? 'Handled it.' : 'That had teeth.', true);
         });
       });
@@ -7589,8 +8126,7 @@ export default class TownScene extends Phaser.Scene {
       remainingPower = Math.max(2, remainingPower - Math.max(1, Math.floor(score * 0.45)));
       hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - (5 + monster.threat), 0, 100);
       hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty - 2, 0, 100);
-      this.stats.heroInjuries = (this.stats.heroInjuries || 0) + 1;
-      this.addHeroHistory(hero, `Injured by ${monster.name}.`);
+      this.injureHero(hero, monster.threat >= 5 ? 3 : 2, monster.threat >= 5 ? 'badly injured' : 'injured', monster.name);
       stepLines.push(`${hero.def.name} was injured. The next hero checked the fine print.`);
     }
 
@@ -8015,10 +8551,14 @@ export default class TownScene extends Phaser.Scene {
       const world = this.gridTileVisualCenter(pick.x, pick.y);
       return {
         id: `wilderness-${hero.def.id}`,
+        areaId: `frontier-${pick.x}-${pick.y}`,
         name: 'Fog Frontier',
         x: world.x,
         y: world.y,
         h: 40,
+        explore: true,
+        reason: 'Exploring fog edge to reveal buildable land.',
+        risk: this.resources.threat > 65 ? 'High' : this.resources.threat > 38 ? 'Moderate' : 'Low',
       };
     }
     // fully charted map: fall back to a spot beyond the founding district
@@ -8032,10 +8572,14 @@ export default class TownScene extends Phaser.Scene {
     const world = this.gridTileVisualCenter(edgeX, edgeY);
     return {
       id: `wilderness-${hero.def.id}`,
+      areaId: `wilderness-${edgeX}-${edgeY}`,
       name: 'Wilderness Edge',
       x: world.x,
       y: world.y,
       h: 40,
+      explore: true,
+      reason: 'Scouting the edge of the known world.',
+      risk: this.resources.threat > 65 ? 'High' : this.resources.threat > 38 ? 'Moderate' : 'Low',
     };
   }
 
@@ -8054,6 +8598,60 @@ export default class TownScene extends Phaser.Scene {
 
   isHeroInjured(hero) {
     return (hero?.stats?.injuredUntilDay || 0) > this.day;
+  }
+
+  injureHero(hero, days = 2, severity = 'injured', source = 'town hazard') {
+    if (!hero?.stats || hero.stats.active === false) return;
+    hero.stats.injuredUntilDay = Math.max(hero.stats.injuredUntilDay || 0, this.day + days);
+    hero.stats.injuryState = severity;
+    hero.stats.morale = Phaser.Math.Clamp((hero.stats.morale || 50) - (severity === 'badly injured' ? 9 : 5), 0, 100);
+    this.stats.heroInjuries = (this.stats.heroInjuries || 0) + 1;
+    this.addHeroHistory(hero, `${severity} by ${source}.`);
+    this.setHeroAnimationState(hero, 'hurt');
+    this.refreshHeroStatusMarker(hero);
+  }
+
+  markHeroMissing(hero, days = 1, source = 'wilderness paperwork') {
+    if (!hero?.stats || hero.stats.active === false) return;
+    this.injureHero(hero, days + 1, 'missing', source);
+    this.sendHeroAway(hero, days);
+    hero.currentAction = `Missing until Day ${hero.awayUntil}`;
+    hero.intent = {
+      action: 'Missing',
+      destinationId: 'wilderness',
+      destinationName: 'Wilderness',
+      reason: source,
+      risk: 'High',
+    };
+  }
+
+  killHero(hero, reason = 'The wilderness made a final argument.') {
+    if (!hero?.stats || hero.stats.deathDay) return;
+    hero.stats.active = false;
+    hero.stats.deathDay = this.day;
+    hero.stats.status = 'Lost Hero';
+    hero.stats.currentPersonality = 'Lost Hero';
+    hero.stats.injuryState = 'dead';
+    hero.state = 'away';
+    hero.currentAction = 'Lost in the wilds';
+    hero.intent = {
+      action: 'Lost',
+      destinationId: 'wilderness',
+      destinationName: 'Wilderness',
+      reason,
+      risk: 'Final',
+    };
+    hero.container.setAlpha(0.18);
+    this.addHeroHistory(hero, `Died: ${reason}`);
+    this.stats.heroesLeft = (this.stats.heroesLeft || 0) + 1;
+    this.applyDeltas({ morale: -5, trust: -2 });
+    this.setHeroAnimationState(hero, 'hurt');
+    this.refreshHeroStatusMarker(hero);
+    this.floatText(hero.container.x, hero.container.y - 44, 'LOST HERO', '#f0938f');
+    const text = `${hero.def.name} died. ${reason}`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'crisis');
+    this.addReportLine('warnings', text);
   }
 
   getLodgingReport() {
@@ -8083,6 +8681,21 @@ export default class TownScene extends Phaser.Scene {
   // guild advisor: compact "why are my numbers moving" notes for the report
   getAdvisorNotes() {
     const notes = [];
+    this.updateTownReputationStats();
+    notes.push({
+      text: `Town reputation ${this.townReputation}/100 - prestige ${this.townPrestige}/100. Better services and lower threat attract stronger heroes.`,
+      className: this.townReputation >= 60 ? 'gwg-good' : this.townReputation < 35 ? 'gwg-bad' : 'gwg-muted',
+    });
+    const badAreas = Object.entries(this.areaReputation || {})
+      .filter(([, value]) => Number(value) >= 35)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2);
+    if (badAreas.length) {
+      notes.push({
+        text: `Bad area reputation: ${badAreas.map(([id, value]) => `${id} ${value}`).join(', ')}. Heroes avoid places that keep hurting people.`,
+        className: 'gwg-bad',
+      });
+    }
     const lodging = this.getLodgingReport();
     if (lodging.homeless > 0) {
       notes.push({
@@ -8166,10 +8779,16 @@ export default class TownScene extends Phaser.Scene {
 
     // potions heal the injured; gear equips the under-armed
     for (const hero of this.getActiveHeroes()) {
+      if (!this.isHeroInjured(hero) && !hero.stats.deathDay && hero.stats.injuryState !== 'healthy') {
+        hero.stats.injuryState = 'healthy';
+        this.setHeroAnimationState(hero, hero.state === 'walking' ? 'walk' : 'idle');
+      }
       if (this.isHeroInjured(hero) && (this.townInventory.potions || 0) > 0) {
         this.townInventory.potions -= 1;
         hero.stats.injuredUntilDay = 0;
+        hero.stats.injuryState = 'healthy';
         hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 4, 0, 100);
+        this.setHeroAnimationState(hero, hero.state === 'walking' ? 'walk' : 'idle');
         this.addTownLog(`${hero.def.name} drank a town potion and recovered. The label said "probably".`, 'npc');
       } else if (!this.isHeroInjured(hero) && (this.townInventory.gear || 0) > 0 && (hero.stats.power || 0) < 6) {
         this.townInventory.gear -= 1;
@@ -8360,23 +8979,29 @@ export default class TownScene extends Phaser.Scene {
     if (Math.random() > chance) return null;
     const monster = rollMonster();
     const spot = this.getExplorationSpot(hero);
+    const areaId = spot.areaId || spot.id || 'frontier';
+    const badReputation = this.getAreaReputation(areaId);
     const support = this.getPlaceLevel(this.buildingById.watchtower)
       + Math.floor(this.getPlaceLevel(this.buildingById.blacksmith) / 2)
       + Math.floor(this.getPlaceLevel(this.buildingById.training) / 2)
       + ((this.townInventory?.gear || 0) > 0 ? 1 : 0) // stocked gear helps
-      - (this.isHeroInjured(hero) ? 2 : 0); // injuries do not
-    const success = hero.stats.power + support + Phaser.Math.Between(0, 8) >= monster.threat * 3 + 4;
+      - (this.isHeroInjured(hero) ? 2 : 0)
+      - Math.floor(badReputation / 25); // dangerous reputations become self-fulfilling
+    const hazardPressure = monster.threat * 3 + 4 + Math.floor(this.resources.threat / 18) + Math.floor(badReputation / 18);
+    const success = hero.stats.power + support + Phaser.Math.Between(0, 8) >= hazardPressure;
     if (success) {
       const gold = 34 + monster.threat * 18 + support * 4;
       hero.stats.power += brave ? 1 : 0;
       hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 4, 0, 100);
       hero.stats.fame = Phaser.Math.Clamp((hero.stats.fame || 0) + monster.threat * 2, 0, 100);
       this.addHeroHistory(hero, `Scouted wilderness and beat ${monster.name}.`);
+      this.changeAreaReputation(areaId, -Math.max(1, monster.threat), spot.name);
       const haul = this.rollExplorationHaul(hero);
       return {
         building: 'dungeon',
         spot,
         explore: true,
+        areaId,
         monster,
         text: `${hero.def.name} hunted ${monster.name} near the wilderness. ${monster.flavour}${haul ? ` ${haul}` : ''}`,
         bubble: this.pickHeroLine(hero, EXPLORATION_LINES),
@@ -8386,14 +9011,30 @@ export default class TownScene extends Phaser.Scene {
     hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - 5, 0, 100);
     hero.stats.debt += monster.threat * 5;
     hero.stats.resentment = Phaser.Math.Clamp((hero.stats.resentment || 0) + monster.threat, 0, 100);
-    hero.stats.injuredUntilDay = this.day + 2; // limps for two days without a potion
+    const dangerRoll = Phaser.Math.Between(1, 100) + Math.floor(this.resources.threat / 4) + Math.floor(badReputation / 2) + monster.threat * 4;
+    const deathRisk = dangerRoll > 150 && hero.stats.power < monster.threat * 4 && Math.random() < 0.28;
+    const missingRisk = !deathRisk && dangerRoll > 118 && Math.random() < 0.42;
+    const badlyInjured = !deathRisk && !missingRisk && dangerRoll > 96;
+    const injurySeverity = badlyInjured ? 'badly injured' : 'injured';
+    const injuryDays = badlyInjured ? 4 : 2;
     this.addHeroHistory(hero, `Scouted wilderness and fled ${monster.name}.`);
+    this.changeAreaReputation(areaId, deathRisk ? 10 : missingRisk ? 7 : badlyInjured ? 5 : 3, spot.name);
+    const failureText = deathRisk
+      ? `${hero.def.name} did not return from ${monster.name}'s territory. ${monster.flavour}`
+      : missingRisk
+        ? `${hero.def.name} went missing after finding ${monster.name}. The wilderness kept the receipt. ${monster.flavour}`
+        : `${hero.def.name} found ${monster.name} outside town and returned with debt, dust, and opinions. ${monster.flavour}`;
     return {
       building: 'dungeon',
       spot,
       explore: true,
+      areaId,
       monster,
-      text: `${hero.def.name} found ${monster.name} outside town and returned with debt, dust, and opinions. ${monster.flavour}`,
+      heroDeath: deathRisk,
+      heroMissing: missingRisk,
+      injurySeverity,
+      injuryDays,
+      text: failureText,
       bubble: this.pickHeroLine(hero, EXPLORATION_LINES) || 'The wilderness has feedback.',
       d: { gold: 8, threat: monster.threat + 2, morale: -2, trust: -1 },
     };
@@ -8625,12 +9266,32 @@ export default class TownScene extends Phaser.Scene {
           this.buildRelationship(hero, 'whaleEvent');
         }
 
-        this.walkTo(hero, spot, () => {
+        const travelSpot = {
+          ...spot,
+          reason: ev.explore
+            ? `Exploring ${spot.name || 'the wilderness'} for loot and map knowledge.`
+            : ev.whale
+              ? 'Seeking premium power. Totally optional, allegedly.'
+              : `Acting on ${this.getPlaceName(ev.building)} business.`,
+          risk: ev.explore ? (ev.heroDeath ? 'Extreme' : ev.heroMissing ? 'High' : this.getHeroDestinationRisk(hero, spot)) : 'Low',
+          areaId: ev.areaId || spot.areaId,
+          monster: ev.monster,
+        };
+        this.walkTo(hero, travelSpot, () => {
           if (ev.explore) {
-            this.showMonsterEncounter(ev.monster, spot.x, spot.y);
+            this.showMonsterEncounter(ev.monster, travelSpot.x, travelSpot.y);
             // expeditions chart the land they walked, win or lose
-            const cell = this.worldToBuildGrid(spot.x, spot.y);
+            const cell = this.worldToBuildGrid(travelSpot.x, travelSpot.y);
             this.revealArea(cell.x, cell.y, FOG_REVEAL_RADIUS.heroExplore, `${hero.def.name}'s expedition`);
+            if (ev.heroDeath) {
+              this.killHero(hero, `${ev.monster.name} made ${travelSpot.name} infamous.`);
+              return;
+            }
+            if (ev.heroMissing) {
+              this.markHeroMissing(hero, Phaser.Math.Between(1, 2), `${travelSpot.name} kept them overnight.`);
+              return;
+            }
+            if (ev.injurySeverity) this.injureHero(hero, ev.injuryDays || 2, ev.injurySeverity, ev.monster.name);
           }
           this.say(hero, ev.bubble, true);
           if (ev.leave) this.sendHeroAway(hero, 2);
