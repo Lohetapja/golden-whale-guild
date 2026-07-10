@@ -68,6 +68,16 @@ import {
   isRoadPlazaTile,
 } from '../systems/roadRenderer.js';
 import { resolveInteractionTarget } from '../systems/interactionResolver.js';
+import {
+  formatInventoryLine,
+  getBedCapacity,
+  normalizeInventory,
+  POI_RESOURCE_YIELDS,
+  PRODUCTION_RULES,
+  REST_BUILDINGS,
+  SERVICE_WALKERS,
+  WALKER_DAILY_CAPS,
+} from '../systems/townEconomy.js';
 import { getResponsiveUi } from '../ui/responsive.js';
 import {
   getIsoDepth,
@@ -622,6 +632,11 @@ export default class TownScene extends Phaser.Scene {
       aftermathDrops: Array.isArray(saved?.monsterState?.aftermathDrops) ? saved.monsterState.aftermathDrops.slice(0, 16) : [],
     };
     this.discoveredPois = new Set(saved?.discoveredPois || []);
+    // town stores + service-walker state (walkers regenerate from buildings)
+    this.townInventory = normalizeInventory(saved?.townInventory);
+    this.serviceWalkers = [];
+    this.walkerRotation = 0;
+    this.walkerDailyTally = { threatReduction: 0, evangelistGold: 0 };
     this.activeMonsterActors = [];
     this.aftermathDrops = this.normalizeAftermathDrops(this.monsterState.aftermathDrops);
     this.tutorial = {
@@ -693,6 +708,7 @@ export default class TownScene extends Phaser.Scene {
     this.buildQuestNotices();
     this.setupBuildInput();
     this.startIdleChatter();
+    this.startServiceWalkers();
 
     // shared state for the UI scene
     this.registry.set('day', this.day);
@@ -805,6 +821,7 @@ export default class TownScene extends Phaser.Scene {
         achievements: Array.isArray(parsed.achievements) ? parsed.achievements : [],
         pendingPolicy: parsed.pendingPolicy || null,
         discoveredPois: Array.isArray(parsed.discoveredPois) ? parsed.discoveredPois : [],
+        townInventory: parsed.townInventory || null,
         weeklyReport: parsed.weeklyReport || null,
         weekReportUnread: Boolean(parsed.weekReportUnread),
         weekTracker: parsed.weekTracker || null,
@@ -1262,6 +1279,7 @@ export default class TownScene extends Phaser.Scene {
       achievements: [...(this.achievements || [])],
       pendingPolicy: this.pendingPolicy,
       discoveredPois: [...(this.discoveredPois || [])],
+      townInventory: { ...(this.townInventory || {}) },
       weeklyReport: this.weeklyReport,
       weekReportUnread: Boolean(this.weekReportUnread),
       weekTracker: this.weekTracker ? structuredClone(this.weekTracker) : null,
@@ -1310,6 +1328,8 @@ export default class TownScene extends Phaser.Scene {
         rivalId: hero.stats.rivalId || null,
         admiredId: hero.stats.admiredId || null,
         resentmentTargetId: hero.stats.resentmentTargetId || null,
+        injuredUntilDay: hero.stats.injuredUntilDay || 0,
+        premiumExposure: hero.stats.premiumExposure || 0,
         awayUntil: hero.awayUntil || 0,
       }])),
     };
@@ -1735,6 +1755,19 @@ export default class TownScene extends Phaser.Scene {
         lines: ['No week report is ready yet. Reports arrive every 7 days and no longer interrupt the town.'],
       },
     ];
+
+    // live advisor + stores status, always current regardless of report week
+    const lodging = this.getLodgingReport();
+    sections.push(
+      { title: 'Guild Advisor', lines: this.getAdvisorNotes() },
+      {
+        title: 'Town Stores',
+        lines: [
+          formatInventoryLine(this.townInventory),
+          `Beds: ${lodging.used}/${lodging.beds} used - rest quality ${lodging.restQuality}`,
+        ],
+      },
+    );
 
     return {
       panelType: 'week-report',
@@ -5103,7 +5136,10 @@ export default class TownScene extends Phaser.Scene {
             ...(runtime ? [
               `Use: ${runtime.usageCount} visits - growth ${runtime.upgradeProgress}%`,
               `Capacity: ${runtime.visitorsNow}/${runtime.capacity} - quality ${runtime.serviceQuality}`,
+              ...(runtime.servicesProvided ? [`Services delivered: ${runtime.servicesProvided}`] : []),
             ] : []),
+            ...(REST_BUILDINGS[place.id] ? [this.getBedsInspectorLine()] : []),
+            ...(this.getStockInspectorLine(place.id) ? [this.getStockInspectorLine(place.id)] : []),
             ...(roadAccess ? [{
               text: `Road access: ${roadAccess.connected ? 'Connected - service active' : 'NO ROAD - service inactive'}`,
               className: roadAccess.connected ? 'gwg-good' : 'gwg-bad',
@@ -8003,6 +8039,314 @@ export default class TownScene extends Phaser.Scene {
     };
   }
 
+  // --- town economy: stores, lodging, services (townEconomy.js) --------------
+
+  addTownResource(id, amount, source = '') {
+    if (!this.townInventory || !Number.isFinite(amount) || amount === 0) return 0;
+    const before = this.townInventory[id] || 0;
+    this.townInventory[id] = Phaser.Math.Clamp(before + amount, 0, 99);
+    const gained = this.townInventory[id] - before;
+    if (gained > 0 && source) {
+      this.addTownLog(`${source} added ${gained} ${id} to the town stores.`, 'economy');
+    }
+    return gained;
+  }
+
+  isHeroInjured(hero) {
+    return (hero?.stats?.injuredUntilDay || 0) > this.day;
+  }
+
+  getLodgingReport() {
+    const placedRest = Object.keys(REST_BUILDINGS).filter((id) => this.isBuildingPlaced(id));
+    const levels = Object.fromEntries(placedRest.map((id) => [id, this.getPlaceLevel(this.buildingById[id])]));
+    const capacity = getBedCapacity(placedRest, levels);
+    const used = this.getActiveHeroes().length;
+    return { ...capacity, used, homeless: Math.max(0, used - capacity.beds) };
+  }
+
+  getBedsInspectorLine() {
+    const lodging = this.getLodgingReport();
+    return {
+      text: `Town beds: ${lodging.used}/${lodging.beds} used - rest quality ${lodging.restQuality}`,
+      className: lodging.homeless > 0 ? 'gwg-bad' : 'gwg-good',
+    };
+  }
+
+  getStockInspectorLine(placeId) {
+    if (!this.townInventory) return null;
+    if (placeId === 'market') return `Stores: ${this.townInventory.loot} loot waiting for conversion.`;
+    if (placeId === 'blacksmith') return `Stores: ${this.townInventory.iron} iron, ${this.townInventory.gear} gear ready.`;
+    if (placeId === 'potion_shop') return `Stores: ${this.townInventory.herbs} herbs, ${this.townInventory.potions} potions ready.`;
+    return null;
+  }
+
+  // guild advisor: compact "why are my numbers moving" notes for the report
+  getAdvisorNotes() {
+    const notes = [];
+    const lodging = this.getLodgingReport();
+    if (lodging.homeless > 0) {
+      notes.push({
+        text: `${lodging.homeless} hero${lodging.homeless === 1 ? '' : 'es'} without beds (${lodging.used}/${lodging.beds}). Morale is sleeping outside too.`,
+        className: 'gwg-bad',
+      });
+    }
+    const disconnected = this.cityState.placedBuildings
+      .map((placement) => this.buildingById?.[placement.id])
+      .filter((place) => place?.isPlaced && getBuildingCatalogEntry(place.id)?.roadRequired)
+      .filter((place) => !this.getBuildingRoadAccess(place).connected)
+      .map((place) => place.name);
+    if (disconnected.length) {
+      notes.push({ text: `No road access: ${disconnected.join(', ')}. Services and walkers are idle there.`, className: 'gwg-bad' });
+    }
+    if ((this.townInventory?.gear || 0) === 0 && this.isBuildingPlaced('blacksmith') && (this.townInventory?.iron || 0) === 0) {
+      notes.push('Gear supply empty: the Blacksmith has no iron. Heroes explore under-equipped.');
+    }
+    if (this.resources.threat >= 60) {
+      notes.push({ text: 'Threat is rising. Watchtowers, patrols, and hero hunts push it back.', className: 'gwg-bad' });
+    }
+    const camps = [...(this.discoveredPois || [])]
+      .map((id) => this.explorationPointById?.[id])
+      .filter((point) => point?.kind === 'camp');
+    if (camps.length) {
+      notes.push(`${camps.length} monster camp${camps.length === 1 ? '' : 's'} discovered in the wilds. Ignoring them feeds threat.`);
+    }
+    if ((this.stats.premiumActions || 0) + (this.stats.whaleEvents || 0) >= 12) {
+      notes.push({ text: 'Premium dependency rising: a worrying share of income is "optional".', className: 'gwg-whale' });
+    }
+    return notes.length ? notes : ['No urgent problems. The advisor is quietly suspicious of that.'];
+  }
+
+  // day-cycle step: lodging pressure + simple production conversions
+  runTownServicesStep() {
+    this.walkerDailyTally = { threatReduction: 0, evangelistGold: 0 };
+
+    // hero lodging: over capacity drains morale and trust, quietly but daily
+    const lodging = this.getLodgingReport();
+    if (lodging.homeless > 0) {
+      const victims = this.getActiveHeroes()
+        .sort((a, b) => (a.stats.loyalty || 0) - (b.stats.loyalty || 0))
+        .slice(0, lodging.homeless);
+      for (const hero of victims) {
+        hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - 3, 0, 100);
+        hero.stats.resentment = Phaser.Math.Clamp((hero.stats.resentment || 0) + 2, 0, 100);
+      }
+      this.applyDeltas({ morale: -Math.min(3, lodging.homeless), trust: -1 });
+      const text = `${lodging.homeless} hero${lodging.homeless === 1 ? '' : 'es'} slept outside (beds ${lodging.used}/${lodging.beds}). Reviews were written in dew.`;
+      this.game.events.emit('gwg-event', text);
+      this.addReportLine('warnings', text);
+      this.stats.heroInjuries = this.stats.heroInjuries || 0;
+    }
+
+    // production: market loot->gold, blacksmith iron->gear, herbs->potions
+    for (const rule of PRODUCTION_RULES) {
+      if (!this.isBuildingPlaced(rule.building)) continue;
+      const place = this.buildingById[rule.building];
+      if (!this.getBuildingRoadAccess(place).connected) continue;
+      const available = this.townInventory[rule.from] || 0;
+      if (available <= 0) continue;
+      const level = this.getPlaceLevel(place);
+      const amount = Math.min(available, rule.batch(level));
+      if (amount <= 0) continue;
+      this.townInventory[rule.from] -= amount;
+      const runtime = this.getBuildingRuntime(rule.building);
+      runtime.servicesProvided = (runtime.servicesProvided || 0) + amount;
+      runtime.upgradeProgress = Math.min(100, runtime.upgradeProgress + amount * 2);
+      let logLine;
+      if (rule.to === 'gold') {
+        const gold = amount * rule.perUnitGold;
+        this.applyDeltas({ gold });
+        logLine = rule.log(amount, gold);
+      } else {
+        this.townInventory[rule.to] = Phaser.Math.Clamp((this.townInventory[rule.to] || 0) + amount, 0, 99);
+        logLine = rule.log(amount);
+      }
+      this.addTownLog(logLine, 'economy');
+      this.addReportLine('stage', logLine);
+    }
+
+    // potions heal the injured; gear equips the under-armed
+    for (const hero of this.getActiveHeroes()) {
+      if (this.isHeroInjured(hero) && (this.townInventory.potions || 0) > 0) {
+        this.townInventory.potions -= 1;
+        hero.stats.injuredUntilDay = 0;
+        hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 4, 0, 100);
+        this.addTownLog(`${hero.def.name} drank a town potion and recovered. The label said "probably".`, 'npc');
+      } else if (!this.isHeroInjured(hero) && (this.townInventory.gear || 0) > 0 && (hero.stats.power || 0) < 6) {
+        this.townInventory.gear -= 1;
+        hero.stats.power = (hero.stats.power || 0) + 1;
+        this.addTownLog(`${hero.def.name} was issued town gear. Power increased, humility unchanged.`, 'npc');
+      }
+    }
+  }
+
+  // --- service walkers (Caesar-style, lightweight) ---------------------------
+
+  startServiceWalkers() {
+    if (!this.isBuilderCity) return;
+    this.time.addEvent({
+      delay: 9000,
+      loop: true,
+      callback: () => this.spawnServiceWalker(),
+    });
+  }
+
+  spawnServiceWalker() {
+    if (this.cycleRunning || this.simulationSpeed === 0) return;
+    const maxWalkers = this.rsp?.compact ? 1 : 2;
+    this.serviceWalkers = this.serviceWalkers.filter((walker) => walker.container.active);
+    if (this.serviceWalkers.length >= maxWalkers) return;
+
+    // round-robin through placed, road-connected service buildings
+    const sources = Object.keys(SERVICE_WALKERS).filter((id) => (
+      this.isBuildingPlaced(id) && this.getBuildingRoadAccess(this.buildingById[id]).connected
+    ));
+    if (!sources.length) return;
+    const buildingId = sources[this.walkerRotation % sources.length];
+    this.walkerRotation += 1;
+    const config = SERVICE_WALKERS[buildingId];
+    const door = this.doorById[buildingId];
+    if (!door) return;
+
+    // destination: another door spot within walker range, roads preferred by
+    // the shared hero routing
+    const range = config.rangeTiles * GRID_CONFIG.tileSize;
+    const targets = (this.doorSpots || []).filter((spot) => (
+      spot.id !== buildingId
+      && this.placeById?.[spot.id]?.isPlaced !== false
+      && Phaser.Math.Distance.Between(door.x, door.y, spot.x, spot.y) <= range
+    ));
+    if (!targets.length) return;
+    const target = Phaser.Utils.Array.GetRandom(targets);
+
+    const textureKey = this.textures.exists(config.assetKey)
+      ? config.assetKey
+      : resolveTexture(this, config.fallbackKey, 'hero_default');
+    if (!textureKey || !this.textures.exists(textureKey)) return;
+    const sprite = this.add.image(0, 0, textureKey).setOrigin(0.5, 1);
+    sprite.setScale(this.getTextureScaleForHeight(textureKey, 26, 1.2));
+    if (!this.textures.exists(config.assetKey) && config.tint) sprite.setTint(config.tint);
+    const label = this.add.text(0, 2, config.name, {
+      fontFamily: '"Courier New", monospace',
+      fontSize: '8px',
+      fontStyle: 'bold',
+      color: '#d4dae2',
+      stroke: '#0c1118',
+      strokeThickness: 2,
+    }).setOrigin(0.5, 0).setAlpha(0.75);
+    const container = this.add.container(door.x, door.y, [sprite, label]).setDepth(door.y);
+
+    const walker = {
+      def: { id: `walker-${config.id}`, name: config.name, speed: 72 },
+      sprite,
+      container,
+      stats: {},
+      walker: true,
+      currentAction: config.flavor,
+    };
+    this.serviceWalkers.push(walker);
+    this.walkTo(walker, target, () => {
+      this.applyWalkerService(buildingId, config, target);
+      this.tweens.add({
+        targets: container,
+        alpha: 0,
+        duration: 700,
+        delay: 500,
+        onComplete: () => container.destroy(),
+      });
+    });
+  }
+
+  applyWalkerService(buildingId, config, spot) {
+    this.recordBuildingUse(buildingId);
+    const runtime = this.getBuildingRuntime(buildingId);
+    runtime.servicesProvided = (runtime.servicesProvided || 0) + 1;
+    const nearby = this.getActiveHeroes().filter((hero) => (
+      hero.state !== 'away'
+      && Phaser.Math.Distance.Between(hero.container.x, hero.container.y, spot.x, spot.y) < 220
+    ));
+    const clampStat = (hero, key, delta, max = 100) => {
+      hero.stats[key] = Phaser.Math.Clamp((hero.stats[key] || 0) + delta, 0, max);
+    };
+    let floatLine = '';
+    switch (config.id) {
+      case 'tavern_keeper':
+        for (const hero of nearby) clampStat(hero, 'morale', 2);
+        floatLine = nearby.length ? '+morale' : '';
+        break;
+      case 'quest_clerk':
+        for (const hero of nearby) clampStat(hero, 'loyalty', 1);
+        floatLine = nearby.length ? '+loyalty' : '';
+        break;
+      case 'gear_runner': {
+        const needy = nearby.find((hero) => (hero.stats.power || 0) < 6);
+        if (needy && (this.townInventory.gear || 0) > 0) {
+          this.townInventory.gear -= 1;
+          clampStat(needy, 'power', 1, 999);
+          floatLine = `${needy.def.name} +gear`;
+        }
+        break;
+      }
+      case 'trader':
+        if ((this.townInventory.loot || 0) > 0) {
+          this.townInventory.loot -= 1;
+          this.applyDeltas({ gold: 14 });
+          floatLine = '+14g';
+        }
+        break;
+      case 'guard_patrol':
+        if (this.walkerDailyTally.threatReduction < WALKER_DAILY_CAPS.threatReduction && this.resources.threat > 0) {
+          this.walkerDailyTally.threatReduction += 1;
+          this.applyDeltas({ threat: -1 });
+          floatLine = '-threat';
+        }
+        break;
+      case 'potion_seller': {
+        const injured = nearby.find((hero) => this.isHeroInjured(hero));
+        if (injured && (this.townInventory.potions || 0) > 0) {
+          this.townInventory.potions -= 1;
+          injured.stats.injuredUntilDay = 0;
+          floatLine = `${injured.def.name} healed`;
+        } else {
+          for (const hero of nearby) clampStat(hero, 'morale', 1);
+        }
+        break;
+      }
+      case 'premium_evangelist':
+        if (this.walkerDailyTally.evangelistGold < WALKER_DAILY_CAPS.evangelistGold) {
+          this.walkerDailyTally.evangelistGold += 6;
+          this.applyDeltas({ gold: 6, corruption: Math.random() < 0.3 ? 1 : 0 });
+          for (const hero of nearby.filter((item) => this.isHonestHero(item.def))) clampStat(hero, 'envy', 2);
+          floatLine = '+6g "optional"';
+        }
+        break;
+      default:
+        break;
+    }
+    if (floatLine) this.floatText(spot.x, spot.y - 40, floatLine, '#d7f3d0');
+  }
+
+  // successful expeditions can carry resources home from discovered POIs
+  rollExplorationHaul(hero) {
+    const candidates = [...(this.discoveredPois || [])]
+      .filter((id) => POI_RESOURCE_YIELDS[id])
+      .filter((id) => {
+        const point = this.explorationPointById?.[id];
+        return point && this.isRevealed(point.gridX, point.gridY);
+      });
+    if (!candidates.length || Math.random() < 0.35) return '';
+    const poiId = Phaser.Utils.Array.GetRandom(candidates);
+    const yieldConfig = POI_RESOURCE_YIELDS[poiId];
+    const point = this.explorationPointById[poiId];
+    const amount = Phaser.Math.Between(yieldConfig.min, yieldConfig.max);
+    const gained = this.addTownResource(yieldConfig.resource, amount);
+    if (gained <= 0) return '';
+    if (yieldConfig.premium && Math.random() < 0.4) {
+      this.applyDeltas({ corruption: 1 });
+      this.addTownLog(`${hero.def.name} salvaged the ${point.name}. Some of it was still monetized.`, 'golden_whale');
+    }
+    return `Brought back ${gained} ${yieldConfig.resource} from the ${point.name}.`;
+  }
+
   chooseExplorationAction(hero) {
     if (!this.isBuilderCity || !this.revealedTiles) return null;
     const watchtower = this.getPlaceLevel(this.buildingById.watchtower);
@@ -8018,7 +8362,9 @@ export default class TownScene extends Phaser.Scene {
     const spot = this.getExplorationSpot(hero);
     const support = this.getPlaceLevel(this.buildingById.watchtower)
       + Math.floor(this.getPlaceLevel(this.buildingById.blacksmith) / 2)
-      + Math.floor(this.getPlaceLevel(this.buildingById.training) / 2);
+      + Math.floor(this.getPlaceLevel(this.buildingById.training) / 2)
+      + ((this.townInventory?.gear || 0) > 0 ? 1 : 0) // stocked gear helps
+      - (this.isHeroInjured(hero) ? 2 : 0); // injuries do not
     const success = hero.stats.power + support + Phaser.Math.Between(0, 8) >= monster.threat * 3 + 4;
     if (success) {
       const gold = 34 + monster.threat * 18 + support * 4;
@@ -8026,12 +8372,13 @@ export default class TownScene extends Phaser.Scene {
       hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 4, 0, 100);
       hero.stats.fame = Phaser.Math.Clamp((hero.stats.fame || 0) + monster.threat * 2, 0, 100);
       this.addHeroHistory(hero, `Scouted wilderness and beat ${monster.name}.`);
+      const haul = this.rollExplorationHaul(hero);
       return {
         building: 'dungeon',
         spot,
         explore: true,
         monster,
-        text: `${hero.def.name} hunted ${monster.name} near the wilderness. ${monster.flavour} Threat fell before it could monetize.`,
+        text: `${hero.def.name} hunted ${monster.name} near the wilderness. ${monster.flavour}${haul ? ` ${haul}` : ''}`,
         bubble: this.pickHeroLine(hero, EXPLORATION_LINES),
         d: { gold, threat: -(3 + monster.threat * 2), morale: 1, trust: brave ? 1 : 0 },
       };
@@ -8039,6 +8386,7 @@ export default class TownScene extends Phaser.Scene {
     hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - 5, 0, 100);
     hero.stats.debt += monster.threat * 5;
     hero.stats.resentment = Phaser.Math.Clamp((hero.stats.resentment || 0) + monster.threat, 0, 100);
+    hero.stats.injuredUntilDay = this.day + 2; // limps for two days without a potion
     this.addHeroHistory(hero, `Scouted wilderness and fled ${monster.name}.`);
     return {
       building: 'dungeon',
@@ -8264,6 +8612,7 @@ export default class TownScene extends Phaser.Scene {
         if (ev.building === 'training') hero.stats.power += this.getPlaceLevel(this.buildingById.training);
         if (ev.d.gold > 0) hero.stats.spent += ev.d.gold;
         if (ev.whale) {
+          hero.stats.premiumExposure = (hero.stats.premiumExposure || 0) + 1;
           if (ev.d.trust < 0) this.stats.whaleTrustLosses += Math.abs(ev.d.trust);
           this.burstCoins(34);
           this.triggerWhaleReaction();
@@ -8398,6 +8747,8 @@ export default class TownScene extends Phaser.Scene {
       for (const warning of warnings) this.addReportLine('warnings', warning);
       if (warnings.length > 0) this.checkObjectives();
     });
+
+    steps.push(() => this.runTownServicesStep());
 
     steps.push(() => {
       this.progressHeroStories();

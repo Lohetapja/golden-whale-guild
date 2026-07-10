@@ -223,6 +223,21 @@ export const EXPLORATION_POINTS = [
     effect: 'Future hook: economy landmark.',
   },
   {
+    id: 'poi_herb_patch',
+    name: 'Herb Patch',
+    gridX: 44,
+    gridY: 48,
+    assetKey: 'resource_herb_patch',
+    fallbackKey: 'object_bush',
+    description: 'Rows of useful herbs growing wild, unaware of their future markup.',
+    tooltipLines: [
+      'The purple ones cure things. The green ones cure different things.',
+      'Heroes can carry herbs home for the Potion Shop.',
+    ],
+    effect: 'Resource node: herbs for potion brewing.',
+    kind: 'resource',
+  },
+  {
     id: 'poi_resource_grove',
     name: 'Resource Grove',
     gridX: 9,

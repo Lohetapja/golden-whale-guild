@@ -304,6 +304,25 @@ export const ASSET_MANIFEST = [
   { key: 'object_brazier', path: 'assets/objects/object_brazier.png', type: 'image', fallback: 'generated lamp' },
   { key: 'object_market_stall', path: 'assets/objects/object_market_stall.png', type: 'image', fallback: 'generated table prop' },
 
+  // --- service walkers + resource nodes + store icons (economy pass) --------
+  { key: 'worker_quest_clerk', path: 'assets/objects/worker_quest_clerk.png', type: 'image', fallback: 'tinted hero sprite' },
+  { key: 'worker_tavern_keeper', path: 'assets/objects/worker_tavern_keeper.png', type: 'image', fallback: 'tinted hero sprite' },
+  { key: 'worker_gear_runner', path: 'assets/objects/worker_gear_runner.png', type: 'image', fallback: 'tinted hero sprite' },
+  { key: 'worker_trader', path: 'assets/objects/worker_trader.png', type: 'image', fallback: 'tinted hero sprite' },
+  { key: 'worker_guard_patrol', path: 'assets/objects/worker_guard_patrol.png', type: 'image', fallback: 'tinted hero sprite' },
+  { key: 'worker_premium_evangelist', path: 'assets/objects/worker_premium_evangelist.png', type: 'image', fallback: 'tinted hero sprite' },
+  { key: 'worker_potion_seller', path: 'assets/objects/worker_potion_seller.png', type: 'image', fallback: 'tinted hero sprite' },
+  { key: 'resource_wood_grove', path: 'assets/objects/resource_wood_grove.png', type: 'image', fallback: 'tree prop' },
+  { key: 'resource_iron_outcrop', path: 'assets/objects/resource_iron_outcrop.png', type: 'image', fallback: 'rock prop' },
+  { key: 'resource_herb_patch', path: 'assets/objects/resource_herb_patch.png', type: 'image', fallback: 'bush prop' },
+  { key: 'resource_old_ruins', path: 'assets/objects/resource_old_ruins.png', type: 'image', fallback: 'statue prop' },
+  { key: 'resource_premium_wreckage', path: 'assets/objects/resource_premium_wreckage.png', type: 'image', fallback: 'vip sign prop' },
+  { key: 'icon_beds', path: 'assets/icons/icon_beds.png', type: 'image', fallback: 'text label' },
+  { key: 'icon_wood', path: 'assets/icons/icon_wood.png', type: 'image', fallback: 'text label' },
+  { key: 'icon_iron', path: 'assets/icons/icon_iron.png', type: 'image', fallback: 'text label' },
+  { key: 'icon_herbs', path: 'assets/icons/icon_herbs.png', type: 'image', fallback: 'text label' },
+  { key: 'icon_gear', path: 'assets/icons/icon_gear.png', type: 'image', fallback: 'text label' },
+
   // --- terrain ground decals (PixelLab batch, 64px, baked into one RT) -------
   { key: 'decal_grass_tuft', path: 'assets/objects/decal_grass_tuft.png', type: 'image', fallback: 'terrain detail ellipses' },
   { key: 'decal_tall_grass', path: 'assets/objects/decal_tall_grass.png', type: 'image', fallback: 'terrain detail ellipses' },
