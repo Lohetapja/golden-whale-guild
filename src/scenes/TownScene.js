@@ -14,6 +14,12 @@ import {
   BUILD_MENU_CATEGORIES,
   getBuildingCatalogEntry,
 } from '../data/buildingCatalog.js';
+import {
+  BUILDING_SATIRE_LINES,
+  DISTRICT_BONUSES,
+  getBuildingRole,
+  getBuildingSpecializations,
+} from '../data/buildingSystems.js';
 import { ASSET_MANIFEST } from '../data/assetManifest.js';
 import { getItemByName, getRandomPremiumItem } from '../data/itemCatalog.js';
 import { rollMonster } from '../data/monsters.js';
@@ -128,7 +134,7 @@ const IMPORTANT_BUBBLE_DURATION_MS = 5600;
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
 const SAVE_KEY = 'golden-whale-guild-save-v2';
-const SAVE_VERSION = 7;
+const SAVE_VERSION = 8;
 const TAP_MOVE_THRESHOLD = 14;
 const SIMULATION_DAY_MS = 45000;
 const HERO_LABEL_DEFAULT_ALPHA = 0;
@@ -766,6 +772,8 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-time-speed', this.setSimulationSpeed, this);
     this.game.events.on('gwg-expand-land', this.expandLand, this);
     this.game.events.on('gwg-building-action', this.runBuildingAction, this);
+    this.game.events.on('gwg-choose-specialization', this.chooseBuildingSpecialization, this);
+    this.game.events.on('gwg-toggle-building-open', this.toggleBuildingOpenFromUi, this);
     this.game.events.on('gwg-open-report', this.showCycleReport, this);
     this.game.events.on('gwg-collect-loot', this.collectLootDrop, this);
     this.game.events.on('gwg-open-delete', this.openDeleteTool, this);
@@ -800,6 +808,8 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-time-speed', this.setSimulationSpeed, this);
       this.game.events.off('gwg-expand-land', this.expandLand, this);
       this.game.events.off('gwg-building-action', this.runBuildingAction, this);
+      this.game.events.off('gwg-choose-specialization', this.chooseBuildingSpecialization, this);
+      this.game.events.off('gwg-toggle-building-open', this.toggleBuildingOpenFromUi, this);
       this.game.events.off('gwg-open-report', this.showCycleReport, this);
       this.game.events.off('gwg-collect-loot', this.collectLootDrop, this);
       this.game.events.off('gwg-open-delete', this.openDeleteTool, this);
@@ -891,6 +901,10 @@ export default class TownScene extends Phaser.Scene {
   calculateTownReputation() {
     const serviceQuality = Object.values(this.cityState?.buildingRuntime || {})
       .reduce((sum, runtime) => sum + (Number(runtime.serviceQuality) || 0), 0);
+    const districtBonus = this.getActiveDistrictBonuses().length * 2;
+    const problemPenalty = Object.values(this.buildingById || {})
+      .filter((place) => place?.isPlaced && getBuildingCatalogEntry(place.id))
+      .reduce((sum, place) => sum + this.getBuildingProblems(place).length, 0);
     const dangerPenalty = Math.max(0, this.resources.threat - 45) * 0.35
       + Math.max(0, this.resources.corruption - 55) * 0.22;
     return Phaser.Math.Clamp(Math.round(
@@ -899,7 +913,9 @@ export default class TownScene extends Phaser.Scene {
       + this.resources.morale * 0.18
       + this.calculateTownPrestige() * 0.22
       + serviceQuality * 0.45
-      - dangerPenalty,
+      + districtBonus
+      - dangerPenalty
+      - problemPenalty,
     ), 0, 100);
   }
 
@@ -1082,27 +1098,209 @@ export default class TownScene extends Phaser.Scene {
     const place = this.buildingById?.[id] || this.buildings?.find((building) => building.id === id);
     const level = place ? Math.max(1, Number(this.upgradeLevels?.[id]) || Number(place.level) || 1) : 1;
     const catalog = getBuildingCatalogEntry(id);
+    const role = getBuildingRole(id);
+    const savedRuntime = this.cityState.buildingRuntime[id] || {};
+    const baseCapacity = role?.baseCapacity ?? (catalog?.capacity || (id === 'tavern' ? 6 : 4));
+    const capacityPerLevel = role?.capacityPerLevel ?? 2;
+    const defaultCapacity = baseCapacity + Math.max(0, level - 1) * capacityPerLevel;
     const defaults = {
       usageCount: 0,
       visitorsTotal: 0,
       visitorsNow: 0,
       serviceQuality: level,
       upgradeProgress: 0,
-      capacity: id === 'tavern' ? 4 + level * 2 : (catalog?.capacity || 4) + Math.max(0, level - 1) * 2,
+      capacity: defaultCapacity,
       stock: catalog?.id === 'potion_shop' ? 6 : 0,
       actionDays: {},
+      specialization: null,
+      closed: false,
+      heroesRested: 0,
+      productionDone: 0,
+      lootProcessed: 0,
+      monstersStopped: 0,
+      servicesProvided: 0,
+      upkeepPaid: 0,
+      overloadedDays: 0,
+      lastUpkeepDay: 0,
     };
     this.cityState.buildingRuntime[id] = {
       ...defaults,
-      ...(this.cityState.buildingRuntime[id] || {}),
-      capacity: id === 'tavern'
-        ? 4 + level * 2
-        : (this.cityState.buildingRuntime[id]?.capacity || defaults.capacity),
+      ...savedRuntime,
+      capacity: Math.max(Number(savedRuntime.capacity) || 0, defaultCapacity),
+      closed: Boolean(savedRuntime.closed),
+      specialization: savedRuntime.specialization || null,
       actionDays: {
-        ...(this.cityState.buildingRuntime[id]?.actionDays || {}),
+        ...(savedRuntime.actionDays || {}),
       },
     };
     return this.cityState.buildingRuntime[id];
+  }
+
+  getBuildingSpecialization(id) {
+    const runtime = this.getBuildingRuntime(id);
+    const specId = runtime?.specialization;
+    return getBuildingSpecializations(id).find((spec) => spec.id === specId) || null;
+  }
+
+  getBuildingSpecializationEffects(id) {
+    return this.getBuildingSpecialization(id)?.effects || {};
+  }
+
+  getBuildingCapacity(place) {
+    if (!place?.id || !getBuildingCatalogEntry(place.id)) return 0;
+    const runtime = this.getBuildingRuntime(place.id);
+    const spec = this.getBuildingSpecializationEffects(place.id);
+    return Math.max(0, (Number(runtime.capacity) || 0) + (Number(spec.capacityBonus) || 0));
+  }
+
+  getBuildingServiceQuality(place) {
+    if (!place?.id || !getBuildingCatalogEntry(place.id)) return 0;
+    const runtime = this.getBuildingRuntime(place.id);
+    const spec = this.getBuildingSpecializationEffects(place.id);
+    return Math.max(0, (Number(runtime.serviceQuality) || 0) + (Number(spec.serviceQualityBonus) || 0));
+  }
+
+  getBuildingUpkeep(place) {
+    const role = getBuildingRole(place?.id);
+    if (!role || place?.isPlaced === false) return 0;
+    const level = this.getPlaceLevel(place);
+    const spec = this.getBuildingSpecializationEffects(place.id);
+    const levelUpkeep = Math.max(0, level - 1);
+    return Math.max(0, (Number(role.upkeep) || 0) + levelUpkeep + (Number(spec.upkeepDelta) || 0));
+  }
+
+  getBuildingServiceRange(place) {
+    const role = getBuildingRole(place?.id);
+    const spec = this.getBuildingSpecializationEffects(place?.id);
+    const rangeTiles = (role?.serviceRangeTiles || 0) + (Number(spec.rangeBonusTiles) || 0);
+    return Math.max(0, rangeTiles * GRID_CONFIG.tileSize);
+  }
+
+  getNearbyPlacedBuildings(place, radius = 280) {
+    if (!place) return [];
+    return Object.values(this.buildingById || {})
+      .filter((candidate) => candidate?.isPlaced && candidate.id !== place.id)
+      .filter((candidate) => Phaser.Math.Distance.Between(place.x, place.y, candidate.x, candidate.y) <= radius);
+  }
+
+  getDistrictBonusesForPlace(place) {
+    if (!place?.isPlaced) return [];
+    return DISTRICT_BONUSES.filter((bonus) => {
+      if (!bonus.buildingIds.includes(place.id)) return false;
+      const nearbyIds = new Set([
+        place.id,
+        ...this.getNearbyPlacedBuildings(place, bonus.radius).map((candidate) => candidate.id),
+      ]);
+      const matches = bonus.buildingIds.filter((id) => nearbyIds.has(id));
+      return matches.length >= bonus.required;
+    });
+  }
+
+  getActiveDistrictBonuses() {
+    const active = new Map();
+    for (const place of Object.values(this.buildingById || {})) {
+      if (!place?.isPlaced) continue;
+      for (const bonus of this.getDistrictBonusesForPlace(place)) active.set(bonus.id, bonus);
+    }
+    return [...active.values()];
+  }
+
+  getAreaIdForPlace(place) {
+    if (!Number.isInteger(place?.gridX) || !Number.isInteger(place?.gridY)) return 'frontier';
+    const match = Object.entries(GRID_CONFIG.zones).find(([, zone]) => (
+      place.gridX >= zone.minX
+      && place.gridX <= zone.maxX
+      && place.gridY >= zone.minY
+      && place.gridY <= zone.maxY
+    ));
+    return match?.[0] || 'frontier';
+  }
+
+  getBuildingMetrics(place) {
+    const role = getBuildingRole(place?.id);
+    const runtime = place?.id && getBuildingCatalogEntry(place.id) ? this.getBuildingRuntime(place.id) : null;
+    const roadAccess = place && getBuildingCatalogEntry(place.id) ? this.getBuildingRoadAccess(place) : null;
+    const serviceRange = this.getBuildingServiceRange(place);
+    const localHeroes = serviceRange > 0
+      ? this.getActiveHeroes().filter((hero) => (
+        hero.state !== 'away'
+        && hero.container
+        && Phaser.Math.Distance.Between(hero.container.x, hero.container.y, place.x, place.y) <= serviceRange
+      )).length
+      : 0;
+    return {
+      role,
+      runtime,
+      specialization: place?.id ? this.getBuildingSpecialization(place.id) : null,
+      capacity: place?.id ? this.getBuildingCapacity(place) : 0,
+      load: Number(runtime?.visitorsNow) || 0,
+      quality: place?.id ? this.getBuildingServiceQuality(place) : 0,
+      upkeep: place?.id ? this.getBuildingUpkeep(place) : 0,
+      serviceRange,
+      localHeroes,
+      roadAccess,
+      districtBonuses: this.getDistrictBonusesForPlace(place),
+    };
+  }
+
+  getBuildingProblems(place) {
+    const catalog = getBuildingCatalogEntry(place?.id);
+    if (!place?.isPlaced || !catalog) return [];
+    const metrics = this.getBuildingMetrics(place);
+    const role = metrics.role;
+    const runtime = metrics.runtime;
+    const problems = [];
+    if (runtime?.closed) {
+      problems.push({ text: 'Closed: upkeep is lower, but services and growth pause.', className: 'gwg-bad' });
+    }
+    if (metrics.roadAccess && !metrics.roadAccess.connected) {
+      problems.push({ text: 'No road access. Services, walkers, and deliveries are mostly vibes.', className: 'gwg-bad' });
+    }
+    if (metrics.capacity > 0 && metrics.load >= metrics.capacity) {
+      problems.push({ text: `${role?.capacityLabel || 'Capacity'} overloaded (${metrics.load}/${metrics.capacity}).`, className: 'gwg-bad' });
+    }
+    if (REST_BUILDINGS[place.id]) {
+      const lodging = this.getLodgingReport();
+      if (lodging.homeless > 0) problems.push({ text: `Town beds full: ${lodging.homeless} hero${lodging.homeless === 1 ? '' : 'es'} sleeping outside.`, className: 'gwg-bad' });
+    }
+    if (role?.inputResource && (this.townInventory?.[role.inputResource] || 0) <= 0) {
+      problems.push({ text: role.lacking, className: 'gwg-bad' });
+    }
+    const areaRep = this.getAreaReputation(this.getAreaIdForPlace(place));
+    if (areaRep >= 45) {
+      problems.push({ text: `Local danger reputation ${areaRep}/100. Heroes distrust the neighborhood.`, className: 'gwg-bad' });
+    }
+    if ((role?.districtTags || []).includes('premium') && this.resources.corruption >= 70) {
+      problems.push({ text: 'Premium pressure high. Convenience is spreading and trust is checking exits.', className: 'gwg-whale' });
+    }
+    return problems;
+  }
+
+  getUpgradeRequirement(place, info = this.getUpgradeInfo(place)) {
+    const catalog = getBuildingCatalogEntry(place?.id);
+    if (!catalog || !place?.isPlaced || info.maxed) return { met: true, text: 'No extra growth requirement.' };
+    const runtime = this.getBuildingRuntime(place.id);
+    const nextLevel = info.level + 1;
+    const requiredProgress = Math.min(90, nextLevel * 14);
+    const requiredUses = Math.max(3, (nextLevel - 1) * 5);
+    const role = getBuildingRole(place.id);
+    const counterKey = role?.progressCounter || 'usageCount';
+    const counterValue = Number(runtime[counterKey]) || 0;
+    const counterGoal = counterKey === 'usageCount' ? requiredUses : Math.max(1, nextLevel - 1);
+    const progressMet = (Number(runtime.upgradeProgress) || 0) >= requiredProgress;
+    const usageMet = (Number(runtime.usageCount) || 0) >= requiredUses;
+    const counterMet = counterValue >= counterGoal;
+    const met = nextLevel <= 2 ? (progressMet || usageMet || counterMet) : (progressMet && (usageMet || counterMet));
+    const counterLabel = counterKey === 'usageCount'
+      ? `${runtime.usageCount || 0}/${requiredUses} uses`
+      : `${counterValue}/${counterGoal} ${counterKey.replace(/[A-Z]/g, (m) => ` ${m.toLowerCase()}`)}`;
+    return {
+      met,
+      requiredProgress,
+      requiredUses,
+      text: `Growth: ${Math.floor(runtime.upgradeProgress || 0)}/${requiredProgress}% or ${counterLabel}.`,
+      blockedText: Phaser.Utils.Array.GetRandom(BUILDING_SATIRE_LINES.progressBlocked),
+    };
   }
 
   isBuildingPlaced(id) {
@@ -2241,6 +2439,7 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getActiveHeroes() {
+    if (!Array.isArray(this.heroes)) return [];
     return this.heroes.filter((hero) => hero.stats.active !== false && hero.awayUntil <= this.day && hero.state !== 'away');
   }
 
@@ -3476,7 +3675,7 @@ export default class TownScene extends Phaser.Scene {
     const hasPremiumItem = activeHeroes.some((hero) => hero.stats.inventory?.some((item) => item.premiumSource));
     switch (catalog.unlockKey) {
       case 'tavern': return this.isBuildingPlaced('tavern');
-      case 'hostel': return activeHeroes.length >= 6 || Boolean(tavernRuntime && tavernRuntime.visitorsNow >= tavernRuntime.capacity);
+      case 'hostel': return activeHeroes.length >= 6 || Boolean(tavernRuntime && tavernRuntime.visitorsNow >= this.getBuildingCapacity(this.buildingById.tavern));
       case 'failedQuest': return (this.stats.questFailures || 0) > 0 || this.day >= 3;
       case 'watchtower': return this.resources.threat >= 40 || (this.stats.threatEventsSurvived || 0) > 0;
       case 'bank': return maxDebt > 300 || this.resources.corruption > 30;
@@ -4198,6 +4397,7 @@ export default class TownScene extends Phaser.Scene {
       .filter(Boolean)
       .map((catalog) => {
       const place = this.buildingById?.[catalog.id];
+      const role = getBuildingRole(catalog.id);
       const built = Boolean(place?.isPlaced);
       const lockReason = this.getCatalogLockReason(catalog);
       const locked = Boolean(lockReason);
@@ -4215,8 +4415,10 @@ export default class TownScene extends Phaser.Scene {
         description: catalog.description,
         footprintLabel: `${catalog.footprint.w}x${catalog.footprint.h}`,
         roadLabel: catalog.roadRequired ? 'Adjacent required' : 'Independent',
-        effect: catalog.effect,
-        flavor: catalog.flavor || place?.upgradeFlavor || '',
+        effect: role
+          ? `${role.type}: ${role.provides.slice(0, 2).join(', ') || catalog.effect}`
+          : catalog.effect,
+        flavor: role?.repeatValue || catalog.flavor || place?.upgradeFlavor || '',
         status: built
           ? 'Already built. Unique municipal duplication denied.'
           : locked
@@ -5312,24 +5514,49 @@ export default class TownScene extends Phaser.Scene {
     }
     const info = this.getUpgradeInfo(place);
     const catalog = getBuildingCatalogEntry(place.id);
-    const runtime = catalog && place.isPlaced
-      ? this.getBuildingRuntime(place.id)
-      : null;
-    const canUpgrade = Boolean(info.cost && !info.maxed);
-    const canAfford = canUpgrade && this.resources.gold >= info.cost;
+    const metrics = catalog && place.isPlaced ? this.getBuildingMetrics(place) : null;
+    const runtime = metrics?.runtime || null;
+    const role = metrics?.role || null;
+    const requirement = this.getUpgradeRequirement(place, info);
+    const canUpgrade = Boolean(info.cost && !info.maxed && requirement.met);
+    const hasGold = Boolean(info.cost && this.resources.gold >= info.cost);
+    const canAfford = canUpgrade && hasGold;
     const lockReason = this.getLockReason(place.id);
     const roadAccess = catalog ? this.getBuildingRoadAccess(place) : null;
+    const problems = metrics ? this.getBuildingProblems(place) : [];
+    const specializations = catalog ? getBuildingSpecializations(place.id) : [];
+    const specialization = metrics?.specialization || null;
     const detailLines = [place.description, ...(place.tooltipLines || [])].filter(Boolean).slice(0, 4);
     const actions = [];
 
-    if (canUpgrade) {
+    if (info.cost && !info.maxed) {
       actions.push({
-        label: canAfford ? `Upgrade ${info.cost}g` : `Need ${info.cost}g`,
+        label: requirement.met
+          ? (canAfford ? `Upgrade ${info.cost}g` : `Need ${info.cost}g`)
+          : 'Needs use',
         event: 'gwg-upgrade-place',
         id: place.id,
-        disabled: !canAfford,
+        disabled: !canAfford || !requirement.met,
         className: place.id === 'whale' ? 'gwg-whale' : '',
       });
+    }
+    if (catalog && place.isPlaced) {
+      actions.push({
+        label: runtime?.closed ? 'Reopen Building' : 'Close Building',
+        event: 'gwg-toggle-building-open',
+        id: place.id,
+        className: runtime?.closed ? '' : 'gwg-danger-action',
+      });
+    }
+    if (!specialization && specializations.length && info.level >= Math.min(...specializations.map((spec) => spec.minLevel || 2))) {
+      for (const spec of specializations) {
+        actions.push({
+          label: `Specialize: ${spec.name}`,
+          event: 'gwg-choose-specialization',
+          id: `${place.id}:${spec.id}`,
+          className: place.id === 'whale' || spec.id.includes('premium') || spec.id.includes('sponsored') ? 'gwg-whale' : '',
+        });
+      }
     }
     if (['notice_board', 'guildhall', 'sponsored_quest_board'].includes(place.id)) {
       actions.push({ label: 'View Quests', event: 'gwg-open-quests', id: place.id });
@@ -5352,20 +5579,30 @@ export default class TownScene extends Phaser.Scene {
 
     return {
       title: place.name,
-      subtitle: lockReason || `Level ${info.level}${info.maxed ? ' / MAX' : ''}`,
+      subtitle: lockReason || `Level ${info.level}${info.maxed ? ' / MAX' : ''}${specialization ? ` - ${specialization.name}` : ''}`,
       sections: [
         {
-          title: 'Description',
-          lines: detailLines,
+          title: 'Role',
+          lines: [
+            ...(role ? [
+              role.role,
+              `Used by: ${role.usedBy.join(', ')}`,
+              `Provides: ${role.provides.join(', ') || 'local civic uncertainty'}`,
+              `Repeat value: ${role.repeatValue}`,
+            ] : detailLines),
+            ...(runtime?.closed ? [{ text: 'Closed: this building is not serving the town right now.', className: 'gwg-bad' }] : []),
+          ],
         },
         {
-          title: 'Current',
+          title: 'Capacity & Service',
           lines: [
             `Level: ${info.level}${info.maxed ? ' (max)' : ''}`,
             info.effect ? `Effect: ${info.effect}` : 'Effect: decorative morale hazard.',
             ...(runtime ? [
-              `Use: ${runtime.usageCount} visits - growth ${runtime.upgradeProgress}%`,
-              `Capacity: ${runtime.visitorsNow}/${runtime.capacity} - quality ${runtime.serviceQuality}`,
+              `Use: ${runtime.usageCount} visits - growth ${Math.floor(runtime.upgradeProgress || 0)}%`,
+              `Capacity: ${metrics.load}/${metrics.capacity} ${role?.capacityLabel || 'slots'} - quality ${metrics.quality}`,
+              `Service range: ${Math.round(metrics.serviceRange / GRID_CONFIG.tileSize)} tiles - ${metrics.localHeroes} nearby hero${metrics.localHeroes === 1 ? '' : 'es'}`,
+              `Upkeep: ${metrics.upkeep}g/day`,
               ...(runtime.servicesProvided ? [`Services delivered: ${runtime.servicesProvided}`] : []),
             ] : []),
             ...(REST_BUILDINGS[place.id] ? [this.getBedsInspectorLine()] : []),
@@ -5377,17 +5614,60 @@ export default class TownScene extends Phaser.Scene {
             { text: this.getConsequenceLine(place), className: place.id === 'whale' ? 'gwg-whale' : 'gwg-muted' },
           ],
         },
+        ...(role ? [{
+          title: 'Inputs / Outputs',
+          lines: [
+            `Consumes: ${role.consumes.join(', ') || 'nothing yet'}`,
+            `Outputs: ${role.outputResource || role.provides[0] || 'service coverage'}`,
+            `Improves: ${role.improves.join(', ') || 'the town, allegedly'}`,
+            ...(role.inputResource ? [`Input stock: ${this.townInventory?.[role.inputResource] || 0} ${role.inputResource}`] : []),
+            ...(role.outputResource && role.outputResource !== 'gold' ? [`Output stock: ${this.townInventory?.[role.outputResource] || 0} ${role.outputResource}`] : []),
+          ],
+        }] : []),
+        {
+          title: 'Growth',
+          lines: [
+            requirement.text,
+            ...(requirement.met ? [{ text: 'Growth requirement met for next upgrade.', className: 'gwg-good' }] : [{ text: requirement.blockedText, className: 'gwg-bad' }]),
+          ],
+        },
+        ...(specializations.length ? [{
+          title: 'Specialization',
+          lines: specialization
+            ? [
+              { text: `${specialization.name}: ${specialization.summary}`, className: place.id === 'whale' ? 'gwg-whale' : 'gwg-good' },
+              specialization.flavor,
+            ]
+            : info.level >= Math.min(...specializations.map((spec) => spec.minLevel || 2))
+              ? ['Choose one specialization. The building will become more useful and harder to apologize for.']
+              : [`Specialization unlocks at Level ${Math.min(...specializations.map((spec) => spec.minLevel || 2))}.`],
+        }] : []),
+        ...(metrics?.districtBonuses?.length ? [{
+          title: 'District Bonuses',
+          lines: metrics.districtBonuses.map((bonus) => ({
+            text: `${bonus.name}: ${bonus.effect}`,
+            className: bonus.className || 'gwg-good',
+          })),
+        }] : []),
+        {
+          title: 'Problems',
+          lines: problems.length
+            ? problems
+            : [{ text: 'No obvious building problems. The inspector distrusts this calm.', className: 'gwg-good' }],
+        },
         {
           title: info.maxed ? 'Upgrade' : 'Next Upgrade',
-          lines: info.maxed
-            ? ['MAX: allegedly balanced.']
-            : [
-              info.nextEffect ? `Next: ${info.nextEffect}` : 'Next: more questionable polish.',
-              `Cost: ${info.cost} gold`,
-              info.flavor || 'The clerk misplaced the upgrade excuse.',
-              ...(canAfford ? [] : [{ text: 'Not enough gold. Please exploit responsibly.', className: 'gwg-bad' }]),
-            ],
-        },
+        lines: info.maxed
+          ? ['MAX: allegedly balanced.']
+          : [
+            info.nextEffect ? `Next: ${info.nextEffect}` : 'Next: more questionable polish.',
+            `Cost: ${info.cost} gold`,
+            info.flavor || 'The clerk misplaced the upgrade excuse.',
+            requirement.text,
+            ...(requirement.met ? [] : [{ text: requirement.blockedText, className: 'gwg-bad' }]),
+            ...(hasGold ? [] : [{ text: 'Not enough gold. Please exploit responsibly.', className: 'gwg-bad' }]),
+          ],
+      },
         ...((catalog?.actions || []).length ? [{
           title: 'For Sale / Services',
           lines: catalog.actions.map((shopAction) => ({
@@ -5536,31 +5816,45 @@ export default class TownScene extends Phaser.Scene {
       const info = this.getUpgradeInfo(place);
       const locked = !this.isLocationUnlocked(place.id);
       const lockReason = this.getLockReason(place.id);
-      const canUpgrade = Boolean(info.cost && !info.maxed && !locked);
-      const canAfford = canUpgrade && this.resources.gold >= info.cost;
+      const metrics = getBuildingCatalogEntry(place.id) && place.isPlaced ? this.getBuildingMetrics(place) : null;
+      const requirement = this.getUpgradeRequirement(place, info);
+      const problems = metrics ? this.getBuildingProblems(place) : [];
+      const canUpgrade = Boolean(info.cost && !info.maxed && !locked && requirement.met);
+      const hasGold = Boolean(info.cost && this.resources.gold >= info.cost);
+      const canAfford = canUpgrade && hasGold;
       const maxLevel = info.def?.maxLevel || 3;
-      const state = locked ? 'locked' : info.maxed ? 'maxed' : canAfford ? 'affordable' : 'unaffordable';
+      const state = locked ? 'locked' : info.maxed ? 'maxed' : canAfford ? 'affordable' : !requirement.met ? 'locked' : 'unaffordable';
+      const specialization = metrics?.specialization;
+      const districtText = metrics?.districtBonuses?.length
+        ? metrics.districtBonuses.map((bonus) => bonus.name).join(', ')
+        : 'No district bonus yet';
       return {
         id: place.id,
         title: place.name,
         preview: this.getAssetPreviewUrl(place.assetKey),
         kind: this.getPlaceKind(place),
         state,
-        stateLabel: locked ? 'LOCKED' : info.maxed ? 'MAX' : canAfford ? 'READY' : 'SHORT',
+        stateLabel: locked ? 'LOCKED' : info.maxed ? 'MAX' : canAfford ? 'READY' : !requirement.met ? 'NEEDS USE' : 'SHORT',
         levelLabel: `Level ${info.level}/${maxLevel}`,
-        current: info.effect || place.effect || 'Decorative trouble with municipal recognition.',
+        current: [
+          info.effect || place.effect || 'Decorative trouble with municipal recognition.',
+          metrics ? `${metrics.load}/${metrics.capacity} ${metrics.role?.capacityLabel || 'slots'}, ${metrics.upkeep}g upkeep` : '',
+          specialization ? `Spec: ${specialization.name}` : '',
+        ].filter(Boolean).join(' | '),
         next: locked
           ? lockReason
           : info.maxed
             ? 'Maximum level reached. The paperwork has achieved final form.'
-            : info.nextEffect || 'More questionable improvements.',
+            : `${info.nextEffect || 'More questionable improvements.'} ${requirement.text}`,
         costLabel: locked ? 'Unavailable' : info.maxed ? 'MAX' : `${info.cost}g`,
-        flavor: info.flavor || place.upgradeFlavor || 'The upgrade clerk smiles without context.',
-        consequence: this.getConsequenceLine(place),
+        flavor: problems.length
+          ? `${problems[0].text} ${Phaser.Utils.Array.GetRandom(BUILDING_SATIRE_LINES.problems)}`
+          : info.flavor || place.upgradeFlavor || 'The upgrade clerk smiles without context.',
+        consequence: `${this.getConsequenceLine(place)} District: ${districtText}`,
         actions: locked
           ? []
           : [{
-            label: info.maxed ? 'MAX' : (canAfford ? 'Upgrade' : `Need ${info.cost}g`),
+            label: info.maxed ? 'MAX' : (!requirement.met ? 'Needs use' : (canAfford ? 'Upgrade' : `Need ${info.cost}g`)),
             event: 'gwg-upgrade-place',
             id: place.id,
             disabled: info.maxed || !canAfford,
@@ -5758,6 +6052,11 @@ export default class TownScene extends Phaser.Scene {
     const shopAction = catalog?.actions?.find((entry) => entry.id === actionId);
     if (!place?.isPlaced || !shopAction) return;
     const runtime = this.getBuildingRuntime(placeId);
+    if (runtime.closed) {
+      this.game.events.emit('gwg-event', `${place.name} is closed. The clerk found a locked door and a metaphor.`);
+      this.showPlaceInspector(place);
+      return;
+    }
     runtime.actionDays = runtime.actionDays || {};
     if (runtime.actionDays[actionId] === this.day) {
       this.game.events.emit('gwg-event', `${shopAction.label} already ran today. The paperwork needs a nap.`);
@@ -5783,6 +6082,52 @@ export default class TownScene extends Phaser.Scene {
     this.floatDeltas(place.x, place.y - place.h - 10, deltas);
     this.recordBuildingUse(place.id);
     this.checkTownIdentity();
+    this.saveGame(false);
+    this.showPlaceInspector(place);
+  }
+
+  chooseBuildingSpecialization(token) {
+    const [placeId, specId] = String(token || '').split(':');
+    const place = this.buildingById?.[placeId];
+    if (!place?.isPlaced) return;
+    const runtime = this.getBuildingRuntime(placeId);
+    if (runtime.specialization) {
+      this.game.events.emit('gwg-event', `${place.name} is already specialized. The architect refuses identity churn.`);
+      this.showPlaceInspector(place);
+      return;
+    }
+    const spec = getBuildingSpecializations(placeId).find((entry) => entry.id === specId);
+    if (!spec) return;
+    const level = this.getPlaceLevel(place);
+    if (level < (spec.minLevel || 2)) {
+      this.game.events.emit('gwg-event', `${place.name} needs Level ${spec.minLevel || 2} before specializing. Ambition has prerequisites.`);
+      this.showPlaceInspector(place);
+      return;
+    }
+    runtime.specialization = spec.id;
+    if (spec.effects?.dailyDeltas?.corruption || spec.effects?.dailyDeltas?.trust < 0) {
+      this.stats.premiumActions = (this.stats.premiumActions || 0) + 1;
+    }
+    const text = `${place.name} specialized into ${spec.name}. ${spec.flavor || Phaser.Utils.Array.GetRandom(BUILDING_SATIRE_LINES.specialization)}`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, place.id === 'whale' || spec.id.includes('premium') ? 'golden_whale' : 'upgrade');
+    this.floatText(place.x, place.y - (place.h || 58) - 12, spec.name.toUpperCase(), place.id === 'whale' ? '#ffe08a' : '#7fdc93');
+    this.updateTownReputationStats();
+    this.saveGame(false);
+    this.showPlaceInspector(place);
+  }
+
+  toggleBuildingOpenFromUi(id) {
+    const place = this.buildingById?.[id];
+    if (!place?.isPlaced) return;
+    const runtime = this.getBuildingRuntime(id);
+    runtime.closed = !runtime.closed;
+    const text = runtime.closed
+      ? `${place.name} closed temporarily. Upkeep relaxed; usefulness went home.`
+      : `${place.name} reopened. The town resumes depending on it immediately.`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.floatText(place.x, place.y - (place.h || 58) - 12, runtime.closed ? 'CLOSED' : 'OPEN', runtime.closed ? '#f0938f' : '#7fdc93');
     this.saveGame(false);
     this.showPlaceInspector(place);
   }
@@ -6177,7 +6522,8 @@ export default class TownScene extends Phaser.Scene {
   getOperationalPlace(id) {
     const place = this.placeById?.[id];
     const roadAccess = place ? this.getBuildingRoadAccess(place) : { connected: true };
-    if (place?.isPlaced !== false && this.isLocationUnlocked(id) && roadAccess.connected) return place;
+    const runtime = getBuildingCatalogEntry(id) ? this.getBuildingRuntime(id) : null;
+    if (place?.isPlaced !== false && this.isLocationUnlocked(id) && roadAccess.connected && !runtime?.closed) return place;
     return this.buildingById?.guildhall || place;
   }
 
@@ -6339,6 +6685,13 @@ export default class TownScene extends Phaser.Scene {
       ])}`);
       return;
     }
+    const requirement = this.getUpgradeRequirement(place, info);
+    if (!requirement.met) {
+      this.floatText(place.x, place.y - (place.h || 50) - 8, 'NEEDS USE', '#f0938f');
+      this.game.events.emit('gwg-event', `${place.name} is not ready to upgrade. ${requirement.blockedText}`);
+      this.showPlaceInspector(place);
+      return;
+    }
 
     const bonus = info.def?.deltas || {};
     const deltas = {
@@ -6350,9 +6703,13 @@ export default class TownScene extends Phaser.Scene {
     this.upgradeLevels[place.id] = nextLevel;
     if (getBuildingCatalogEntry(place.id)) {
       const runtime = this.getBuildingRuntime(place.id);
-      runtime.serviceQuality = nextLevel;
+      const role = getBuildingRole(place.id);
+      runtime.serviceQuality = Math.max(runtime.serviceQuality || 0, nextLevel);
       runtime.upgradeProgress = Math.max(0, runtime.upgradeProgress - 35);
-      if (place.id === 'tavern') runtime.capacity = 4 + nextLevel * 2;
+      if (role) {
+        const minimumCapacity = role.baseCapacity + Math.max(0, nextLevel - 1) * role.capacityPerLevel;
+        runtime.capacity = Math.max(runtime.capacity || 0, minimumCapacity);
+      }
     }
     if (this.getPlaceKind(place) === 'fair') this.stats.fairUpgrades = (this.stats.fairUpgrades || 0) + 1;
     if (this.getPlaceKind(place) === 'shady') this.stats.shadyUpgrades = (this.stats.shadyUpgrades || 0) + 1;
@@ -6832,10 +7189,12 @@ export default class TownScene extends Phaser.Scene {
     const serviceQuality = Object.values(this.cityState?.buildingRuntime || {})
       .reduce((sum, runtime) => sum + (Number(runtime.serviceQuality) || 0), 0);
     const safety = Phaser.Math.Clamp(100 - this.resources.threat, 0, 100);
+    const districtScore = this.getActiveDistrictBonuses().length * 5;
     const score = this.townReputation * 0.42
       + this.townPrestige * 0.34
       + safety * 0.18
-      + serviceQuality * 0.5;
+      + serviceQuality * 0.5
+      + districtScore;
     if (this.getPlaceLevel(this.buildingById.whale) >= 4 && this.resources.corruption > 58) return 'Whale Champion';
     if (score >= 82) return 'Champion';
     if (score >= 64 || this.resources.threat > 70) return 'Veteran';
@@ -6848,7 +7207,7 @@ export default class TownScene extends Phaser.Scene {
     const activeCount = this.heroes.filter((hero) => hero.stats.active !== false).length;
     const lodgingCapacity = ['tavern', 'inn', 'hero_hostel', 'premium_lodge']
       .filter((id) => this.isBuildingPlaced(id))
-      .reduce((sum, id) => sum + this.getBuildingRuntime(id).capacity, 0);
+      .reduce((sum, id) => sum + this.getBuildingCapacity(this.buildingById[id]), 0);
     const guildCapacity = 3 + Math.max(0, this.getPlaceLevel(this.buildingById.guildhall) - 1);
     const townCapacity = Math.min(28, guildCapacity + lodgingCapacity);
     if (activeCount >= townCapacity) return;
@@ -7216,9 +7575,15 @@ export default class TownScene extends Phaser.Scene {
     const place = this.buildingById[id];
     if (!this.getBuildingRoadAccess(place).connected) return null;
     const runtime = this.getBuildingRuntime(id);
+    if (runtime.closed) return null;
     runtime.usageCount += 1;
     runtime.visitorsTotal += 1;
     runtime.upgradeProgress = Math.min(100, runtime.upgradeProgress + 4);
+    const role = getBuildingRole(id);
+    if (role?.progressCounter && role.progressCounter !== 'usageCount') {
+      runtime[role.progressCounter] = (runtime[role.progressCounter] || 0) + 1;
+    }
+    if (REST_BUILDINGS[id]) runtime.heroesRested = (runtime.heroesRested || 0) + 1;
     const sprite = this.placeSpriteById[id];
     if (sprite && !sprite.getData('usagePulse')) {
       sprite.setData('usagePulse', true);
@@ -7244,7 +7609,16 @@ export default class TownScene extends Phaser.Scene {
   enterBuilding(hero) {
     const runtime = this.isBuildingPlaced(hero.at) ? this.getBuildingRuntime(hero.at) : null;
     const catalog = getBuildingCatalogEntry(hero.at);
-    if (catalog?.capacity && runtime && runtime.visitorsNow >= runtime.capacity) {
+    const place = this.buildingById?.[hero.at];
+    const capacity = place ? this.getBuildingCapacity(place) : runtime?.capacity;
+    if (runtime?.closed) {
+      hero.stats.morale = Math.max(0, hero.stats.morale - 2);
+      this.say(hero, 'Closed. Naturally.', true);
+      this.scheduleAmbient(hero, Phaser.Math.Between(1200, 2600));
+      return;
+    }
+    if (catalog?.capacity && runtime && runtime.visitorsNow >= capacity) {
+      runtime.overloadedDays = (runtime.overloadedDays || 0) + 1;
       hero.stats.morale = Math.max(0, hero.stats.morale - 4);
       this.say(hero, 'Indoors is full.', true);
       this.game.events.emit('gwg-event', `${hero.def.name} discovered the premium feature called indoors.`);
@@ -8054,10 +8428,15 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getDefenseBonus() {
+    const defenseDistrict = this.getActiveDistrictBonuses().some((bonus) => bonus.id === 'defense') ? 2 : 0;
+    const towerSpec = this.getBuildingSpecialization('watchtower');
+    const towerSpecBonus = towerSpec?.id === 'patrol_focus' ? 2 : 0;
     return this.getPlaceLevel(this.buildingById.watchtower) * 3
       + this.getPlaceLevel(this.buildingById.training)
       + this.getPlaceLevel(this.buildingById.arena) * 2
-      + Math.floor(this.getPlaceLevel(this.buildingById.blacksmith) / 2);
+      + Math.floor(this.getPlaceLevel(this.buildingById.blacksmith) / 2)
+      + defenseDistrict
+      + towerSpecBonus;
   }
 
   resolveMonsterAttack({ forced = false, chance = 0 } = {}) {
@@ -8121,6 +8500,13 @@ export default class TownScene extends Phaser.Scene {
         this.addHeroHistory(hero, `Defeated ${monster.name}.`);
         stepLines.push(`${hero.def.name} defeated ${monster.name}. ${Phaser.Utils.Array.GetRandom(MONSTER_VICTORY_LINES)}`);
         this.stats.monsterVictories = (this.stats.monsterVictories || 0) + 1;
+        if (this.isBuildingPlaced('watchtower')) {
+          const runtime = this.getBuildingRuntime('watchtower');
+          if (!runtime.closed) {
+            runtime.monstersStopped = (runtime.monstersStopped || 0) + 1;
+            runtime.upgradeProgress = Math.min(100, (runtime.upgradeProgress || 0) + 12);
+          }
+        }
         break;
       }
       remainingPower = Math.max(2, remainingPower - Math.max(1, Math.floor(score * 0.45)));
@@ -8140,6 +8526,10 @@ export default class TownScene extends Phaser.Scene {
       deltas.threat += Math.max(2, Math.ceil(monster.threat / 2));
       if (monster.id === 'debt_wraith' || monster.id === 'audit_imp') deltas.corruption += 1;
       this.stats.monsterDamageEvents = (this.stats.monsterDamageEvents || 0) + 1;
+      if (this.isBuildingPlaced('watchtower')) {
+        const runtime = this.getBuildingRuntime('watchtower');
+        if (!runtime.closed) runtime.upgradeProgress = Math.min(100, (runtime.upgradeProgress || 0) + 5);
+      }
       stepLines.push(`${monster.name} damaged ${target.name}. ${Phaser.Utils.Array.GetRandom(MONSTER_DAMAGE_LINES)}`);
     }
 
@@ -8658,8 +9048,12 @@ export default class TownScene extends Phaser.Scene {
     const placedRest = Object.keys(REST_BUILDINGS).filter((id) => this.isBuildingPlaced(id));
     const levels = Object.fromEntries(placedRest.map((id) => [id, this.getPlaceLevel(this.buildingById[id])]));
     const capacity = getBedCapacity(placedRest, levels);
+    const specializedBeds = placedRest.reduce((sum, id) => (
+      sum + Math.max(0, this.getBuildingCapacity(this.buildingById[id]) - (REST_BUILDINGS[id].beds + (this.getPlaceLevel(this.buildingById[id]) - 1) * REST_BUILDINGS[id].bedsPerLevel))
+    ), 0);
     const used = this.getActiveHeroes().length;
-    return { ...capacity, used, homeless: Math.max(0, used - capacity.beds) };
+    const beds = capacity.beds + specializedBeds;
+    return { ...capacity, beds, used, homeless: Math.max(0, used - beds) };
   }
 
   getBedsInspectorLine() {
@@ -8686,6 +9080,18 @@ export default class TownScene extends Phaser.Scene {
       text: `Town reputation ${this.townReputation}/100 - prestige ${this.townPrestige}/100. Better services and lower threat attract stronger heroes.`,
       className: this.townReputation >= 60 ? 'gwg-good' : this.townReputation < 35 ? 'gwg-bad' : 'gwg-muted',
     });
+    const districtBonuses = this.getActiveDistrictBonuses();
+    if (districtBonuses.length) {
+      notes.push({
+        text: `District bonuses: ${districtBonuses.map((bonus) => bonus.name).join(', ')}.`,
+        className: 'gwg-good',
+      });
+    }
+    const buildingProblems = Object.values(this.buildingById || {})
+      .filter((place) => place?.isPlaced && getBuildingCatalogEntry(place.id))
+      .flatMap((place) => this.getBuildingProblems(place).map((problem) => `${place.name}: ${problem.text}`))
+      .slice(0, 3);
+    for (const problem of buildingProblems) notes.push({ text: problem, className: 'gwg-bad' });
     const badAreas = Object.entries(this.areaReputation || {})
       .filter(([, value]) => Number(value) >= 35)
       .sort((a, b) => b[1] - a[1])
@@ -8729,9 +9135,87 @@ export default class TownScene extends Phaser.Scene {
     return notes.length ? notes : ['No urgent problems. The advisor is quietly suspicious of that.'];
   }
 
+  applyBuildingUpkeep() {
+    const placed = Object.values(this.buildingById || {})
+      .filter((place) => place?.isPlaced && getBuildingCatalogEntry(place.id));
+    let due = 0;
+    for (const place of placed) {
+      const runtime = this.getBuildingRuntime(place.id);
+      if (runtime.closed) continue;
+      due += this.getBuildingUpkeep(place);
+    }
+    if (due <= 0) return;
+    const paid = Math.min(this.resources.gold, due);
+    if (paid > 0) {
+      this.applyDeltas({ gold: -paid });
+      for (const place of placed) {
+        const runtime = this.getBuildingRuntime(place.id);
+        if (!runtime.closed) runtime.upkeepPaid = (runtime.upkeepPaid || 0) + this.getBuildingUpkeep(place);
+      }
+    }
+    if (paid < due) {
+      const text = `Upkeep shortfall: paid ${paid}/${due}g. ${Phaser.Utils.Array.GetRandom(BUILDING_SATIRE_LINES.upkeep)}`;
+      this.applyDeltas({ morale: -1, trust: -1 });
+      this.game.events.emit('gwg-event', text);
+      this.addTownLog(text, 'economy');
+      this.addReportLine('warnings', text);
+    } else if (this.day % 5 === 0) {
+      this.addReportLine('economy', `Building upkeep paid: ${paid}g. Infrastructure remained briefly convinced.`);
+    }
+  }
+
+  applyDistrictDailyEffects() {
+    const active = this.getActiveDistrictBonuses();
+    if (!active.length) return;
+    const deltas = {};
+    for (const bonus of active) {
+      for (const [key, value] of Object.entries(bonus.dailyDeltas || {})) {
+        deltas[key] = (deltas[key] || 0) + value;
+      }
+    }
+    if (Object.keys(deltas).length) this.applyDeltas(deltas);
+    if (this.day % 3 === 0) {
+      const text = `District bonuses active: ${active.map((bonus) => bonus.name).join(', ')}. Layout is beginning to have opinions.`;
+      this.addTownLog(text, 'economy');
+      this.addReportLine('economy', text);
+    }
+  }
+
+  applySpecializationDailyEffects() {
+    const deltas = {};
+    const lines = [];
+    for (const place of Object.values(this.buildingById || {})) {
+      if (!place?.isPlaced || !getBuildingCatalogEntry(place.id)) continue;
+      const runtime = this.getBuildingRuntime(place.id);
+      if (runtime.closed) continue;
+      const spec = this.getBuildingSpecialization(place.id);
+      for (const [key, value] of Object.entries(spec?.effects?.dailyDeltas || {})) {
+        deltas[key] = (deltas[key] || 0) + value;
+      }
+      if (spec?.effects?.dailyDeltas && this.day % 4 === 0) {
+        lines.push(`${place.name} (${spec.name})`);
+      }
+    }
+    if (Object.keys(deltas).length) this.applyDeltas(deltas);
+    if (lines.length) this.addReportLine('economy', `Specializations produced side effects: ${lines.join(', ')}.`);
+  }
+
+  getProductionBatch(rule, place) {
+    const level = this.getPlaceLevel(place);
+    const spec = this.getBuildingSpecializationEffects(rule.building);
+    const districtBonus = this.getActiveDistrictBonuses().some((bonus) => bonus.id === 'market')
+      && ['market', 'blacksmith', 'potion_shop'].includes(rule.building)
+      ? 1
+      : 0;
+    return Math.max(0, rule.batch(level) + (Number(spec.productionBonus) || 0) + districtBonus);
+  }
+
   // day-cycle step: lodging pressure + simple production conversions
   runTownServicesStep() {
     this.walkerDailyTally = { threatReduction: 0, evangelistGold: 0 };
+    this.applyBuildingUpkeep();
+    this.applyDistrictDailyEffects();
+    this.applySpecializationDailyEffects();
 
     // hero lodging: over capacity drains morale and trust, quietly but daily
     const lodging = this.getLodgingReport();
@@ -8754,15 +9238,17 @@ export default class TownScene extends Phaser.Scene {
     for (const rule of PRODUCTION_RULES) {
       if (!this.isBuildingPlaced(rule.building)) continue;
       const place = this.buildingById[rule.building];
+      const runtime = this.getBuildingRuntime(rule.building);
+      if (runtime.closed) continue;
       if (!this.getBuildingRoadAccess(place).connected) continue;
       const available = this.townInventory[rule.from] || 0;
       if (available <= 0) continue;
-      const level = this.getPlaceLevel(place);
-      const amount = Math.min(available, rule.batch(level));
+      const amount = Math.min(available, this.getProductionBatch(rule, place));
       if (amount <= 0) continue;
       this.townInventory[rule.from] -= amount;
-      const runtime = this.getBuildingRuntime(rule.building);
       runtime.servicesProvided = (runtime.servicesProvided || 0) + amount;
+      runtime.productionDone = (runtime.productionDone || 0) + amount;
+      if (rule.building === 'market') runtime.lootProcessed = (runtime.lootProcessed || 0) + amount;
       runtime.upgradeProgress = Math.min(100, runtime.upgradeProgress + amount * 2);
       let logLine;
       if (rule.to === 'gold') {
@@ -8818,6 +9304,7 @@ export default class TownScene extends Phaser.Scene {
     // round-robin through placed, road-connected service buildings
     const sources = Object.keys(SERVICE_WALKERS).filter((id) => (
       this.isBuildingPlaced(id) && this.getBuildingRoadAccess(this.buildingById[id]).connected
+      && !this.getBuildingRuntime(id).closed
     ));
     if (!sources.length) return;
     const buildingId = sources[this.walkerRotation % sources.length];
