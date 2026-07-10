@@ -1965,43 +1965,149 @@ export default class TownScene extends Phaser.Scene {
   // reads like a natural map instead of flat debug green, at zero per-frame
   // cost. Roads, buildings, and fog all draw above this layer.
   buildTerrainVariety() {
-    // dirt squares read as hard 48px stamps; dirt texture comes from the
-    // softer decal set instead, clover stays as a green-on-green variant
-    const variantKeys = ['terrain_grass_clover']
-      .filter((key) => this.textures.exists(key));
-    const decalKeys = [
-      'decal_grass_tuft', 'decal_tall_grass', 'decal_wildflowers', 'decal_dirt_mound',
-      'decal_mud_puddle', 'decal_leaf_litter', 'decal_rock_trio', 'decal_mushrooms',
-      'decal_clover', 'decal_pebbles', 'decal_flowers_yellow', 'decal_flowers_red',
-      'decal_hay_pile', 'decal_tree_stump', 'decal_berry_bush', 'decal_fern',
-    ].filter((key) => this.textures.exists(key));
-    if (!variantKeys.length && !decalKeys.length) return;
-
     const tile = GRID_CONFIG.tileSize;
-    const rt = this.add.renderTexture(
+    this.terrainVarietyRt = this.add.renderTexture(
       GRID_CONFIG.originX,
       GRID_CONFIG.originY,
       GRID_CONFIG.columns * tile,
       GRID_CONFIG.rows * tile,
     ).setOrigin(0, 0).setDepth(1);
+    this.redrawTerrainVariety();
+  }
+
+  // town core = average of placed building centers; decor density and prop
+  // size scale with distance from it
+  getTownCoreCenter() {
+    const placed = this.cityState.placedBuildings;
+    if (!placed.length) return { x: GRID_CONFIG.columns / 4, y: GRID_CONFIG.rows / 4 };
+    const sum = placed.reduce((acc, placement) => {
+      const footprint = getBuildingCatalogEntry(placement.id)?.footprint || { w: 2, h: 2 };
+      acc.x += placement.gridX + footprint.w / 2;
+      acc.y += placement.gridY + footprint.h / 2;
+      return acc;
+    }, { x: 0, y: 0 });
+    return { x: sum.x / placed.length, y: sum.y / placed.length };
+  }
+
+  // cells decor must stay out of: building footprints plus a one-tile buffer,
+  // extended one extra row south so entrances stay clear and readable
+  getDecorBlockedCells() {
+    const blocked = new Set();
+    for (const placement of this.cityState.placedBuildings) {
+      const footprint = getBuildingCatalogEntry(placement.id)?.footprint || { w: 2, h: 2 };
+      for (let y = placement.gridY - 1; y < placement.gridY + footprint.h + 2; y += 1) {
+        for (let x = placement.gridX - 1; x < placement.gridX + footprint.w + 1; x += 1) {
+          blocked.add(gridKey(x, y));
+        }
+      }
+    }
+    return blocked;
+  }
+
+  // Ground decor is one RenderTexture (zero per-frame cost) but now
+  // placement-aware and redrawable: clutter keeps out of building footprints,
+  // entrances, and road shoulders; the town core stays clean; everything is
+  // hand-scattered with per-prop scale, offset, and loose clustering so
+  // nothing looks stamped to a grid square. Redrawn on build/delete events.
+  redrawTerrainVariety() {
+    const rt = this.terrainVarietyRt;
+    if (!rt || !this.isBuilderCity) return;
+    rt.clear();
+
+    const variantKeys = ['terrain_grass_clover'].filter((key) => this.textures.exists(key));
+    // size categories keep scale believable: tiny clutter may appear almost
+    // anywhere, medium props stay out of the town core entirely
+    const decorSets = {
+      tiny: ['decal_pebbles', 'decal_clover', 'decal_grass_tuft', 'decal_mushrooms', 'decal_wildflowers']
+        .filter((key) => this.textures.exists(key)),
+      small: ['decal_flowers_yellow', 'decal_flowers_red', 'decal_leaf_litter', 'decal_fern', 'decal_mud_puddle', 'decal_rock_trio']
+        .filter((key) => this.textures.exists(key)),
+      medium: ['decal_tall_grass', 'decal_tree_stump', 'decal_berry_bush', 'decal_hay_pile', 'decal_dirt_mound']
+        .filter((key) => this.textures.exists(key)),
+    };
+    if (!variantKeys.length && !decorSets.tiny.length && !decorSets.small.length) return;
+
+    const tile = GRID_CONFIG.tileSize;
+    const core = this.getTownCoreCenter();
+    const blocked = this.getDecorBlockedCells();
+    const scales = { tiny: [0.4, 0.62], small: [0.55, 0.8], medium: [0.75, 1.05] };
+    const maxDraws = 560;
+    let drawn = 0;
+
     rt.beginDraw();
-    for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
+    for (let y = 0; y < GRID_CONFIG.rows && drawn < maxDraws; y += 1) {
       for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
+        const cell = this.gridCells.get(gridKey(x, y));
+        if (!cell || cell.road || cell.occupiedBy || blocked.has(gridKey(x, y))) continue;
+        const nearRoad = this.isRoadOrRoadShoulder(x, y, 1);
         const hash = this.getTerrainHash(x, y, 11);
         const roll = hash % 100;
-        if (variantKeys.length && roll < 13) {
+        const coreDistance = Math.hypot(x - core.x, y - core.y);
+
+        // zone density: town core clean and readable, road shoulders nearly
+        // clear, the wild fills in the further out you go
+        const chance = nearRoad ? 5 : coreDistance < 6 ? 6 : coreDistance < 11 ? 16 : 26;
+        // clover meadow patches only away from the core
+        if (variantKeys.length && !nearRoad && coreDistance > 8 && roll >= chance && roll < chance + 7) {
           rt.batchDraw(variantKeys[hash % variantKeys.length], x * tile, y * tile);
-        } else if (decalKeys.length && roll >= 13 && roll < 31) {
-          rt.batchDraw(
-            decalKeys[(hash >> 3) % decalKeys.length],
-            x * tile + ((hash % 9) - 8),
-            y * tile + (((hash >> 2) % 9) - 8),
-          );
+          drawn += 1;
+          continue;
+        }
+        if (roll >= chance) continue;
+
+        const category = (nearRoad || coreDistance < 6)
+          ? 'tiny'
+          : coreDistance < 11
+            ? ((hash >> 5) % 3 ? 'tiny' : 'small')
+            : ['tiny', 'small', 'medium'][(hash >> 5) % 3];
+        const keys = decorSets[category].length ? decorSets[category] : decorSets.tiny;
+        if (!keys.length) continue;
+
+        // hand-scattered feel: strong in-cell offset + per-prop scale, plus a
+        // loose cluster of 1-2 companions so plants grow in groups
+        const [minScale, maxScale] = scales[category];
+        const baseScale = minScale + ((hash >> 7) % 8) * ((maxScale - minScale) / 7);
+        const baseX = x * tile + tile / 2 + ((hash % 29) - 14);
+        const baseY = y * tile + tile / 2 + (((hash >> 3) % 25) - 12);
+        this.drawDecal(rt, keys[(hash >> 4) % keys.length], baseX, baseY, baseScale);
+        drawn += 1;
+        if ((hash >> 9) % 100 < 35 && drawn < maxDraws) {
+          const companions = 1 + ((hash >> 11) % 2);
+          for (let i = 0; i < companions; i += 1) {
+            const angle = ((hash >> (12 + i * 3)) % 360) * (Math.PI / 180);
+            const spread = 12 + ((hash >> (14 + i * 2)) % 14);
+            this.drawDecal(
+              rt,
+              keys[(hash >> (5 + i)) % keys.length],
+              baseX + Math.cos(angle) * spread,
+              baseY + Math.sin(angle) * spread * 0.7,
+              baseScale * (0.65 + ((hash >> (8 + i)) % 4) * 0.08),
+            );
+            drawn += 1;
+          }
         }
       }
     }
     rt.endDraw();
-    this.terrainVarietyRt = rt;
+  }
+
+  // batchDraw has no scale parameter, so scaled decals stamp through a pooled
+  // off-scene image; centered origin keeps offsets symmetric
+  drawDecal(rt, key, x, y, scale) {
+    if (!this.decalStamp) {
+      this.decalStamp = this.make.image({ key, add: false }).setOrigin(0.5, 0.5);
+    }
+    this.decalStamp.setTexture(key).setScale(scale);
+    rt.batchDraw(this.decalStamp, x, y);
+  }
+
+  // dev helper: re-roll all procedural decoration with current rules
+  // (console: game.scene.getScene('TownScene').redecorateMap())
+  redecorateMap() {
+    this.redrawTerrainVariety();
+    this.redrawTerrainDetails();
+    this.redrawWildernessDressing();
+    return 'map redecorated';
   }
 
   isRoadOrRoadShoulder(x, y, radius = 1) {
@@ -2017,6 +2123,19 @@ export default class TownScene extends Phaser.Scene {
     if (!this.terrainDetailGraphics || !this.isBuilderCity) return;
     const g = this.terrainDetailGraphics;
     g.clear();
+    // worn-earth patch under every building footprint: grounds the sprite in
+    // the terrain itself instead of relying on shadows alone
+    for (const placement of this.cityState.placedBuildings) {
+      const footprint = getBuildingCatalogEntry(placement.id)?.footprint || { w: 2, h: 2 };
+      const left = GRID_CONFIG.originX + placement.gridX * GRID_CONFIG.tileSize;
+      const top = GRID_CONFIG.originY + placement.gridY * GRID_CONFIG.tileSize;
+      const width = footprint.w * GRID_CONFIG.tileSize;
+      const height = footprint.h * GRID_CONFIG.tileSize;
+      g.fillStyle(0x6b5a3a, 0.1);
+      g.fillRoundedRect(left - 4, top - 2, width + 8, height + 8, 14);
+      g.fillStyle(0x55462e, 0.08);
+      g.fillRoundedRect(left + 2, top + height - 10, width - 4, 16, 8);
+    }
     for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
       for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
         const cell = this.gridCells.get(gridKey(x, y));
@@ -2070,18 +2189,28 @@ export default class TownScene extends Phaser.Scene {
     const fallbackKeys = ['prop_tree', 'prop_rock'].filter((key) => this.textures.exists(key));
     const keys = propKeys.length ? propKeys : fallbackKeys;
     if (!keys.length) return;
+    const core = this.getTownCoreCenter();
+    const blocked = this.getDecorBlockedCells();
     for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
       for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
-        if (this.isRevealed(x, y)) continue;
-        const hash = Math.abs((x * 73856093) ^ (y * 19349663)) % 1000;
-        if (hash % 100 >= 8) continue;
+        const cell = this.gridCells.get(gridKey(x, y));
+        if (!cell || cell.road || cell.occupiedBy || blocked.has(gridKey(x, y))) continue;
+        const revealed = this.isRevealed(x, y);
+        const hash = Math.abs((x * 73856093) ^ (y * 19349663)) % 100000;
+        if (revealed) {
+          // revealed wild zone: sparse trees/bushes well away from the town
+          // core and roads, so cleared land still reads as frontier meadow
+          const coreDistance = Math.hypot(x - core.x, y - core.y);
+          if (coreDistance < 11 || this.isRoadOrRoadShoulder(x, y, 1)) continue;
+          if (hash % 100 >= 3) continue;
+        } else if (hash % 100 >= 8) continue;
         const world = gridToWorld(x, y);
         const key = keys[hash % keys.length];
         const image = this.add.image(
-          world.x + ((hash % 13) - 6),
-          world.y - 10 + ((hash % 7) - 3),
+          world.x + ((hash % 27) - 13),
+          world.y - 10 + (((hash >> 4) % 15) - 7),
           key,
-        ).setScale(0.7 + (hash % 5) * 0.05).setAlpha(0.9);
+        ).setScale(0.55 + ((hash >> 6) % 9) * 0.05).setAlpha(revealed ? 1 : 0.9);
         this.wildernessContainer.add(image);
       }
     }
@@ -2631,6 +2760,7 @@ export default class TownScene extends Phaser.Scene {
     // neighbor masks change, so the whole road layer re-autotiles
     this.redrawCityRoads();
     this.redrawTerrainDetails();
+    this.redrawTerrainVariety();
     const world = gridToWorld(gridX, gridY);
     this.floatText(world.x, world.y - 30, refund > 0 ? `+${refund}g` : 'REMOVED', '#f6c945');
 
@@ -2659,6 +2789,7 @@ export default class TownScene extends Phaser.Scene {
     this.gridCells.get(gridKey(gridX, gridY)).road = typeId;
     this.revealArea(gridX, gridY, FOG_REVEAL_RADIUS.road);
     this.redrawTerrainDetails();
+    this.redrawTerrainVariety();
     this.redrawCityRoads();
     const world = gridToWorld(gridX, gridY);
     this.floatText(world.x, world.y - 30, `-${cost}g`, '#f6c945');
@@ -2691,6 +2822,7 @@ export default class TownScene extends Phaser.Scene {
     });
     this.renderBuilding(building);
     this.redrawTerrainDetails();
+    this.redrawTerrainVariety();
     this.doorById[building.id] = this.getDoorSpotForPlace(building);
     this.placeById[building.id] = building;
     this.getBuildingRuntime(id);

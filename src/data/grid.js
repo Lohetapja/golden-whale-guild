@@ -173,11 +173,14 @@ export const DEFAULT_NEW_CITY = {
   // guild hall and starter roads instead of a whole zone rectangle
   revealed: [],
   // starting layout (see docs/CITY_BUILDER_SYSTEMS_PLAN.md section 3):
-  // one clean straight dirt road with the Guild Hall beside it — the player
-  // draws the rest of the town themselves
+  // one clean straight dirt road with a small believable town core on it —
+  // Guild Hall in the middle, Tavern to the west, Market to the east.
+  // The player draws the rest of the town themselves.
   roads: Array.from({ length: 11 }, (_, x) => ({ x: x + 4, y: 7, type: 'dirt' })),
   placedBuildings: [
     { id: 'guildhall', gridX: 8, gridY: 4 },
+    { id: 'tavern', gridX: 5, gridY: 5 },
+    { id: 'market', gridX: 12, gridY: 5 },
   ],
   buildingRuntime: {
     guildhall: {
