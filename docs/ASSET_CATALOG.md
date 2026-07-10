@@ -259,3 +259,27 @@ panel skinning.
 - Road tiles at high top-down were generated and kept in the PixelLab library
   but not integrated (baked curbs repeat on vertical roads); road depth is
   procedural instead (north lip + south curb face in `redrawCityRoads`).
+
+## 2026-07 Encounter / Exploration Pass
+
+- **Monster actors** (`public/assets/monsters/`): existing monster art is now
+  used as visible map actors for town attacks instead of only event icons.
+- **Aftermath / loot slots** (`public/assets/objects/`): `loot_bag_small`
+  has local PixelLab art. New fallback-ready slots: `corpse_goblin_remains`,
+  `corpse_skeleton_bones`, `corpse_slime_puddle`, `loot_bag_premium`,
+  `coin_pile_small`, `broken_sword`, `broken_shield`,
+  `monster_drop_chest`, `suspicious_coupon_drop`.
+- **Discoverable POI slots** (`public/assets/pois/`): `poi_goblin_camp`,
+  `poi_skeleton_ruins`, `poi_slime_pit`, `poi_old_watch_post`,
+  `poi_abandoned_cart`, `poi_loot_cave`, `poi_rngesus_shrine`,
+  `poi_premium_ruin`, `poi_dungeon_mouth`, `poi_resource_grove`.
+  These are map landmarks, not build-menu buildings.
+- **Future support building slots** (`public/assets/buildings/`):
+  `building_scout_post`, `building_guard_post`, `building_loot_warehouse`,
+  `building_quest_office`, `building_monster_warning_bell`.
+- **UI icon slots** (`public/assets/icons/`): `icon_policy`,
+  `icon_week_report`, `icon_monster_alert`, `icon_explore`, `icon_loot`,
+  `icon_corpse`, `icon_danger`, `icon_fog`.
+- PixelLab completed additional remains/loot jobs during this pass, but the
+  local download step was blocked by the current Codex escalation/usage limit.
+  The manifest keeps those slots safe with existing fallback art.

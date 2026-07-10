@@ -113,6 +113,8 @@ const STEP_MS = 950; // pacing of the day-cycle playback
 const MAX_IDLE_BUBBLES = 2;
 const MAX_IMPORTANT_BUBBLES = 4;
 const BUBBLE_MIN_SPACING = 150;
+const IDLE_BUBBLE_DURATION_MS = 4600;
+const IMPORTANT_BUBBLE_DURATION_MS = 5600;
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
 const SAVE_KEY = 'golden-whale-guild-save-v2';
@@ -303,6 +305,38 @@ const MONSTER_DAMAGE_LINES = [
   'No hero stopped it in time. The city paid the usual emergency convenience fee.',
   'The attack ended after morale leaked into the road.',
   'The monster left before anyone could upsell it a permit.',
+];
+
+const MONSTER_REMAINS_BY_ID = {
+  goblin_raider: 'corpse_goblin_remains',
+  premium_goblin: 'corpse_goblin_remains',
+  queue_demon: 'corpse_goblin_remains',
+  skeleton_attacker: 'corpse_skeleton_bones',
+  slime: 'corpse_slime_puddle',
+  grump_mushroom: 'corpse_slime_puddle',
+};
+
+const MONSTER_LOOT_KEYS = [
+  'loot_bag_small',
+  'coin_pile_small',
+  'monster_drop_chest',
+  'broken_sword',
+  'broken_shield',
+  'suspicious_coupon_drop',
+];
+
+const PREMIUM_MONSTER_LOOT_KEYS = [
+  'loot_bag_premium',
+  'monster_drop_chest',
+  'suspicious_coupon_drop',
+  'coin_pile_small',
+];
+
+const LOOT_PICKUP_LINES = [
+  'Loot secured. The accounting department called it emergent revenue.',
+  'The drop was collected before the odds could be explained.',
+  'A hero picked through the remains and found fiscal closure.',
+  'The loot bag contained gold, dust, and a small moral waiver.',
 ];
 
 const TOWN_IDENTITIES = {
@@ -585,7 +619,11 @@ export default class TownScene extends Phaser.Scene {
       lastAttackDay: Number(saved?.monsterState?.lastAttackDay) || 0,
       weekAttackCount: Number(saved?.monsterState?.weekAttackCount) || 0,
       activeAttacks: Array.isArray(saved?.monsterState?.activeAttacks) ? saved.monsterState.activeAttacks.slice(0, 3) : [],
+      aftermathDrops: Array.isArray(saved?.monsterState?.aftermathDrops) ? saved.monsterState.aftermathDrops.slice(0, 16) : [],
     };
+    this.discoveredPois = new Set(saved?.discoveredPois || []);
+    this.activeMonsterActors = [];
+    this.aftermathDrops = this.normalizeAftermathDrops(this.monsterState.aftermathDrops);
     this.tutorial = {
       step: Number(saved?.tutorial?.step) || 0,
       completed: Boolean(saved?.tutorial?.completed),
@@ -640,6 +678,8 @@ export default class TownScene extends Phaser.Scene {
     this.buildBuildings();
     this.buildDecorations();
     this.buildExplorationPoints();
+    this.buildAftermathDrops();
+    this.restoreActiveMonsterActors();
     this.doorById = Object.fromEntries(this.doorSpots.map((s) => [s.id, s]));
     this.placeById = { ...this.buildingById, ...this.decorationById, ...this.explorationPointById };
     this.upgradeVisualsById = {};
@@ -678,6 +718,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-open-town-log', this.openTownLog, this);
     this.game.events.on('gwg-open-help', this.openHelpPanel, this);
     this.game.events.on('gwg-open-more', this.openMobileMorePanel, this);
+    this.game.events.on('gwg-open-policies', this.showPolicyPanel, this);
     this.game.events.on('gwg-open-reset-confirm', this.openResetConfirmPanel, this);
     this.game.events.on('gwg-tutorial-next', this.advanceOnboardingFromUi, this);
     this.game.events.on('gwg-tutorial-skip', this.skipOnboarding, this);
@@ -694,6 +735,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-expand-land', this.expandLand, this);
     this.game.events.on('gwg-building-action', this.runBuildingAction, this);
     this.game.events.on('gwg-open-report', this.showCycleReport, this);
+    this.game.events.on('gwg-collect-loot', this.collectLootDrop, this);
     this.game.events.on('gwg-open-delete', this.openDeleteTool, this);
     this.game.events.on('gwg-confirm-build', this.confirmRoadPlan, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -709,6 +751,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-open-town-log', this.openTownLog, this);
       this.game.events.off('gwg-open-help', this.openHelpPanel, this);
       this.game.events.off('gwg-open-more', this.openMobileMorePanel, this);
+      this.game.events.off('gwg-open-policies', this.showPolicyPanel, this);
       this.game.events.off('gwg-open-reset-confirm', this.openResetConfirmPanel, this);
       this.game.events.off('gwg-tutorial-next', this.advanceOnboardingFromUi, this);
       this.game.events.off('gwg-tutorial-skip', this.skipOnboarding, this);
@@ -725,6 +768,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-expand-land', this.expandLand, this);
       this.game.events.off('gwg-building-action', this.runBuildingAction, this);
       this.game.events.off('gwg-open-report', this.showCycleReport, this);
+      this.game.events.off('gwg-collect-loot', this.collectLootDrop, this);
       this.game.events.off('gwg-open-delete', this.openDeleteTool, this);
       this.game.events.off('gwg-confirm-build', this.confirmRoadPlan, this);
     });
@@ -760,6 +804,7 @@ export default class TownScene extends Phaser.Scene {
         crises: parsed.crises || {},
         achievements: Array.isArray(parsed.achievements) ? parsed.achievements : [],
         pendingPolicy: parsed.pendingPolicy || null,
+        discoveredPois: Array.isArray(parsed.discoveredPois) ? parsed.discoveredPois : [],
         weeklyReport: parsed.weeklyReport || null,
         weekReportUnread: Boolean(parsed.weekReportUnread),
         weekTracker: parsed.weekTracker || null,
@@ -917,11 +962,19 @@ export default class TownScene extends Phaser.Scene {
       );
       const isNotice = decoration.id === 'notice_board';
       if (isNotice && guild) {
+        const guildFootprint = getBuildingCatalogEntry('guildhall')?.footprint || { w: 3, h: 2 };
+        const boardSpot = this.isBuilderCity && Number.isInteger(guild.gridX) && Number.isInteger(guild.gridY)
+          ? this.gridToVisual(guild.gridX + guildFootprint.w + 1, guild.gridY + guildFootprint.h - 1, { w: 1, h: 1 })
+          : { x: guild.x + 76, y: guild.y + 20 };
         return {
           ...decoration,
-          x: guild.x + 76,
-          y: guild.y + 20,
+          x: boardSpot.x,
+          y: boardSpot.y,
           pathNode: null,
+          interactionW: 118,
+          interactionH: 82,
+          interactionPriority: 390,
+          labelOffsetY: 6,
           isPlaced: true,
         };
       }
@@ -1208,13 +1261,15 @@ export default class TownScene extends Phaser.Scene {
       crises: { ...this.crises },
       achievements: [...(this.achievements || [])],
       pendingPolicy: this.pendingPolicy,
+      discoveredPois: [...(this.discoveredPois || [])],
       weeklyReport: this.weeklyReport,
       weekReportUnread: Boolean(this.weekReportUnread),
       weekTracker: this.weekTracker ? structuredClone(this.weekTracker) : null,
       monsterState: {
         lastAttackDay: Number(this.monsterState?.lastAttackDay) || 0,
         weekAttackCount: Number(this.monsterState?.weekAttackCount) || 0,
-        activeAttacks: Array.isArray(this.monsterState?.activeAttacks) ? this.monsterState.activeAttacks.slice(0, 3) : [],
+        activeAttacks: this.serializeMonsterActors(),
+        aftermathDrops: this.serializeAftermathDrops(),
       },
       tutorial: { ...this.tutorial },
       cityBuilder: {
@@ -1300,6 +1355,8 @@ export default class TownScene extends Phaser.Scene {
       actions: [
         { label: 'Help', event: 'gwg-open-help' },
         { label: 'Town Log', event: 'gwg-open-town-log' },
+        { label: 'Policies', event: 'gwg-open-policies' },
+        { label: 'Week Report', event: 'gwg-open-report' },
         { label: 'Town Ledger', event: 'gwg-open-ledger' },
         { label: 'Save', event: 'gwg-save' },
         { label: 'Reset...', event: 'gwg-open-reset-confirm', className: 'gwg-danger-action' },
@@ -1679,44 +1736,23 @@ export default class TownScene extends Phaser.Scene {
       },
     ];
 
-    const pendingPolicy = this.getPendingPolicy();
-    if (pendingPolicy) {
-      const age = this.getPendingPolicyAge();
-      sections.push({
-        title: `${pendingPolicy.title} - Pending`,
-        lines: [
-          pendingPolicy.description,
-          `Ignored for ${age} day${age === 1 ? '' : 's'}. Time continues either way.`,
-        ],
-      });
-    }
-
-    const rows = pendingPolicy ? pendingPolicy.options.map((option) => ({
-      title: option.label,
-      meta: 'Policy',
-      kind: option.id.includes('sponsored') || option.id.includes('sell') || option.id.includes('premium') ? 'shady' : 'fair',
-      lines: [option.summary, { text: option.text, className: 'gwg-muted' }],
-      actions: [{
-        label: 'Choose',
-        event: 'gwg-policy-choice',
-        id: option.id,
-      }],
-    })) : [];
-
     return {
       panelType: 'week-report',
-      title: report ? `Week ${report.week} Report` : (pendingPolicy ? 'Policy Pending' : 'Reports'),
+      title: report ? `Week ${report.week} Report` : 'Week Reports',
       subtitle: report
         ? `Days ${report.startDay}-${report.endDay} - ${report.headline}`
-        : 'Reports are weekly now; policies can wait, but consequences do not.',
+        : 'Reports are weekly now and never stop the town clock.',
       sections,
-      rows,
+      rows: [],
+      actions: this.getPendingPolicy()
+        ? [{ label: 'Open Policies', event: 'gwg-open-policies' }]
+        : [],
     };
   }
 
   showCycleReport() {
-    if (!this.weeklyReport && !this.getPendingPolicy()) {
-      this.game.events.emit('gwg-event', 'No week report or policy is pending. The scribe is enjoying a rare quiet minute.');
+    if (!this.weeklyReport) {
+      this.game.events.emit('gwg-event', 'No week report is ready yet. Policies have their own suspicious desk now.');
       return;
     }
     this.activeInspector = { type: 'report' };
@@ -1724,6 +1760,61 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.emit('gwg-inspector-open', this.getCycleReportPayload());
     this.weekReportUnread = false;
     this.updateTownNotice();
+  }
+
+  getPolicyPayload() {
+    const pendingPolicy = this.getPendingPolicy();
+    const age = this.getPendingPolicyAge();
+    const sections = pendingPolicy ? [
+      {
+        title: 'Pending Policy',
+        lines: [
+          pendingPolicy.description,
+          `Ignored for ${age} day${age === 1 ? '' : 's'}. Time continues; consequences slowly do paperwork.`,
+        ],
+      },
+    ] : [
+      {
+        title: 'Policies',
+        lines: [
+          'No policy is pending.',
+          'The council is resting, which is always how the next problem starts.',
+        ],
+      },
+    ];
+
+    const rows = pendingPolicy ? pendingPolicy.options.map((option) => ({
+      title: option.label,
+      meta: 'Policy Option',
+      kind: option.id.includes('sponsored') || option.id.includes('sell') || option.id.includes('premium') ? 'shady' : 'fair',
+      lines: [
+        option.summary,
+        { text: option.text, className: 'gwg-muted' },
+        ...Object.entries(option.deltas || {})
+          .filter(([, value]) => value)
+          .map(([key, value]) => `${key.charAt(0).toUpperCase() + key.slice(1)} ${value > 0 ? '+' : ''}${value}`),
+      ],
+      actions: [{
+        label: 'Choose Policy',
+        event: 'gwg-policy-choice',
+        id: option.id,
+      }],
+    })) : [];
+
+    return {
+      panelType: 'policy',
+      title: pendingPolicy ? 'Policy Pending' : 'Policies',
+      subtitle: pendingPolicy ? pendingPolicy.title : 'No active decisions',
+      sections,
+      rows,
+      actions: this.weeklyReport ? [{ label: 'Open Week Report', event: 'gwg-open-report' }] : [],
+    };
+  }
+
+  showPolicyPanel() {
+    this.activeInspector = { type: 'policies' };
+    this.clearSelection(false);
+    this.game.events.emit('gwg-inspector-open', this.getPolicyPayload());
   }
 
   // End-of-day is never a forced modal. Daily summaries are small; detailed
@@ -1836,7 +1927,7 @@ export default class TownScene extends Phaser.Scene {
     this.checkAchievements();
     this.refreshActivePanel();
     this.saveGame(false);
-    this.showCycleReport();
+    this.showPolicyPanel();
   }
 
   boostHeroGroup(group, changes, historyLine) {
@@ -2255,14 +2346,21 @@ export default class TownScene extends Phaser.Scene {
         if (!this.isRevealed(x, y)) continue;
         const state = this.getVisibilityState(x, y, activeSet);
         const hash = this.getTerrainHash(x, y, 23);
-        const tint = [
+        const activeTint = [
           0x5f9b45,
           0x6eaa50,
           0x557f3e,
           0x78964f,
         ][hash % 4];
-        const fillAlpha = state === 'active' ? 0.54 : 0.32;
-        const strokeAlpha = state === 'active' ? 0.1 : 0.06;
+        const memoryTint = [
+          0x2b4237,
+          0x31493c,
+          0x263845,
+          0x3f4b3d,
+        ][hash % 4];
+        const fillAlpha = state === 'active' ? 0.6 : 0.24;
+        const strokeAlpha = state === 'active' ? 0.14 : 0.05;
+        const tint = state === 'active' ? activeTint : memoryTint;
         const points = this.getVisualTilePoints(x, y);
         this.drawPolygon(g, points, tint, fillAlpha, 0xfff6dc, strokeAlpha, 1);
         if (hash % 13 === 0 && state === 'active') {
@@ -2359,6 +2457,8 @@ export default class TownScene extends Phaser.Scene {
     this.redrawIsoGroundLayer();
     this.redrawFog();
     this.updateExplorationPointVisibility();
+    this.updateAftermathVisibility();
+    this.updateMonsterActorVisibility();
   }
 
   // reveal a circle of tiles and refresh everything fog-dependent;
@@ -2785,10 +2885,10 @@ export default class TownScene extends Phaser.Scene {
           }
           const hash = this.getTerrainHash(x, y, 7);
           if (state === 'explored') {
-            this.drawPolygon(g, points, hash % 3 ? 0x1b2634 : 0x16202e, 0.42, 0x42506a, 0.16, 1);
+            this.drawPolygon(g, points, hash % 3 ? 0x101823 : 0x0d141e, 0.56, 0x42506a, 0.18, 1);
             if (hash % 6 === 0) {
               const center = this.gridTileVisualCenter(x, y);
-              g.fillStyle(0x66748d, 0.08);
+              g.fillStyle(0x66748d, 0.1);
               g.fillEllipse(
                 center.x + ((hash % 15) - 7),
                 center.y + (((hash >> 3) % 11) - 5),
@@ -2799,7 +2899,7 @@ export default class TownScene extends Phaser.Scene {
             continue;
           }
           const nearExplored = this.hasRevealedNeighbor(x, y, 1);
-          const alpha = (nearExplored ? 0.78 : 0.93) + (hash % 5) * 0.006;
+          const alpha = (nearExplored ? 0.86 : 0.96) + (hash % 5) * 0.004;
           this.drawPolygon(g, points, 0x030508, alpha, 0x111923, nearExplored ? 0.22 : 0.08, 1);
           if (nearExplored && hash % 5 === 0) {
             const center = this.gridTileVisualCenter(x, y);
@@ -2864,11 +2964,11 @@ export default class TownScene extends Phaser.Scene {
     if (!this.gridGraphics) return;
     this.gridGraphics.clear();
     if (this.useIsoRendering()) {
-      this.gridGraphics.lineStyle(1, 0xfff6dc, 0.16);
+      this.gridGraphics.lineStyle(1, 0xfff6dc, 0.24);
       for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
         for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
           if (!this.isRevealed(x, y)) continue;
-          this.drawPolygon(this.gridGraphics, this.getVisualTilePoints(x, y), null, 0, 0xfff6dc, 0.16, 1);
+          this.drawPolygon(this.gridGraphics, this.getVisualTilePoints(x, y), null, 0, 0xfff6dc, 0.24, 1);
         }
       }
       return;
@@ -4143,7 +4243,8 @@ export default class TownScene extends Phaser.Scene {
   applyInteractionDebugStyle(hit, color) {
     if (!import.meta.env.DEV || typeof window === 'undefined') return;
     if (!new URLSearchParams(window.location.search).has('hitboxes')) return;
-    hit.setFillStyle(color, 0.16).setStrokeStyle(1, color, 0.85);
+    hit.setFillStyle?.(color, 0.16);
+    hit.setStrokeStyle?.(1, color, 0.85);
   }
 
   registerWorldInteractionTarget(target) {
@@ -4444,6 +4545,7 @@ export default class TownScene extends Phaser.Scene {
     const activeSet = this.getActiveVisibilitySet();
     for (const point of Object.values(this.explorationPointById || {})) {
       const revealed = this.isRevealed(point.gridX, point.gridY);
+      if (revealed) this.discoveredPois?.add(point.id);
       const active = activeSet.has(gridKey(point.gridX, point.gridY));
       for (const obj of this.explorationPointObjectsById[point.id] || []) {
         obj.setVisible?.(revealed);
@@ -4488,7 +4590,7 @@ export default class TownScene extends Phaser.Scene {
     const y = board.y - (board.h || 60) - 18;
     const w = 116;
     const h = 32;
-    const container = this.add.container(x, y).setDepth(3600);
+    const container = this.add.container(x, y).setDepth(5450);
     const bg = this.add.graphics();
     const drawBg = (hover = false) => {
       bg.clear();
@@ -5428,6 +5530,14 @@ export default class TownScene extends Phaser.Scene {
     else if (this.activeInspector.type === 'report') this.showCycleReport();
     else if (this.activeInspector.type === 'townlog') this.openTownLog();
     else if (this.activeInspector.type === 'help') this.openHelpPanel();
+    else if (this.activeInspector.type === 'policies') this.showPolicyPanel();
+    else if (this.activeInspector.type === 'loot') {
+      const drop = this.aftermathDrops?.find((item) => item.id === this.activeInspector.id);
+      if (drop) this.showLootInspector(drop);
+    } else if (this.activeInspector.type === 'monster') {
+      const actor = this.activeMonsterActors?.find((item) => item.id === this.activeInspector.id);
+      if (actor) this.showMonsterInspector(actor);
+    }
     else if (this.activeInspector.type === 'onboarding') this.maybeShowOnboarding(true);
     else if (this.activeInspector.type === 'place') {
       const place = this.placeById?.[this.activeInspector.id];
@@ -6660,7 +6770,7 @@ export default class TownScene extends Phaser.Scene {
     if (!important && this.activeBubbles >= maxBubbles) return;
     if (!important && this.hasNearbyBubble(hero)) return;
     if (important && this.activeBubbles >= maxBubbles) this.clearOldestBubble();
-    if (important) this.importantChatterUntil = this.time.now + 2800;
+    if (important) this.importantChatterUntil = this.time.now + 3800;
 
     this.clearHeroBubble(hero);
     hero.container.setAlpha(1);
@@ -6703,7 +6813,7 @@ export default class TownScene extends Phaser.Scene {
 
     this.tweens.add({ targets: bubble, scale: 1, duration: 180, ease: 'Back.easeOut' });
     hero.bubbleTimer = this.time.delayedCall(
-      important ? 3400 : 2600,
+      important ? IMPORTANT_BUBBLE_DURATION_MS : IDLE_BUBBLE_DURATION_MS,
       () => this.clearHeroBubble(hero, true),
     );
   }
@@ -6745,6 +6855,478 @@ export default class TownScene extends Phaser.Scene {
       const label = `${value > 0 ? '+' : ''}${value}${RES_SHORT[key]}`;
       this.time.delayedCall(i * 260, () => this.floatText(x, y - i * 6, label, RES_COLORS[key]));
       i += 1;
+    }
+  }
+
+  normalizeAftermathDrops(drops = []) {
+    return (Array.isArray(drops) ? drops : [])
+      .filter((drop) => drop?.id && Number.isFinite(Number(drop.x)) && Number.isFinite(Number(drop.y)))
+      .map((drop) => ({
+        id: String(drop.id),
+        kind: drop.kind || 'loot',
+        name: drop.name || 'Monster Drop',
+        assetKey: drop.assetKey || 'loot_bag_small',
+        fallbackKey: drop.fallbackKey || 'object_coin_pile',
+        x: Number(drop.x),
+        y: Number(drop.y),
+        gridX: Number.isInteger(drop.gridX) ? drop.gridX : null,
+        gridY: Number.isInteger(drop.gridY) ? drop.gridY : null,
+        gold: Math.max(0, Number(drop.gold) || 0),
+        monsterName: drop.monsterName || 'Monster',
+        createdDay: Number(drop.createdDay) || this.day,
+        expiresDay: Number(drop.expiresDay) || this.day + 4,
+        collected: Boolean(drop.collected),
+      }))
+      .filter((drop) => !drop.collected && drop.expiresDay >= this.day - 1)
+      .slice(-16);
+  }
+
+  serializeAftermathDrops() {
+    return this.normalizeAftermathDrops(this.aftermathDrops).map((drop) => ({
+      id: drop.id,
+      kind: drop.kind,
+      name: drop.name,
+      assetKey: drop.assetKey,
+      fallbackKey: drop.fallbackKey,
+      x: Math.round(drop.x),
+      y: Math.round(drop.y),
+      gridX: drop.gridX,
+      gridY: drop.gridY,
+      gold: drop.gold,
+      monsterName: drop.monsterName,
+      createdDay: drop.createdDay,
+      expiresDay: drop.expiresDay,
+      collected: drop.collected,
+    }));
+  }
+
+  serializeMonsterActors() {
+    return (this.activeMonsterActors || [])
+      .filter((actor) => actor?.container?.active)
+      .slice(0, 4)
+      .map((actor) => ({
+        id: actor.id,
+        monsterId: actor.monster.id,
+        monster: {
+          id: actor.monster.id,
+          name: actor.monster.name,
+          assetKey: actor.monster.assetKey,
+          power: actor.monster.power,
+          threat: actor.monster.threat,
+          speed: actor.monster.speed,
+          flavour: actor.monster.flavour,
+        },
+        x: Math.round(actor.container.x),
+        y: Math.round(actor.container.y),
+        target: actor.target ? {
+          id: actor.target.id,
+          name: actor.target.name,
+          x: Math.round(actor.target.x),
+          y: Math.round(actor.target.y),
+        } : null,
+        state: actor.state || 'roaming',
+        intent: actor.intent || 'Looking for public infrastructure.',
+        createdDay: actor.createdDay || this.day,
+      }));
+  }
+
+  buildAftermathDrops() {
+    this.aftermathDropObjectsById = {};
+    this.aftermathDrops = this.normalizeAftermathDrops(this.aftermathDrops);
+    for (const drop of this.aftermathDrops) this.renderAftermathDrop(drop);
+  }
+
+  getVisibleDropAlpha(drop) {
+    if (!this.isBuilderCity || !Number.isInteger(drop.gridX) || !Number.isInteger(drop.gridY)) return 1;
+    const activeSet = this.getActiveVisibilitySet();
+    if (!this.isRevealed(drop.gridX, drop.gridY)) return 0;
+    return activeSet.has(gridKey(drop.gridX, drop.gridY)) ? 1 : 0.52;
+  }
+
+  renderAftermathDrop(drop) {
+    if (!drop || this.aftermathDropObjectsById?.[drop.id]) return;
+    this.aftermathDropObjectsById = this.aftermathDropObjectsById || {};
+    const textureKey = resolveTexture(this, drop.assetKey, drop.fallbackKey || 'object_coin_pile') || 'crate';
+    const source = this.textures.get(textureKey)?.getSourceImage?.();
+    const scale = source?.height ? Phaser.Math.Clamp(34 / source.height, 0.32, 0.95) : 0.65;
+    const container = this.add.container(drop.x, drop.y).setDepth(drop.y + 64);
+    const shadow = this.add.ellipse(0, -4, 34, 9, 0x10151d, 0.22);
+    const sprite = this.add.image(0, -8, textureKey).setOrigin(0.5, 1).setScale(scale);
+    const label = this.add.text(0, -44, drop.kind === 'corpse' ? 'Remains' : `${drop.gold}g`, {
+      fontFamily: '"Courier New", monospace',
+      fontSize: '9px',
+      fontStyle: 'bold',
+      color: drop.kind === 'corpse' ? '#d4dae2' : '#ffe08a',
+      stroke: '#0c1118',
+      strokeThickness: 2,
+      backgroundColor: '#0f1521aa',
+      padding: { x: 3, y: 1 },
+    }).setOrigin(0.5, 1).setAlpha(0.86);
+    container.add([shadow, sprite, label]);
+    container.setSize(54, 54);
+    container.setInteractive(new Phaser.Geom.Rectangle(-27, -54, 54, 54), Phaser.Geom.Rectangle.Contains);
+    container.on('pointerup', (pointer) => {
+      if (this.wasDragGesture(pointer)) return;
+      this.selectWorldInteractionTarget(pointer);
+    });
+    const target = {
+      id: drop.id,
+      type: 'loot',
+      hit: container,
+      img: container,
+      width: 54,
+      height: 54,
+      loot: drop,
+      getCenter: () => ({ x: container.x, y: container.y - 28 }),
+      onHoverIn: () => sprite.setTint(0xfff3c0),
+      onHoverOut: () => sprite.clearTint?.(),
+      onSelect: () => this.showLootInspector(drop),
+    };
+    this.registerWorldInteractionTarget(target);
+    this.aftermathDropObjectsById[drop.id] = { container, sprite, label, target };
+    const alpha = this.getVisibleDropAlpha(drop);
+    container.setVisible(alpha > 0);
+    container.setAlpha(alpha);
+  }
+
+  updateAftermathVisibility() {
+    if (!this.aftermathDropObjectsById) return;
+    for (const drop of this.aftermathDrops || []) {
+      const bundle = this.aftermathDropObjectsById[drop.id];
+      if (!bundle?.container) continue;
+      const alpha = this.getVisibleDropAlpha(drop);
+      bundle.container.setVisible(alpha > 0);
+      bundle.container.setAlpha(alpha);
+    }
+  }
+
+  showLootInspector(drop) {
+    if (!drop || drop.collected) return;
+    this.activeInspector = { type: 'loot', id: drop.id };
+    this.game.events.emit('gwg-inspector-open', {
+      panelType: 'loot',
+      title: drop.name,
+      subtitle: `${drop.monsterName} aftermath`,
+      sections: [
+        {
+          title: drop.kind === 'corpse' ? 'Remains' : 'Loot',
+          lines: [
+            drop.kind === 'corpse'
+              ? 'Evidence that the town briefly defended itself.'
+              : `${drop.gold} gold is lying here with questionable legal ownership.`,
+            drop.kind === 'corpse'
+              ? 'Remains fade after a few days.'
+              : 'Heroes may grab it, or the player can collect it before the economy forms opinions.',
+          ],
+        },
+      ],
+      actions: drop.kind === 'corpse' ? [] : [{
+        label: `Collect ${drop.gold}g`,
+        event: 'gwg-collect-loot',
+        id: drop.id,
+      }],
+    });
+  }
+
+  collectLootDrop(id, collector = null) {
+    const drop = this.aftermathDrops?.find((item) => item.id === id && !item.collected);
+    if (!drop || drop.kind === 'corpse') return false;
+    drop.collected = true;
+    const gold = Math.max(1, drop.gold || 12);
+    this.applyDeltas({ gold, morale: collector ? 1 : 0 });
+    if (collector) {
+      collector.stats.gold = (collector.stats.gold || 0) + gold;
+      collector.stats.fame = Phaser.Math.Clamp((collector.stats.fame || 0) + 1, 0, 100);
+      this.addHeroHistory(collector, `Collected ${drop.name} after ${drop.monsterName}.`);
+      this.say(collector, 'Loot secured.', true);
+    }
+    this.addTownLog(`${collector ? `${collector.def.name} collected` : 'Collected'} ${drop.name}: +${gold}g.`, 'monster');
+    this.addReportLine('monsters', `${drop.name} collected for ${gold}g.`);
+    this.game.events.emit('gwg-event', Phaser.Utils.Array.GetRandom(LOOT_PICKUP_LINES));
+    this.floatText(drop.x, drop.y - 48, `+${gold}g`, '#ffe08a');
+    const bundle = this.aftermathDropObjectsById?.[drop.id];
+    if (bundle?.container) bundle.container.destroy(true);
+    this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== drop.id);
+    delete this.aftermathDropObjectsById?.[drop.id];
+    this.aftermathDrops = this.normalizeAftermathDrops(this.aftermathDrops).filter((item) => item.id !== drop.id);
+    this.saveGame(false);
+    if (this.activeInspector?.type === 'loot') this.game.events.emit('gwg-inspector-close');
+    return true;
+  }
+
+  cleanupAftermathDrops() {
+    for (const drop of [...(this.aftermathDrops || [])]) {
+      if (drop.expiresDay >= this.day && !drop.collected) continue;
+      const bundle = this.aftermathDropObjectsById?.[drop.id];
+      if (bundle?.container) bundle.container.destroy(true);
+      this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== drop.id);
+      delete this.aftermathDropObjectsById?.[drop.id];
+    }
+    this.aftermathDrops = this.normalizeAftermathDrops(this.aftermathDrops).filter((drop) => drop.expiresDay >= this.day && !drop.collected);
+  }
+
+  createMonsterAftermath(monster, x, y, defeated = true, hero = null) {
+    const baseId = `${this.day}-${monster.id}-${Math.floor(Math.random() * 100000)}`;
+    const cell = this.worldToBuildGrid(x, y);
+    if (!defeated) {
+      const debrisKey = Phaser.Utils.Array.GetRandom(['broken_sword', 'broken_shield', 'suspicious_coupon_drop']);
+      const debris = {
+        id: `debris-${baseId}`,
+        kind: 'corpse',
+        name: 'Attack Debris',
+        assetKey: debrisKey,
+        fallbackKey: 'crate',
+        x,
+        y: y + 8,
+        gridX: cell.x,
+        gridY: cell.y,
+        gold: 0,
+        monsterName: monster.name,
+        createdDay: this.day,
+        expiresDay: this.day + 3,
+      };
+      this.aftermathDrops.push(debris);
+      this.renderAftermathDrop(debris);
+      return;
+    }
+    const remainsKey = MONSTER_REMAINS_BY_ID[monster.id] || (monster.id.includes('skeleton') ? 'corpse_skeleton_bones' : 'corpse_goblin_remains');
+    const corpse = {
+      id: `corpse-${baseId}`,
+      kind: 'corpse',
+      name: `${monster.name} Remains`,
+      assetKey: remainsKey,
+      fallbackKey: remainsKey === 'corpse_slime_puddle' ? 'rock' : 'object_rock_02',
+      x: x - 12,
+      y: y + 6,
+      gridX: cell.x,
+      gridY: cell.y,
+      gold: 0,
+      monsterName: monster.name,
+      createdDay: this.day,
+      expiresDay: this.day + 4,
+    };
+    this.aftermathDrops.push(corpse);
+    this.renderAftermathDrop(corpse);
+
+    const premium = ['premium_goblin', 'debt_wraith', 'refund_ghost', 'loot_mimic', 'audit_imp', 'coin_golem'].includes(monster.id);
+    const lootKeys = premium ? PREMIUM_MONSTER_LOOT_KEYS : MONSTER_LOOT_KEYS;
+    const lootKey = Phaser.Utils.Array.GetRandom(lootKeys);
+    const gold = Math.max(10, Math.floor((monster.reward || monster.threat * 18) * Phaser.Math.FloatBetween(0.28, 0.55)));
+    const loot = {
+      id: `loot-${baseId}`,
+      kind: 'loot',
+      name: premium ? 'Suspicious Premium Drop' : 'Monster Loot Bag',
+      assetKey: lootKey,
+      fallbackKey: lootKey.includes('coin') ? 'object_coin_pile' : 'crate',
+      x: x + 14,
+      y: y + 10,
+      gridX: cell.x,
+      gridY: cell.y,
+      gold,
+      monsterName: monster.name,
+      createdDay: this.day,
+      expiresDay: this.day + 5,
+    };
+    this.aftermathDrops.push(loot);
+    this.renderAftermathDrop(loot);
+    this.floatText(loot.x, loot.y - 42, 'LOOT', '#ffe08a');
+    this.sendHeroToLoot(loot, hero);
+  }
+
+  sendHeroToLoot(drop, preferredHero = null) {
+    if (!drop || drop.kind === 'corpse') return;
+    const candidates = this.getActiveHeroes()
+      .filter((hero) => hero.state !== 'inside' && hero.state !== 'away')
+      .sort((a, b) => (
+        Phaser.Math.Distance.Between(a.container.x, a.container.y, drop.x, drop.y)
+        - Phaser.Math.Distance.Between(b.container.x, b.container.y, drop.x, drop.y)
+      ));
+    const hero = preferredHero?.state !== 'away' ? preferredHero : candidates[0];
+    if (!hero) return;
+    const delay = Phaser.Math.Between(1100, 2600);
+    this.time.delayedCall(delay, () => {
+      if (!this.aftermathDrops?.some((item) => item.id === drop.id && !item.collected)) return;
+      this.walkTo(hero, {
+        id: drop.id,
+        name: drop.name,
+        x: drop.x,
+        y: drop.y,
+        h: 30,
+      }, () => {
+        this.collectLootDrop(drop.id, hero);
+        this.scheduleAmbient(hero, Phaser.Math.Between(1800, 3800));
+      });
+    });
+  }
+
+  spawnMonsterActor(monster, target, spawn = null) {
+    const start = spawn || target || { x: PLAZA.x, y: PLAZA.y };
+    const textureKey = this.textures.exists(monster.assetKey)
+      ? monster.assetKey
+      : resolveTexture(this, 'icon_warning', 'chevron');
+    const source = this.textures.get(textureKey)?.getSourceImage?.();
+    const scale = source?.height ? Phaser.Math.Clamp(44 / source.height, 0.32, 1.2) : 1;
+    const actor = {
+      id: `monster-${this.day}-${monster.id}-${Math.floor(Math.random() * 100000)}`,
+      monster: { ...monster },
+      target,
+      state: 'roaming',
+      intent: target ? `Moving toward ${target.name}.` : 'Roaming the fog edge.',
+      createdDay: this.day,
+    };
+    const container = this.add.container(start.x, start.y).setDepth(start.y + 75);
+    const shadow = this.add.ellipse(0, -4, 34, 10, 0x10151d, 0.24);
+    const sprite = this.add.image(0, -10, textureKey).setOrigin(0.5, 1).setScale(scale);
+    const label = this.add.text(0, -52, monster.name, {
+      fontFamily: '"Courier New", monospace',
+      fontSize: '9px',
+      fontStyle: 'bold',
+      color: '#ffd0cc',
+      stroke: '#0c1118',
+      strokeThickness: 2,
+      backgroundColor: '#301820cc',
+      padding: { x: 4, y: 1 },
+      wordWrap: { width: 90 },
+    }).setOrigin(0.5, 1).setAlpha(0.88);
+    container.add([shadow, sprite, label]);
+    container.setSize(58, 68);
+    container.setInteractive(new Phaser.Geom.Rectangle(-29, -68, 58, 68), Phaser.Geom.Rectangle.Contains);
+    container.on('pointerup', (pointer) => {
+      if (this.wasDragGesture(pointer)) return;
+      this.selectWorldInteractionTarget(pointer);
+    });
+    actor.container = container;
+    actor.sprite = sprite;
+    actor.label = label;
+    actor.targetEntry = this.registerWorldInteractionTarget({
+      id: actor.id,
+      type: 'monster',
+      hit: container,
+      img: container,
+      width: 58,
+      height: 68,
+      actor,
+      getCenter: () => ({ x: container.x, y: container.y - 34 }),
+      onHoverIn: () => sprite.setTint(0xffd0cc),
+      onHoverOut: () => sprite.clearTint?.(),
+      onSelect: () => this.showMonsterInspector(actor),
+    });
+    this.applyInteractionDebugStyle(container, 0xe74c3c);
+    this.activeMonsterActors.push(actor);
+    this.tweens.add({
+      targets: sprite,
+      y: -16,
+      duration: Phaser.Math.Between(520, 780),
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    return actor;
+  }
+
+  restoreActiveMonsterActors() {
+    const records = Array.isArray(this.monsterState?.activeAttacks) ? this.monsterState.activeAttacks : [];
+    for (const record of records.slice(0, 3)) {
+      const monster = record.monster || { id: record.monsterId || 'goblin_raider', name: 'Roaming Monster', assetKey: 'monster_goblin_raider', power: 6, threat: 2 };
+      const target = record.target || this.getOperationalPlace('guildhall') || { id: 'guildhall', name: 'Guild Hall', x: PLAZA.x, y: PLAZA.y };
+      const actor = this.spawnMonsterActor(monster, target, { x: Number(record.x) || target.x, y: Number(record.y) || target.y });
+      actor.state = record.state || 'roaming';
+      actor.intent = record.intent || `Still looking at ${target.name}.`;
+      actor.createdDay = Number(record.createdDay) || this.day;
+    }
+  }
+
+  showMonsterInspector(actor) {
+    if (!actor?.monster) return;
+    this.activeInspector = { type: 'monster', id: actor.id };
+    this.game.events.emit('gwg-inspector-open', {
+      panelType: 'monster',
+      title: actor.monster.name,
+      subtitle: actor.state === 'attacking' ? 'Attacking Town' : 'Roaming Threat',
+      sections: [
+        {
+          title: 'Threat',
+          lines: [
+            `Power: ${actor.monster.power || actor.monster.threat * 4}`,
+            `Intent: ${actor.intent || 'Finding the nearest bad idea.'}`,
+            `Target: ${actor.target?.name || 'Unknown'}`,
+            actor.monster.flavour,
+          ].filter(Boolean),
+        },
+        {
+          title: 'Response',
+          lines: [
+            'Heroes respond one by one if available.',
+            'Watchtowers, Training Yard, Arena, and Blacksmith improve defense odds.',
+          ],
+        },
+      ],
+    });
+  }
+
+  updateMonsterActorVisibility() {
+    if (!this.activeMonsterActors?.length || !this.isBuilderCity) return;
+    const activeSet = this.getActiveVisibilitySet();
+    for (const actor of this.activeMonsterActors) {
+      if (!actor?.container?.active) continue;
+      const cell = this.worldToBuildGrid(actor.container.x, actor.container.y);
+      const revealed = this.isRevealed(cell.x, cell.y);
+      const active = revealed && activeSet.has(gridKey(cell.x, cell.y));
+      actor.container.setVisible(revealed);
+      actor.container.setAlpha(revealed ? (active ? 1 : 0.55) : 0);
+    }
+  }
+
+  moveMonsterActor(actor, target, onComplete = null) {
+    if (!actor?.container || !target) {
+      onComplete?.();
+      return;
+    }
+    actor.state = 'attacking';
+    actor.intent = `Attacking ${target.name}.`;
+    const startX = actor.container.x;
+    const startY = actor.container.y;
+    const mid = {
+      x: (startX + target.x) / 2 + Phaser.Math.Between(-54, 54),
+      y: (startY + target.y) / 2 + Phaser.Math.Between(-22, 28),
+    };
+    const speed = Math.max(0.55, actor.monster.speed || 1);
+    this.tweens.add({
+      targets: actor.container,
+      x: mid.x,
+      y: mid.y,
+      duration: 620 / speed,
+      ease: 'Sine.easeInOut',
+      onUpdate: () => actor.container.setDepth(actor.container.y + 75),
+      onComplete: () => {
+        this.tweens.add({
+          targets: actor.container,
+          x: target.x,
+          y: target.y - 8,
+          duration: 1150 / speed,
+          ease: 'Sine.easeInOut',
+          onUpdate: () => actor.container.setDepth(actor.container.y + 75),
+          onComplete,
+        });
+      },
+    });
+  }
+
+  clearMonsterActor(actor, fade = true) {
+    if (!actor) return;
+    this.activeMonsterActors = (this.activeMonsterActors || []).filter((item) => item !== actor);
+    this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== actor.id);
+    if (!actor.container?.active) return;
+    if (fade) {
+      this.tweens.add({
+        targets: actor.container,
+        alpha: 0,
+        scale: 0.72,
+        duration: 360,
+        onComplete: () => actor.container.destroy(true),
+      });
+    } else {
+      actor.container.destroy(true);
     }
   }
 
@@ -6926,11 +7508,13 @@ export default class TownScene extends Phaser.Scene {
     this.addReportLine('monsters', attackText);
     this.game.events.emit('gwg-event', attackText);
     this.floatText(target.x, target.y - (target.h || 42) - 40, 'MONSTER', '#f0938f');
-    this.showMonsterAttack(monster, target, spawn);
+    const monsterActor = this.spawnMonsterActor(monster, target, spawn);
+    this.moveMonsterActor(monsterActor, target);
 
     const responders = this.getMonsterResponders(target);
     const defenseBonus = this.getDefenseBonus();
     let defeated = false;
+    let winningHero = null;
     let remainingPower = Math.max(3, monster.power || monster.threat * 4);
     const deltas = { gold: 0, trust: 0, morale: 0, threat: 0, corruption: 0 };
     const stepLines = [];
@@ -6953,6 +7537,7 @@ export default class TownScene extends Phaser.Scene {
       });
       if (wonThisRound) {
         defeated = true;
+        winningHero = hero;
         const gold = Math.max(12, monster.reward || monster.threat * 18);
         deltas.gold += gold;
         deltas.threat += monster.threatImpact || -Math.max(2, monster.threat * 2);
@@ -6995,6 +7580,10 @@ export default class TownScene extends Phaser.Scene {
     if (!defeated) this.floatText(target.x, target.y - (target.h || 42) - 58, 'DAMAGED', '#e74c3c');
     else this.floatText(target.x, target.y - (target.h || 42) - 58, 'DEFENDED', '#7fdc93');
     if (forced || chance > 0.28) this.stats.threatEventsSurvived = (this.stats.threatEventsSurvived || 0) + 1;
+    this.time.delayedCall(1800 + responseIndex * 620, () => {
+      this.createMonsterAftermath(monster, target.x, target.y, defeated, winningHero);
+      this.clearMonsterActor(monsterActor);
+    });
     return true;
   }
 
@@ -7032,7 +7621,7 @@ export default class TownScene extends Phaser.Scene {
         const line = this.pickHeroLine(hero, lines);
         if (line) this.say(hero, line);
       }
-      this.time.delayedCall(Phaser.Math.Between(4200, 8200), chatter);
+      this.time.delayedCall(Phaser.Math.Between(8000, 25000), chatter);
     };
     this.time.delayedCall(2600, chatter);
   }
@@ -7068,6 +7657,12 @@ export default class TownScene extends Phaser.Scene {
     // depth-sort heroes by their feet; talking heroes pop above rooftops
     for (const hero of this.heroes) {
       hero.container.setDepth(hero.container.y + (hero.bubble ? 800 : 0));
+    }
+    for (const actor of this.activeMonsterActors || []) {
+      if (actor?.container?.active) actor.container.setDepth(actor.container.y + 75);
+    }
+    for (const bundle of Object.values(this.aftermathDropObjectsById || {})) {
+      if (bundle?.container?.active) bundle.container.setDepth(bundle.container.y + 64);
     }
 
     if (!this.cycleRunning && this.simulationSpeed > 0 && !this.buildMode) {
@@ -7409,13 +8004,15 @@ export default class TownScene extends Phaser.Scene {
   }
 
   chooseExplorationAction(hero) {
-    if (!this.isBuildingPlaced('dungeon')) return null;
+    if (!this.isBuilderCity || !this.revealedTiles) return null;
     const watchtower = this.getPlaceLevel(this.buildingById.watchtower);
     const guildhall = this.getPlaceLevel(this.buildingById.guildhall);
+    const dungeon = this.getPlaceLevel(this.buildingById.dungeon);
     const threatPull = Phaser.Math.Clamp((this.resources.threat - 35) * 0.005, 0, 0.22);
     const scoutingSupport = Math.min(0.08, guildhall * 0.015 + watchtower * 0.025);
     const brave = this.isHonestHero(hero.def) || this.isVeteranHero(hero.def);
-    const chance = Phaser.Math.Clamp(EXPLORATION_CHANCE + threatPull + scoutingSupport + (brave ? 0.08 : 0), 0.12, 0.58);
+    const base = dungeon > 0 ? EXPLORATION_CHANCE : EXPLORATION_CHANCE * 0.55;
+    const chance = Phaser.Math.Clamp(base + threatPull + scoutingSupport + (brave ? 0.08 : 0), 0.08, 0.58);
     if (Math.random() > chance) return null;
     const monster = rollMonster();
     const spot = this.getExplorationSpot(hero);
@@ -7813,6 +8410,7 @@ export default class TownScene extends Phaser.Scene {
       this.checkTownIdentity();
       this.checkAchievements();
       this.maybeOfferPolicy();
+      this.cleanupAftermathDrops();
       const weekReady = this.makeWeeklyReportIfDue();
       this.publishTownHint();
       this.refreshActivePanel();

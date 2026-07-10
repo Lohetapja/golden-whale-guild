@@ -1,6 +1,8 @@
 export const INTERACTION_PRIORITY = {
   building: 400,
+  monster: 360,
   hero: 300,
+  loot: 260,
   decoration: 200,
   fallback: 100,
 };

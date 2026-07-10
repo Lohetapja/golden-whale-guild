@@ -460,9 +460,10 @@ export default class UIScene extends Phaser.Scene {
   }
 
   buildTownLedgerButton() {
-    this.makeUtilityButton(58, HEIGHT - 64, 'Help', 'gwg-open-help', 72);
-    this.makeUtilityButton(154, HEIGHT - 64, 'Town Log', 'gwg-open-town-log', 100);
-    this.makeUtilityButton(278, HEIGHT - 64, 'Town Ledger', 'gwg-open-ledger', 122);
+    this.makeUtilityButton(48, HEIGHT - 64, 'Help', 'gwg-open-help', 58);
+    this.makeUtilityButton(128, HEIGHT - 64, 'Town Log', 'gwg-open-town-log', 88);
+    this.makeUtilityButton(210, HEIGHT - 64, 'Policy', 'gwg-open-policies', 66);
+    this.makeUtilityButton(304, HEIGHT - 64, 'Ledger', 'gwg-open-ledger', 92);
   }
 
   buildTimeControls() {
@@ -990,29 +991,41 @@ export default class UIScene extends Phaser.Scene {
     });
   }
 
-  // compact clickable "! Policy Pending" / "! Week Report Ready"
-  // badge inside the top bar, left of the Day counter; opens the report panel
+  // compact clickable policy/report badges inside the top bar, left of the Day counter.
   updateNoticeBadge(value) {
     const notice = String(value || '');
     const M = this.rsp?.compact;
-    if (!this.noticeBadge) {
-      this.noticeBadge = this.add.text(0, 0, '', {
+    const makeBadge = (key, eventName, color = '#f6c945') => {
+      if (this[key]) return this[key];
+      const badge = this.add.text(0, 0, '', {
         fontFamily: FONT,
         fontSize: M ? this.rsp.font(10) : '11px',
         fontStyle: 'bold',
         color: '#141a24',
-        backgroundColor: '#f6c945',
+        backgroundColor: color,
         padding: { x: 7, y: 4 },
       }).setOrigin(1, 0.5).setDepth(6900)
         .setInteractive({ useHandCursor: true })
         .setVisible(false);
-      this.noticeBadge.on('pointerup', () => this.game.events.emit('gwg-open-report'));
+      badge.on('pointerup', () => this.game.events.emit(eventName));
+      this[key] = badge;
+      return badge;
+    };
+    const policyBadge = makeBadge('policyNoticeBadge', 'gwg-open-policies', '#f0938f');
+    const reportBadge = makeBadge('reportNoticeBadge', 'gwg-open-report', '#f6c945');
+    const hasPolicy = notice.includes('Policy');
+    const hasReport = notice.includes('Week Report');
+    let x = this.dayText.x - this.dayText.width - (M ? this.rsp.size(12) : 14);
+    reportBadge.setVisible(hasReport);
+    if (hasReport) {
+      reportBadge.setText('! Week Report');
+      reportBadge.setPosition(x, this.dayText.y);
+      x -= reportBadge.width + (M ? this.rsp.size(6) : 8);
     }
-    this.noticeBadge.setVisible(Boolean(notice));
-    if (notice) {
-      this.noticeBadge
-        .setText(`! ${notice}`)
-        .setPosition(this.dayText.x - this.dayText.width - (M ? this.rsp.size(12) : 14), this.dayText.y);
+    policyBadge.setVisible(hasPolicy);
+    if (hasPolicy) {
+      policyBadge.setText('! Policy');
+      policyBadge.setPosition(x, this.dayText.y);
     }
     this.policyPending = notice.includes('Policy');
     if (this.cycleLabel && this.cycleLabel.text !== 'Resolving...') {

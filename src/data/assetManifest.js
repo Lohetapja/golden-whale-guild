@@ -163,6 +163,14 @@ export const ASSET_MANIFEST = [
   { key: 'icon_protest', path: 'assets/icons/icon_warning.png', type: 'image', fallback: 'protest marker fallback' },
   { key: 'icon_locked', path: 'assets/icons/icon_warning.png', type: 'image', fallback: 'locked text fallback' },
   { key: 'icon_max', path: 'assets/icons/icon_upgrade.png', type: 'image', fallback: 'MAX text fallback' },
+  { key: 'icon_policy', path: 'assets/icons/icon_policy.png', type: 'image', fallback: 'policy text fallback' },
+  { key: 'icon_week_report', path: 'assets/icons/icon_week_report.png', type: 'image', fallback: 'week report text fallback' },
+  { key: 'icon_monster_alert', path: 'assets/icons/icon_monster_alert.png', type: 'image', fallback: 'monster alert text fallback' },
+  { key: 'icon_explore', path: 'assets/icons/icon_explore.png', type: 'image', fallback: 'explore text fallback' },
+  { key: 'icon_loot', path: 'assets/icons/icon_loot.png', type: 'image', fallback: 'loot text fallback' },
+  { key: 'icon_corpse', path: 'assets/icons/icon_corpse.png', type: 'image', fallback: 'corpse text fallback' },
+  { key: 'icon_danger', path: 'assets/icons/icon_danger.png', type: 'image', fallback: 'danger text fallback' },
+  { key: 'icon_fog', path: 'assets/icons/icon_fog.png', type: 'image', fallback: 'fog text fallback' },
 
   // --- tiles ---------------------------------------------------------------
   { key: 'tileset_town_basic', path: 'assets/tiles/tileset_town_basic.png', type: 'image', fallback: 'generated terrain graphics' },
@@ -232,6 +240,37 @@ export const ASSET_MANIFEST = [
   { key: 'monster_bandit', path: 'assets/monsters/monster_bandit.png', type: 'image', fallback: 'event text and warning marker' },
   { key: 'monster_wolf', path: 'assets/monsters/monster_wolf.png', type: 'image', fallback: 'event text and warning marker' },
   { key: 'monster_coin_golem', path: 'assets/monsters/monster_coin_golem.png', type: 'image', fallback: 'event text and warning marker' },
+
+  // --- monster remains, loot, and encounter aftermath -----------------------
+  { key: 'corpse_goblin_remains', path: 'assets/objects/corpse_goblin_remains.png', type: 'image', fallback: 'object_rock_02' },
+  { key: 'corpse_skeleton_bones', path: 'assets/objects/corpse_skeleton_bones.png', type: 'image', fallback: 'object_rock_02' },
+  { key: 'corpse_slime_puddle', path: 'assets/objects/corpse_slime_puddle.png', type: 'image', fallback: 'object_rock_mossy' },
+  { key: 'loot_bag_small', path: 'assets/objects/loot_bag_small.png', type: 'image', fallback: 'object_coin_pile' },
+  { key: 'loot_bag_premium', path: 'assets/objects/loot_bag_premium.png', type: 'image', fallback: 'object_coin_pile_02' },
+  { key: 'coin_pile_small', path: 'assets/objects/coin_pile_small.png', type: 'image', fallback: 'object_coin_pile' },
+  { key: 'broken_sword', path: 'assets/objects/broken_sword.png', type: 'image', fallback: 'object_anvil' },
+  { key: 'broken_shield', path: 'assets/objects/broken_shield.png', type: 'image', fallback: 'object_crate' },
+  { key: 'monster_drop_chest', path: 'assets/objects/monster_drop_chest.png', type: 'image', fallback: 'object_crate_stack' },
+  { key: 'suspicious_coupon_drop', path: 'assets/objects/suspicious_coupon_drop.png', type: 'image', fallback: 'item_cursed_coupon' },
+
+  // --- discoverable map points / POIs ---------------------------------------
+  { key: 'poi_goblin_camp', path: 'assets/pois/poi_goblin_camp.png', type: 'image', fallback: 'object_campfire' },
+  { key: 'poi_skeleton_ruins', path: 'assets/pois/poi_skeleton_ruins.png', type: 'image', fallback: 'object_statue' },
+  { key: 'poi_slime_pit', path: 'assets/pois/poi_slime_pit.png', type: 'image', fallback: 'corpse_slime_puddle' },
+  { key: 'poi_old_watch_post', path: 'assets/pois/poi_old_watch_post.png', type: 'image', fallback: 'building_watchtower' },
+  { key: 'poi_abandoned_cart', path: 'assets/pois/poi_abandoned_cart.png', type: 'image', fallback: 'object_cart' },
+  { key: 'poi_loot_cave', path: 'assets/pois/poi_loot_cave.png', type: 'image', fallback: 'monster_loot_mimic' },
+  { key: 'poi_rngesus_shrine', path: 'assets/pois/poi_rngesus_shrine.png', type: 'image', fallback: 'building_rngesus_shrine' },
+  { key: 'poi_premium_ruin', path: 'assets/pois/poi_premium_ruin.png', type: 'image', fallback: 'object_vip_sign' },
+  { key: 'poi_dungeon_mouth', path: 'assets/pois/poi_dungeon_mouth.png', type: 'image', fallback: 'monster_cave_spider' },
+  { key: 'poi_resource_grove', path: 'assets/pois/poi_resource_grove.png', type: 'image', fallback: 'object_tree_pine' },
+
+  // --- city-builder support buildings / warning systems --------------------
+  { key: 'building_scout_post', path: 'assets/buildings/building_scout_post.png', type: 'image', fallback: 'not yet buildable' },
+  { key: 'building_guard_post', path: 'assets/buildings/building_guard_post.png', type: 'image', fallback: 'not yet buildable' },
+  { key: 'building_loot_warehouse', path: 'assets/buildings/building_loot_warehouse.png', type: 'image', fallback: 'not yet buildable' },
+  { key: 'building_quest_office', path: 'assets/buildings/building_quest_office.png', type: 'image', fallback: 'not yet buildable' },
+  { key: 'building_monster_warning_bell', path: 'assets/buildings/building_monster_warning_bell.png', type: 'image', fallback: 'not yet buildable' },
 
   // --- extra world props (PixelLab batch, 64px) ------------------------------
   { key: 'object_tree_03', path: 'assets/objects/object_tree_03.png', type: 'image', fallback: 'generated tree' },
