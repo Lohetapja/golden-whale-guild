@@ -8,6 +8,7 @@ import { HEROES } from '../data/heroes.js';
 import { rollHeroEvent, WHALE_FLAVOR } from '../data/events.js';
 import { OBJECTIVES } from '../data/objectives.js';
 import { rollQuestNotices } from '../data/quests.js';
+import { EXPLORATION_POINTS } from '../data/explorationPoints.js';
 import {
   BUILDING_CATALOG,
   BUILD_MENU_CATEGORIES,
@@ -82,8 +83,8 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 const PLAZA = TOWN_WORLD.plaza;
 const CAMERA_MAX_ZOOM = 2;
-const CAMERA_DEFAULT_ZOOM = 0.82;
-const CAMERA_HOME_ZOOM = 0.78;
+const CAMERA_DEFAULT_ZOOM = 0.72;
+const CAMERA_HOME_ZOOM = 0.72;
 const ISO_TILE_WIDTH = 64;
 const ISO_TILE_HEIGHT = 32;
 const ISO_RENDER_OPTIONS = {
@@ -91,6 +92,17 @@ const ISO_RENDER_OPTIONS = {
   originY: GRID_CONFIG.originY + 24,
   tileWidth: ISO_TILE_WIDTH,
   tileHeight: ISO_TILE_HEIGHT,
+};
+const BUILDER_WORLD_PADDING = 240;
+const BUILDER_WORLD_BOUNDS = {
+  width: Math.max(
+    GRID_WORLD.width,
+    ISO_RENDER_OPTIONS.originX + GRID_CONFIG.columns * (ISO_TILE_WIDTH / 2) + BUILDER_WORLD_PADDING,
+  ),
+  height: Math.max(
+    GRID_WORLD.height,
+    ISO_RENDER_OPTIONS.originY + (GRID_CONFIG.columns + GRID_CONFIG.rows) * (ISO_TILE_HEIGHT / 2) + BUILDER_WORLD_PADDING,
+  ),
 };
 const EXPLORATION_CHANCE = 0.22;
 const ROAD_WIDTH = LAYOUT_CONSTANTS.ROAD_WIDTH;
@@ -614,8 +626,8 @@ export default class TownScene extends Phaser.Scene {
 
     // builder cities live on the full expandable grid; the legacy town keeps
     // its original hand-placed world so nothing floats in empty space
-    this.worldWidth = this.isBuilderCity ? GRID_WORLD.width : TOWN_WORLD.width;
-    this.worldHeight = this.isBuilderCity ? GRID_WORLD.height : TOWN_WORLD.height;
+    this.worldWidth = this.isBuilderCity ? BUILDER_WORLD_BOUNDS.width : TOWN_WORLD.width;
+    this.worldHeight = this.isBuilderCity ? BUILDER_WORLD_BOUNDS.height : TOWN_WORLD.height;
     this.setupCameraControls();
     const refreshResponsiveState = () => {
       this.rsp = getResponsiveUi();
@@ -627,8 +639,9 @@ export default class TownScene extends Phaser.Scene {
     this.buildGridLayer();
     this.buildBuildings();
     this.buildDecorations();
+    this.buildExplorationPoints();
     this.doorById = Object.fromEntries(this.doorSpots.map((s) => [s.id, s]));
-    this.placeById = { ...this.buildingById, ...this.decorationById };
+    this.placeById = { ...this.buildingById, ...this.decorationById, ...this.explorationPointById };
     this.upgradeVisualsById = {};
     this.refreshAllUpgradeVisuals();
     this.activeBubbles = 0;
@@ -1055,12 +1068,12 @@ export default class TownScene extends Phaser.Scene {
 
   getBuilderCameraAnchor() {
     const guild = this.buildings?.find((building) => building.id === 'guildhall' && building.isPlaced);
-    if (guild) return { x: guild.x + 80, y: guild.y + 80 };
-    const west = GRID_CONFIG.zones.west;
-    return {
-      x: GRID_CONFIG.originX + ((west.minX + Math.min(west.maxX + 8, GRID_CONFIG.columns - 1)) / 2) * GRID_CONFIG.tileSize,
-      y: GRID_CONFIG.originY + ((west.minY + Math.min(west.maxY + 6, GRID_CONFIG.rows - 1)) / 2) * GRID_CONFIG.tileSize,
-    };
+    if (guild) return { x: guild.x + 48, y: guild.y + 24 };
+    return this.gridToVisual(
+      Math.floor(GRID_CONFIG.columns / 2),
+      Math.floor(GRID_CONFIG.rows / 2),
+      { w: 1, h: 1 },
+    );
   }
 
   zoomCamera(direction, pointer = null) {
@@ -2185,7 +2198,9 @@ export default class TownScene extends Phaser.Scene {
     this.add.tileSprite(this.worldWidth / 2, this.worldHeight / 2, this.worldWidth, this.worldHeight, baseKey);
 
     if (this.isBuilderCity) {
-      this.buildTerrainVariety();
+      this.isoGroundGraphics = this.add.graphics().setDepth(1.15);
+      this.redrawIsoGroundLayer();
+      if (!this.useIsoRendering()) this.buildTerrainVariety();
       this.terrainDetailGraphics = this.add.graphics().setDepth(2);
       this.redrawTerrainDetails();
       this.redrawWildernessDressing();
@@ -2229,6 +2244,36 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
+  redrawIsoGroundLayer() {
+    if (!this.isoGroundGraphics) return;
+    const g = this.isoGroundGraphics;
+    g.clear();
+    if (!this.useIsoRendering()) return;
+    const activeSet = this.getActiveVisibilitySet();
+    for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
+      for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
+        if (!this.isRevealed(x, y)) continue;
+        const state = this.getVisibilityState(x, y, activeSet);
+        const hash = this.getTerrainHash(x, y, 23);
+        const tint = [
+          0x5f9b45,
+          0x6eaa50,
+          0x557f3e,
+          0x78964f,
+        ][hash % 4];
+        const fillAlpha = state === 'active' ? 0.54 : 0.32;
+        const strokeAlpha = state === 'active' ? 0.1 : 0.06;
+        const points = this.getVisualTilePoints(x, y);
+        this.drawPolygon(g, points, tint, fillAlpha, 0xfff6dc, strokeAlpha, 1);
+        if (hash % 13 === 0 && state === 'active') {
+          const center = this.gridTileVisualCenter(x, y);
+          g.fillStyle(0xd8e28d, 0.08);
+          g.fillEllipse(center.x + ((hash % 11) - 5), center.y + (((hash >> 4) % 7) - 3), 24, 8);
+        }
+      }
+    }
+  }
+
   buildGridLayer() {
     this.lockedLandGraphics = this.add.graphics().setDepth(60);
     this.gridGraphics = this.add.graphics().setDepth(4800).setVisible(false);
@@ -2256,6 +2301,66 @@ export default class TownScene extends Phaser.Scene {
     return this.revealedTiles?.has(gridKey(x, y)) || false;
   }
 
+  addVisibilityCircle(targetSet, centerX, centerY, radius) {
+    const limit = radius * radius + radius * 0.65;
+    const minY = Math.max(0, Math.floor(centerY - radius));
+    const maxY = Math.min(GRID_CONFIG.rows - 1, Math.ceil(centerY + radius));
+    const minX = Math.max(0, Math.floor(centerX - radius));
+    const maxX = Math.min(GRID_CONFIG.columns - 1, Math.ceil(centerX + radius));
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const dx = x - centerX;
+        const dy = y - centerY;
+        if (dx * dx + dy * dy <= limit && this.isRevealed(x, y)) targetSet.add(gridKey(x, y));
+      }
+    }
+  }
+
+  getActiveVisibilitySet() {
+    const active = new Set();
+    if (!this.isBuilderCity || !this.revealedTiles) return active;
+    for (const road of this.cityState.roads || []) {
+      this.addVisibilityCircle(active, road.x, road.y, 2.2);
+    }
+    for (const placement of this.cityState.placedBuildings || []) {
+      const footprint = getBuildingCatalogEntry(placement.id)?.footprint || { w: 2, h: 2 };
+      const radius = placement.id === 'guildhall'
+        ? 7.5
+        : placement.id === 'watchtower'
+          ? 7
+          : 4.4;
+      this.addVisibilityCircle(
+        active,
+        placement.gridX + footprint.w / 2,
+        placement.gridY + footprint.h / 2,
+        radius,
+      );
+    }
+    return active;
+  }
+
+  getVisibilityState(x, y, activeSet = null) {
+    if (activeSet?.has(gridKey(x, y))) return 'active';
+    if (this.isRevealed(x, y)) return 'explored';
+    return 'undiscovered';
+  }
+
+  hasRevealedNeighbor(x, y, radius = 1) {
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (dx === 0 && dy === 0) continue;
+        if (this.isRevealed(x + dx, y + dy)) return true;
+      }
+    }
+    return false;
+  }
+
+  refreshWorldVisibility() {
+    this.redrawIsoGroundLayer();
+    this.redrawFog();
+    this.updateExplorationPointVisibility();
+  }
+
   // reveal a circle of tiles and refresh everything fog-dependent;
   // returns how many new tiles appeared
   revealArea(gridX, gridY, radius, source = '') {
@@ -2267,7 +2372,7 @@ export default class TownScene extends Phaser.Scene {
       if (cell) cell.unlocked = true;
     }
     this.cityState.revealed = [...this.revealedTiles];
-    this.redrawFog();
+    this.refreshWorldVisibility();
     this.redrawBuildGrid();
     this.redrawTerrainDetails();
     this.redrawWildernessDressing();
@@ -2410,6 +2515,7 @@ export default class TownScene extends Phaser.Scene {
     const rt = this.terrainVarietyRt;
     if (!rt || !this.isBuilderCity) return;
     rt.clear();
+    if (this.useIsoRendering()) return;
 
     const variantKeys = ['terrain_grass_clover'].filter((key) => this.textures.exists(key));
     // size categories keep scale believable: tiny clutter may appear almost
@@ -2625,26 +2731,27 @@ export default class TownScene extends Phaser.Scene {
     if (!keys.length) return;
     const core = this.getTownCoreCenter();
     const blocked = this.getDecorBlockedCells();
+    const activeSet = this.getActiveVisibilitySet();
     for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
       for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
         const cell = this.gridCells.get(gridKey(x, y));
         if (!cell || cell.road || cell.occupiedBy || blocked.has(gridKey(x, y))) continue;
         const revealed = this.isRevealed(x, y);
+        if (!revealed) continue;
         const hash = Math.abs((x * 73856093) ^ (y * 19349663)) % 100000;
-        if (revealed) {
-          // revealed wild zone: sparse trees/bushes well away from the town
-          // core and roads, so cleared land still reads as frontier meadow
-          const coreDistance = Math.hypot(x - core.x, y - core.y);
-          if (coreDistance < 11 || this.isRoadOrRoadShoulder(x, y, 1)) continue;
-          if (hash % 100 >= 3) continue;
-        } else if (hash % 100 >= 8) continue;
+        // revealed wild zone: sparse trees/bushes well away from the town
+        // core and roads, so cleared land still reads as frontier meadow
+        const coreDistance = Math.hypot(x - core.x, y - core.y);
+        if (coreDistance < 11 || this.isRoadOrRoadShoulder(x, y, 1)) continue;
+        if (hash % 100 >= 5) continue;
         const world = this.gridTileVisualCenter(x, y);
         const key = keys[hash % keys.length];
         const image = this.add.image(
           world.x + ((hash % 27) - 13),
           world.y + (((hash >> 4) % 15) - 7),
           key,
-        ).setScale(0.55 + ((hash >> 6) % 9) * 0.05).setAlpha(revealed ? 1 : 0.9);
+        ).setScale(0.55 + ((hash >> 6) % 9) * 0.05)
+          .setAlpha(activeSet.has(gridKey(x, y)) ? 1 : 0.56);
         this.wildernessContainer.add(image);
       }
     }
@@ -2659,11 +2766,12 @@ export default class TownScene extends Phaser.Scene {
     g.clear();
     if (!this.isBuilderCity) return;
     if (this.useIsoRendering()) {
+      const activeSet = this.getActiveVisibilitySet();
       for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
         for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
-          const cell = this.gridCells.get(gridKey(x, y));
           const points = this.getVisualTilePoints(x, y);
-          if (cell?.unlocked) {
+          const state = this.getVisibilityState(x, y, activeSet);
+          if (state === 'active') {
             const foggedSides = [
               !this.isRevealed(x - 1, y) && isInsideGrid(x - 1, y),
               !this.isRevealed(x, y - 1) && isInsideGrid(x, y - 1),
@@ -2675,14 +2783,25 @@ export default class TownScene extends Phaser.Scene {
             }
             continue;
           }
-          const nearClearing = this.isRevealed(x - 1, y) || this.isRevealed(x + 1, y)
-            || this.isRevealed(x, y - 1) || this.isRevealed(x, y + 1)
-            || this.isRevealed(x - 1, y - 1) || this.isRevealed(x + 1, y + 1)
-            || this.isRevealed(x - 1, y + 1) || this.isRevealed(x + 1, y - 1);
           const hash = this.getTerrainHash(x, y, 7);
-          const alpha = (nearClearing ? 0.4 : 0.58) + (hash % 7) * 0.012;
-          this.drawPolygon(g, points, hash % 3 ? 0x131b26 : 0x101722, alpha, 0x2a3648, nearClearing ? 0.12 : 0.06, 1);
-          if (!nearClearing && hash % 5 === 0) {
+          if (state === 'explored') {
+            this.drawPolygon(g, points, hash % 3 ? 0x1b2634 : 0x16202e, 0.42, 0x42506a, 0.16, 1);
+            if (hash % 6 === 0) {
+              const center = this.gridTileVisualCenter(x, y);
+              g.fillStyle(0x66748d, 0.08);
+              g.fillEllipse(
+                center.x + ((hash % 15) - 7),
+                center.y + (((hash >> 3) % 11) - 5),
+                24 + (hash % 14),
+                8 + ((hash >> 4) % 7),
+              );
+            }
+            continue;
+          }
+          const nearExplored = this.hasRevealedNeighbor(x, y, 1);
+          const alpha = (nearExplored ? 0.78 : 0.93) + (hash % 5) * 0.006;
+          this.drawPolygon(g, points, 0x030508, alpha, 0x111923, nearExplored ? 0.22 : 0.08, 1);
+          if (nearExplored && hash % 5 === 0) {
             const center = this.gridTileVisualCenter(x, y);
             g.fillStyle(0x2a3648, 0.14);
             g.fillEllipse(
@@ -3471,9 +3590,9 @@ export default class TownScene extends Phaser.Scene {
     });
     if (revealedAny) {
       this.cityState.revealed = [...this.revealedTiles];
-      this.redrawFog();
-      this.redrawBuildGrid();
     }
+    this.refreshWorldVisibility();
+    if (revealedAny) this.redrawBuildGrid();
     this.redrawTerrainDetails();
     this.redrawTerrainVariety();
     this.redrawWildernessDressing();
@@ -3503,6 +3622,7 @@ export default class TownScene extends Phaser.Scene {
     cell.road = null;
     if (refund > 0) this.applyDeltas({ gold: refund });
     // neighbor masks change, so the whole road layer re-autotiles
+    this.refreshWorldVisibility();
     this.redrawCityRoads();
     this.redrawTerrainDetails();
     this.redrawTerrainVariety();
@@ -3534,6 +3654,7 @@ export default class TownScene extends Phaser.Scene {
     this.cityState.roads.push({ x: gridX, y: gridY, type: typeId });
     this.gridCells.get(gridKey(gridX, gridY)).road = typeId;
     this.revealArea(gridX, gridY, FOG_REVEAL_RADIUS.road);
+    this.refreshWorldVisibility();
     this.redrawTerrainDetails();
     this.redrawTerrainVariety();
     this.redrawWildernessDressing();
@@ -3560,6 +3681,7 @@ export default class TownScene extends Phaser.Scene {
       id === 'watchtower' ? FOG_REVEAL_RADIUS.watchtower : FOG_REVEAL_RADIUS.building,
       id === 'watchtower' ? 'The new watchtower' : '',
     );
+    this.refreshWorldVisibility();
     const position = this.gridToVisual(gridX, gridY, catalog.footprint);
     Object.assign(building, position, {
       gridX,
@@ -3883,6 +4005,7 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getDefaultPlaceLabelAlpha(place) {
+    if (place?.mapPoint) return this.isRevealed(place.gridX, place.gridY) ? 0.28 : 0;
     const priority = this.getPlaceLabelPriority(place);
     if (priority <= 1) return 0.96;
     if (priority === 2) {
@@ -4263,6 +4386,73 @@ export default class TownScene extends Phaser.Scene {
         this.doorSpots.push(this.getDoorSpotForPlace(d));
       }
       this.updateDecorationLockState(d.id);
+    }
+  }
+
+  buildExplorationPoints() {
+    this.explorationPointById = {};
+    this.explorationPointObjectsById = {};
+    if (!this.isBuilderCity) return;
+
+    for (const point of EXPLORATION_POINTS) {
+      if (!isInsideGrid(point.gridX, point.gridY)) continue;
+      const position = this.gridToVisual(point.gridX, point.gridY, { w: 1, h: 1 });
+      const place = {
+        ...point,
+        ...position,
+        w: point.w || 48,
+        h: point.h || 44,
+        footprint: { w: 1, h: 1 },
+        isPlaced: true,
+        mapPoint: true,
+        shortLabel: point.shortLabel || point.name,
+        labelOffsetY: point.labelOffsetY ?? 2,
+      };
+      this.explorationPointById[place.id] = place;
+      this.explorationPointObjectsById[place.id] = [];
+
+      const depth = this.getVisualDepth(place.gridX, place.gridY) + 26;
+      const base = this.add.graphics().setDepth(depth - 3);
+      this.drawPolygon(base, this.insetPoints(this.getVisualTilePoints(place.gridX, place.gridY), 0.62), 0x243241, 0.36, 0xfff6dc, 0.12, 1);
+      this.explorationPointObjectsById[place.id].push(base);
+
+      const key = resolveTexture(this, place.assetKey, place.fallbackKey || 'rock');
+      const img = this.add.image(place.x, place.y - 2, key)
+        .setOrigin(0.5, 1)
+        .setDepth(depth);
+      const scale = this.getTextureScaleForBox(key, place.w, place.h, point.scale || 0.7, point.maxVisualScale || 0.82);
+      img.setScale(scale);
+      img.setData('baseScaleX', img.scaleX);
+      img.setData('baseScaleY', img.scaleY);
+      img.setData('restScaleX', img.scaleX);
+      img.setData('restScaleY', img.scaleY);
+      this.placeSpriteById[place.id] = img;
+      this.explorationPointObjectsById[place.id].push(img);
+
+      const hit = this.createPlaceHitZone(place, img, () => this.showTooltip(place));
+      this.explorationPointObjectsById[place.id].push(hit);
+
+      const label = this.addPlaceLabel(place, SMALL_LABEL_FONT_SIZE);
+      this.placeLabelsById[place.id] = label;
+      this.explorationPointObjectsById[place.id].push(label);
+    }
+    this.updateExplorationPointVisibility();
+  }
+
+  updateExplorationPointVisibility() {
+    if (!this.explorationPointObjectsById) return;
+    const activeSet = this.getActiveVisibilitySet();
+    for (const point of Object.values(this.explorationPointById || {})) {
+      const revealed = this.isRevealed(point.gridX, point.gridY);
+      const active = activeSet.has(gridKey(point.gridX, point.gridY));
+      for (const obj of this.explorationPointObjectsById[point.id] || []) {
+        obj.setVisible?.(revealed);
+        if (obj.getData?.('isPlaceLabel')) {
+          obj.setAlpha(revealed ? (active ? 0.68 : 0.34) : 0);
+        } else if (obj.setAlpha) {
+          obj.setAlpha(revealed ? (active ? 1 : 0.58) : 0);
+        }
+      }
     }
   }
 
@@ -4733,6 +4923,28 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getPlaceInspectorPayload(place) {
+    if (place.mapPoint) {
+      return {
+        title: place.name,
+        subtitle: 'Exploration Point',
+        sections: [
+          {
+            title: 'Map Note',
+            lines: [place.description, ...(place.tooltipLines || [])].filter(Boolean),
+          },
+          {
+            title: 'Future Hook',
+            lines: [
+              place.effect || 'A future city-builder hook is quietly waiting here.',
+              'Explored landmarks help the expanded map feel less like empty grass and more like trouble with coordinates.',
+            ],
+          },
+        ],
+        actions: [
+          { label: 'Open Town Log', event: 'gwg-open-town-log' },
+        ],
+      };
+    }
     const info = this.getUpgradeInfo(place);
     const catalog = getBuildingCatalogEntry(place.id);
     const runtime = catalog && place.isPlaced
@@ -6675,6 +6887,7 @@ export default class TownScene extends Phaser.Scene {
     }
     if (!candidates.length) {
       for (const place of Object.values(this.placeById || {})) {
+        if (place?.mapPoint && !this.isRevealed(place.gridX, place.gridY)) continue;
         if (place?.isPlaced !== false && this.isLocationUnlocked(place.id) && place.id !== 'notice_board') candidates.push(place);
       }
     }

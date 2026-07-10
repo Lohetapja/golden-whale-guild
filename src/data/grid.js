@@ -2,8 +2,8 @@ export const GRID_CONFIG = {
   tileSize: 48,
   originX: 48,
   originY: 48,
-  columns: 56,
-  rows: 32,
+  columns: 96,
+  rows: 60,
   zones: {
     // west/east keep their original rectangles so existing saves stay valid.
     west: { minX: 0, maxX: 19, minY: 0, maxY: 14 },
@@ -11,6 +11,8 @@ export const GRID_CONFIG = {
     south: { minX: 0, maxX: 27, minY: 15, maxY: 31 },
     frontier: { minX: 28, maxX: 55, minY: 0, maxY: 14 },
     southeast: { minX: 28, maxX: 55, minY: 15, maxY: 31 },
+    central: { minX: 32, maxX: 63, minY: 18, maxY: 41 },
+    wilds: { minX: 64, maxX: 95, minY: 0, maxY: 59 },
   },
 };
 
@@ -204,14 +206,12 @@ export const DEFAULT_NEW_CITY = {
 // buildable space around the settlement. Old saves are untouched — anchors
 // only apply when a brand-new city state is created.
 export const START_ANCHORS = [
-  { dx: 0, dy: 0 },
-  { dx: 12, dy: 4 },
-  { dx: 24, dy: 1 },
-  { dx: 6, dy: 13 },
-  { dx: 20, dy: 11 },
-  { dx: 32, dy: 6 },
-  { dx: 12, dy: 19 },
-  { dx: 28, dy: 16 },
+  { dx: 38, dy: 24 },
+  { dx: 32, dy: 20 },
+  { dx: 46, dy: 21 },
+  { dx: 34, dy: 32 },
+  { dx: 50, dy: 31 },
+  { dx: 42, dy: 36 },
 ];
 
 export function createNewCityState(random = Math.random) {
