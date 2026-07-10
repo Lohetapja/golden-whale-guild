@@ -578,6 +578,8 @@ export default class TownScene extends Phaser.Scene {
     this.registry.set('townStage', this.getCurrentStage().name);
     this.registry.set('townIdentity', this.getTownIdentity().name);
     this.registry.set('simulationSpeed', this.simulationSpeed);
+    this.reportUnread = false;
+    this.updateTownNotice();
     this.publishObjectives();
     this.publishTownHint();
     this.checkUnlocks(true);
@@ -612,6 +614,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-building-action', this.runBuildingAction, this);
     this.game.events.on('gwg-open-report', this.showCycleReport, this);
     this.game.events.on('gwg-open-delete', this.openDeleteTool, this);
+    this.game.events.on('gwg-confirm-build', this.confirmRoadPlan, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       window.removeEventListener('resize', refreshResponsiveState);
       window.removeEventListener('orientationchange', refreshResponsiveState);
@@ -642,6 +645,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-building-action', this.runBuildingAction, this);
       this.game.events.off('gwg-open-report', this.showCycleReport, this);
       this.game.events.off('gwg-open-delete', this.openDeleteTool, this);
+      this.game.events.off('gwg-confirm-build', this.confirmRoadPlan, this);
     });
 
     this.game.events.emit(
@@ -812,11 +816,12 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-camera-home', this.cameraHome, this);
     });
 
-    // dragging pans the camera even in build mode: the placement zone only
-    // places on pointerup taps (wasDragGesture filters drags), so touch users
-    // can pan around the map while choosing where to build
+    // dragging pans the camera in build/delete mode (placement only happens
+    // on pointerup taps); in ROAD mode dragging paints the road plan instead,
+    // so camera drag stays disabled there — pan with WASD/edge/pinch
     this.input.on('pointerdown', (pointer) => {
       if (!pointer.primaryDown) return;
+      if (this.buildMode?.kind === 'road') return;
       this.cameraDrag.active = true;
       this.cameraDrag.moved = false;
       this.cameraDrag.lastX = pointer.x;
@@ -1410,17 +1415,21 @@ export default class TownScene extends Phaser.Scene {
     this.activeInspector = { type: 'report' };
     this.clearSelection(false);
     this.game.events.emit('gwg-inspector-open', this.getCycleReportPayload());
+    this.reportUnread = false;
+    this.updateTownNotice();
   }
 
   // end-of-day: quiet days get a compact banner; policies and crises still
   // open the full report because they demand a decision
+  // end-of-day is never a forced modal: every day gets the compact banner
+  // plus a persistent top-bar notice badge; the full report/policy panel only
+  // opens when the player clicks either of them
   presentCycleReport() {
     if (!this.cycleReport) return;
-    const needsAttention = Boolean(this.getPendingPolicy()) || (this.cycleReport.crises?.length > 0);
-    if (needsAttention) {
-      this.showCycleReport();
-      return;
-    }
+    this.reportUnread = true;
+    const attention = [];
+    if (this.getPendingPolicy()) attention.push('Policy choice pending');
+    if (this.cycleReport.crises?.length) attention.push('Town crisis!');
     const deltas = this.getResourceDeltaSummary(this.cycleReport.start || this.resources)
       .filter((entry) => entry.value !== 0)
       .slice(0, 4)
@@ -1428,8 +1437,21 @@ export default class TownScene extends Phaser.Scene {
       .join('   ');
     this.game.events.emit('gwg-day-summary', {
       day: this.day,
-      summary: deltas || 'A quiet day. Suspiciously quiet.',
+      summary: attention.length
+        ? `${attention.join('  ')}   ${deltas}`.trim()
+        : (deltas || 'A quiet day. Suspiciously quiet.'),
     });
+    this.updateTownNotice();
+  }
+
+  // compact "! ..." badge next to the Day counter; policy trumps report
+  updateTownNotice() {
+    const notice = this.getPendingPolicy()
+      ? 'Policy choice pending'
+      : this.reportUnread
+        ? `Day ${this.day} report ready`
+        : '';
+    this.registry.set('townNotice', notice);
   }
 
   getPendingPolicy() {
@@ -1461,6 +1483,7 @@ export default class TownScene extends Phaser.Scene {
     this.applyDeltas(option.deltas || {});
     option.hero?.(this);
     this.pendingPolicy = null;
+    this.updateTownNotice();
     this.stats.policiesChosen = (this.stats.policiesChosen || 0) + 1;
     this.floatDeltas(PLAZA.x, PLAZA.y - 90, option.deltas || {});
     this.game.events.emit('gwg-event', option.text);
@@ -2426,12 +2449,37 @@ export default class TownScene extends Phaser.Scene {
     this.buildInputZone.on('pointermove', (pointer) => {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       this.updateBuildPreview(world.x, world.y);
+      // road mode: dragging paints tiles into the pending plan
+      if (
+        this.buildMode?.kind === 'road'
+        && pointer.primaryDown
+        && !this.input.pointer2?.isDown // never paint mid-pinch
+      ) {
+        const cell = worldToGrid(world.x, world.y);
+        this.addRoadPlanCell(cell.x, cell.y);
+      }
     });
     this.buildInputZone.on('pointerdown', (pointer) => {
-      if (pointer.rightButtonDown?.()) this.cancelBuildMode();
+      if (pointer.rightButtonDown?.()) {
+        this.cancelBuildMode();
+        return;
+      }
+      if (this.buildMode?.kind === 'road') this.roadPaintSession = new Set();
     });
     this.buildInputZone.on('pointerup', (pointer) => {
-      if (!this.buildMode || this.wasDragGesture(pointer)) return;
+      if (!this.buildMode) return;
+      if (this.buildMode.kind === 'road') {
+        const painted = (this.roadPaintSession?.size || 0) > 0;
+        this.roadPaintSession = null;
+        // a clean tap toggles a single planned tile; drags already painted
+        if (!painted && !this.wasDragGesture(pointer)) {
+          const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+          const cell = worldToGrid(world.x, world.y);
+          this.toggleRoadPlanCell(cell.x, cell.y);
+        }
+        return;
+      }
+      if (this.wasDragGesture(pointer)) return;
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const cell = worldToGrid(world.x, world.y);
       this.tryPlaceBuildItem(cell.x, cell.y);
@@ -2526,13 +2574,9 @@ export default class TownScene extends Phaser.Scene {
       const cell = this.gridCells.get(gridKey(gridX, gridY));
       if (cell?.occupiedBy) return { valid: false, reason: 'A building already owns that argument.' };
       if (cell?.road) return { valid: false, reason: 'Road already present. It refuses a second commute.' };
+      // gold is only charged on Confirm, so planning stays green regardless
       const road = ROAD_TYPES[this.buildMode.id];
-      return {
-        valid: this.resources.gold >= road.cost,
-        reason: this.resources.gold >= road.cost ? '' : 'Not enough gold for municipal dirt.',
-        cost: road.cost,
-        footprint,
-      };
+      return { valid: true, reason: '', cost: road.cost, footprint };
     }
 
     if (this.buildMode.kind === 'delete') {
@@ -2605,19 +2649,33 @@ export default class TownScene extends Phaser.Scene {
       view.top + 82,
       view.bottom - 54,
     );
+    const isRoad = this.buildMode.kind === 'road';
+    const planCount = isRoad ? (this.roadPlan?.size || 0) : 0;
+    const hint = result.valid
+      ? (this.buildMode.kind === 'delete'
+        ? 'Tap to remove'
+        : isRoad
+          ? (planCount
+            ? `Plan: ${planCount} tiles / ${this.getRoadPlanCost()}g - Confirm to build`
+            : 'Drag or tap to plan, then Confirm')
+          : 'Ready to place')
+      : result.reason;
     this.buildPreviewLabel
-      ?.setText(`${name} - ${costLabel}\n${result.valid ? (this.buildMode.kind === 'delete' ? 'Tap to remove' : 'Ready to place') : result.reason}`)
+      ?.setText(`${name} - ${costLabel}\n${hint}`)
       .setColor(result.valid ? '#d7f3d0' : '#ffd0cc')
       .setPosition(labelX, labelY)
       .setVisible(true);
     this.updateBuildGhost(anchor, footprint, result.valid);
     this.game.events.emit('gwg-build-mode', {
       active: true,
+      kind: this.buildMode.kind,
       label: name,
-      cost,
-      footprint: `${footprint.w}x${footprint.h}`,
+      cost: isRoad ? this.getRoadPlanCost() : cost,
+      footprint: isRoad ? `${planCount} tiles` : `${footprint.w}x${footprint.h}`,
       valid: result.valid,
       reason: result.reason,
+      planCount,
+      planCost: isRoad ? this.getRoadPlanCost() : 0,
     });
   }
 
@@ -2674,6 +2732,7 @@ export default class TownScene extends Phaser.Scene {
     if (!['road', 'building', 'delete'].includes(kind)) return;
     this.clearSelection();
     this.clearWorldInteractionHover();
+    this.clearRoadPlan(); // switching tools always drops any pending plan
     this.buildMode = { kind, id };
     this.buildPreviewCell = null;
     this.gridGraphics.setVisible(true);
@@ -2695,6 +2754,7 @@ export default class TownScene extends Phaser.Scene {
 
   cancelBuildMode() {
     if (!this.buildMode) return;
+    this.clearRoadPlan();
     this.buildMode = null;
     this.buildPreviewCell = null;
     this.gridGraphics?.setVisible(false);
@@ -2739,6 +2799,142 @@ export default class TownScene extends Phaser.Scene {
       gridToWorld(gridX, gridY).x,
       gridToWorld(gridX, gridY).y - GRID_CONFIG.tileSize / 2,
     );
+  }
+
+  // --- road plan: drag/tap to preview, confirm to place ----------------------
+
+  isRoadPlanCellValid(x, y) {
+    if (!isInsideGrid(x, y) || !this.isRevealed(x, y)) return false;
+    const cell = this.gridCells.get(gridKey(x, y));
+    return Boolean(cell) && !cell.road && !cell.occupiedBy;
+  }
+
+  addRoadPlanCell(x, y) {
+    if (this.buildMode?.kind !== 'road') return;
+    if (!this.roadPlan) this.roadPlan = new Map();
+    const key = gridKey(x, y);
+    if (this.roadPlan.has(key) || !this.isRoadPlanCellValid(x, y)) return;
+    this.roadPlan.set(key, { x, y });
+    this.roadPaintSession?.add(key);
+    this.refreshRoadPlanPreview();
+  }
+
+  toggleRoadPlanCell(x, y) {
+    if (this.buildMode?.kind !== 'road') return;
+    if (!this.roadPlan) this.roadPlan = new Map();
+    const key = gridKey(x, y);
+    if (this.roadPlan.has(key)) {
+      this.roadPlan.delete(key);
+    } else {
+      if (!this.isRoadPlanCellValid(x, y)) {
+        this.game.events.emit('gwg-event', 'That tile refuses a road. Occupied, fogged, or already paved.');
+        return;
+      }
+      this.roadPlan.set(key, { x, y });
+    }
+    this.refreshRoadPlanPreview();
+  }
+
+  getRoadPlanCost() {
+    const road = ROAD_TYPES[this.buildMode?.id];
+    return (this.roadPlan?.size || 0) * (road?.cost || 0);
+  }
+
+  refreshRoadPlanPreview() {
+    if (!this.roadPlanGraphics) this.roadPlanGraphics = this.add.graphics().setDepth(4840);
+    const g = this.roadPlanGraphics;
+    g.clear();
+    const plan = this.roadPlan;
+    if (!plan?.size || this.buildMode?.kind !== 'road') {
+      this.emitBuildModeState();
+      return;
+    }
+    for (const spot of plan.values()) {
+      const valid = this.isRoadPlanCellValid(spot.x, spot.y);
+      const left = GRID_CONFIG.originX + spot.x * GRID_CONFIG.tileSize + 3;
+      const top = GRID_CONFIG.originY + spot.y * GRID_CONFIG.tileSize + 3;
+      g.fillStyle(valid ? 0x7fdc93 : 0xf0938f, 0.34);
+      g.fillRect(left, top, GRID_CONFIG.tileSize - 6, GRID_CONFIG.tileSize - 6);
+      g.lineStyle(2, valid ? 0xd7f3d0 : 0xf0938f, 0.9);
+      g.strokeRect(left, top, GRID_CONFIG.tileSize - 6, GRID_CONFIG.tileSize - 6);
+    }
+    this.emitBuildModeState();
+  }
+
+  emitBuildModeState(extra = {}) {
+    if (!this.buildMode) return;
+    const definition = this.getBuildModeDefinition();
+    this.game.events.emit('gwg-build-mode', {
+      active: true,
+      kind: this.buildMode.kind,
+      label: definition?.name || this.buildMode.id,
+      cost: this.buildMode.kind === 'road' ? this.getRoadPlanCost() : definition?.cost || 0,
+      footprint: this.buildMode.kind === 'road' ? `${this.roadPlan?.size || 0} tiles` : undefined,
+      planCount: this.buildMode.kind === 'road' ? (this.roadPlan?.size || 0) : 0,
+      planCost: this.buildMode.kind === 'road' ? this.getRoadPlanCost() : 0,
+      ...extra,
+    });
+  }
+
+  clearRoadPlan() {
+    this.roadPlan?.clear();
+    this.roadPaintSession = null;
+    this.roadPlanGraphics?.clear();
+  }
+
+  // place every valid planned tile in one batch: one delta application, one
+  // fog/terrain/road redraw, one save, one log line
+  confirmRoadPlan() {
+    if (this.buildMode?.kind !== 'road' || !this.roadPlan?.size) return;
+    const road = ROAD_TYPES[this.buildMode.id];
+    let placed = 0;
+    let spent = 0;
+    let ranOutOfGold = false;
+    let revealedAny = 0;
+    for (const spot of this.roadPlan.values()) {
+      if (!this.isRoadPlanCellValid(spot.x, spot.y)) continue;
+      if (this.resources.gold - spent < road.cost) {
+        ranOutOfGold = true;
+        break;
+      }
+      spent += road.cost;
+      placed += 1;
+      this.cityState.roads.push({ x: spot.x, y: spot.y, type: road.id });
+      this.gridCells.get(gridKey(spot.x, spot.y)).road = road.id;
+      const added = revealCircle(this.revealedTiles, spot.x, spot.y, FOG_REVEAL_RADIUS.road);
+      for (const revealedSpot of added) {
+        const cell = this.gridCells.get(gridKey(revealedSpot.x, revealedSpot.y));
+        if (cell) cell.unlocked = true;
+      }
+      revealedAny += added.length;
+    }
+    if (!placed) {
+      this.game.events.emit('gwg-event', ranOutOfGold
+        ? 'Not enough gold for the road plan. The surveyor suggests ambition later.'
+        : 'The road plan contained no valid tiles. Bold, but no.');
+      this.clearRoadPlan();
+      this.refreshRoadPlanPreview();
+      return;
+    }
+    this.applyDeltas({
+      gold: -spent,
+      trust: (road.trust || 0) * placed,
+      corruption: (road.corruption || 0) * placed,
+    });
+    if (revealedAny) {
+      this.cityState.revealed = [...this.revealedTiles];
+      this.redrawFog();
+    }
+    this.redrawTerrainDetails();
+    this.redrawTerrainVariety();
+    this.redrawWildernessDressing();
+    this.redrawCityRoads();
+    this.clearRoadPlan();
+    this.refreshRoadPlanPreview();
+    const text = `${placed} ${road.name} tile${placed === 1 ? '' : 's'} placed for ${spent}g.${ranOutOfGold ? ' Gold ran out before the plan finished.' : ''}`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.saveGame(false);
   }
 
   // delete tool entry point (docs/CITY_BUILDER_SYSTEMS_PLAN.md section 6);
@@ -3930,13 +4126,11 @@ export default class TownScene extends Phaser.Scene {
       g.fillStyle(0xfff6dc);
       for (let i = 0; i < level + 2; i += 1) g.fillRect(-24 + i * 13, -h + 8 + (i % 2) * 10, 10, 12);
       if (level >= 3) addSparkles(4, 0x7fdc93);
-    } else {
-      g.fillStyle(place.eventPoolCategory?.includes('corruption') ? 0xc99aec : 0xf6c945, 0.72);
-      g.fillRect(-w / 2 - 8, -h + 18, 7, 28);
-      g.fillRect(w / 2 + 1, -h + 18, 7, 28);
-      g.fillStyle(0xfff6dc);
-      g.fillRect(-w / 2 - 14, -h + 8, w + 28, 12);
-      if (level >= 3) addSparkles(4 + level, place.eventPoolCategory?.includes('corruption') ? 0xc99aec : 0x7fdc93);
+    } else if (level >= 3) {
+      // generic fallback stays subtle: no banner bars or posts (they read as
+      // debug artifacts floating over the taller angled sprites), just a few
+      // celebratory sparkles at high levels
+      addSparkles(3 + level, place.eventPoolCategory?.includes('corruption') ? 0xc99aec : 0x7fdc93);
     }
 
     this.upgradeVisualsById[place.id] = container;

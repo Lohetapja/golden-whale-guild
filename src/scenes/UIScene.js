@@ -80,6 +80,7 @@ export default class UIScene extends Phaser.Scene {
       this.dayText.setText(`Day ${value}`);
       this.flashDayBanner(value);
     });
+    this.registry.events.on('changedata-townNotice', (_p, value) => this.updateNoticeBadge(value));
     this.game.events.on('gwg-event', this.queueEvent, this);
     this.game.events.on('gwg-day-summary', this.showDaySummary, this);
     this.game.events.on('gwg-achievement', this.showAchievementToast, this);
@@ -110,6 +111,7 @@ export default class UIScene extends Phaser.Scene {
     this.updateTownHint(this.registry.get('townHint'));
     this.updateTownStage(this.registry.get('townStage'));
     this.dayText.setText(`Day ${this.registry.get('day')}`);
+    this.updateNoticeBadge(this.registry.get('townNotice'));
     this.updateTimeControls(this.registry.get('simulationSpeed') ?? 1);
   }
 
@@ -424,6 +426,12 @@ export default class UIScene extends Phaser.Scene {
     this.cycleBg.on('pointerover', () => this.styleButton('hover'));
     this.cycleBg.on('pointerout', () => this.styleButton('normal'));
     this.cycleBg.on('pointerup', () => {
+      // a pending policy redirects the button to the report/policy panel
+      // instead of skipping the day (no forced popups, but a clear path)
+      if (this.policyPending) {
+        this.game.events.emit('gwg-open-report');
+        return;
+      }
       // relative scaling so an asset-backed button (setDisplaySize) pops correctly
       this.tweens.add({
         targets: this.cycleBg,
@@ -500,6 +508,16 @@ export default class UIScene extends Phaser.Scene {
     );
     this.cancelBuildButton.bg.setVisible(false).disableInteractive();
     this.cancelBuildButton.text.setVisible(false);
+    // road-plan confirm sits just above Cancel; visible only with a plan
+    this.confirmBuildButton = this.makeUtilityButton(
+      1042,
+      HEIGHT - 104,
+      'Confirm',
+      'gwg-confirm-build',
+      72,
+    );
+    this.confirmBuildButton.bg.setVisible(false).disableInteractive();
+    this.confirmBuildButton.text.setVisible(false);
   }
 
   buildMobileBottomBar() {
@@ -549,6 +567,17 @@ export default class UIScene extends Phaser.Scene {
     );
     this.cancelBuildButton.bg.setVisible(false).disableInteractive();
     this.cancelBuildButton.text.setVisible(false);
+    this.confirmBuildButton = this.makeUtilityButton(
+      936,
+      y - 66,
+      'Confirm',
+      'gwg-confirm-build',
+      104,
+      undefined,
+      { height: 56 },
+    );
+    this.confirmBuildButton.bg.setVisible(false).disableInteractive();
+    this.confirmBuildButton.text.setVisible(false);
 
     this.buildEndDayButton({
       x: WIDTH - 116,
@@ -851,7 +880,9 @@ export default class UIScene extends Phaser.Scene {
     if (!this.cycleBg || !this.cycleLabel) return;
     this.cycleBg.setInteractive({ useHandCursor: true });
     this.styleButton('normal');
-    this.cycleLabel.setText(this.cycleReadyLabel || 'Skip Day >').setAlpha(1);
+    this.cycleLabel
+      .setText(this.policyPending ? 'Policy Pending' : (this.cycleReadyLabel || 'Skip Day >'))
+      .setAlpha(1);
   }
 
   lockCycleButton() {
@@ -872,8 +903,10 @@ export default class UIScene extends Phaser.Scene {
 
   updateBuildMode(state = {}) {
     if (!this.buildModeText || !this.cancelBuildButton) return;
-    const label = String(state.label || '');
-    const maxChars = this.rsp?.compact ? 14 : 17;
+    // active tool is always explicit: ROAD / BUILD / DELETE prefix
+    const kindPrefix = { road: 'ROAD: ', building: 'BUILD: ', delete: 'DELETE: ' }[state.kind] || '';
+    const label = `${kindPrefix}${String(state.label || '')}`;
+    const maxChars = this.rsp?.compact ? 20 : 24;
     const compactLabel = label.length > maxChars ? `${label.slice(0, maxChars - 1)}...` : label;
     const cost = Number.isFinite(state.cost) ? `${state.cost}g` : '';
     const footprint = state.footprint || '';
@@ -882,6 +915,15 @@ export default class UIScene extends Phaser.Scene {
       .setColor(state.valid === false ? '#f0938f' : '#7fdc93');
     this.cancelBuildButton.bg.setVisible(Boolean(state.active));
     this.cancelBuildButton.text.setVisible(Boolean(state.active));
+    const showConfirm = Boolean(state.active) && state.kind === 'road' && (state.planCount || 0) > 0;
+    if (this.confirmBuildButton) {
+      this.confirmBuildButton.bg.setVisible(showConfirm);
+      this.confirmBuildButton.text
+        .setVisible(showConfirm)
+        .setText(showConfirm ? `Confirm ${state.planCount}` : 'Confirm');
+      if (showConfirm) this.confirmBuildButton.bg.setInteractive({ useHandCursor: true });
+      else this.confirmBuildButton.bg.disableInteractive();
+    }
     if (state.active) this.cancelBuildButton.bg.setInteractive({ useHandCursor: true });
     else this.cancelBuildButton.bg.disableInteractive();
   }
@@ -950,6 +992,37 @@ export default class UIScene extends Phaser.Scene {
         },
       });
     });
+  }
+
+  // compact clickable "! Policy choice pending" / "! Day N report ready"
+  // badge inside the top bar, left of the Day counter; opens the report panel
+  updateNoticeBadge(value) {
+    const notice = String(value || '');
+    const M = this.rsp?.compact;
+    if (!this.noticeBadge) {
+      this.noticeBadge = this.add.text(0, 0, '', {
+        fontFamily: FONT,
+        fontSize: M ? this.rsp.font(10) : '11px',
+        fontStyle: 'bold',
+        color: '#141a24',
+        backgroundColor: '#f6c945',
+        padding: { x: 7, y: 4 },
+      }).setOrigin(1, 0.5).setDepth(6900)
+        .setInteractive({ useHandCursor: true })
+        .setVisible(false);
+      this.noticeBadge.on('pointerup', () => this.game.events.emit('gwg-open-report'));
+    }
+    this.noticeBadge.setVisible(Boolean(notice));
+    if (notice) {
+      this.noticeBadge
+        .setText(`! ${notice}`)
+        .setPosition(this.dayText.x - this.dayText.width - (M ? this.rsp.size(12) : 14), this.dayText.y);
+    }
+    // Skip Day relabels while a policy blocks the town's attention
+    this.policyPending = notice.startsWith('Policy');
+    if (this.cycleLabel && this.cycleLabel.text !== 'Resolving...') {
+      this.cycleLabel.setText(this.policyPending ? 'Policy Pending' : (this.cycleReadyLabel || 'Skip Day >'));
+    }
   }
 
   flashDayBanner(day) {

@@ -198,6 +198,34 @@ export const DEFAULT_NEW_CITY = {
   },
 };
 
+// Safe anchor offsets for randomized new-game starts. The base layout above
+// is authored at anchor (0,0) with a bounding box of roughly x4-14 / y4-7;
+// every anchor keeps that box at least 3 tiles from all map edges and leaves
+// buildable space around the settlement. Old saves are untouched — anchors
+// only apply when a brand-new city state is created.
+export const START_ANCHORS = [
+  { dx: 0, dy: 0 },
+  { dx: 12, dy: 4 },
+  { dx: 24, dy: 1 },
+  { dx: 6, dy: 13 },
+  { dx: 20, dy: 11 },
+  { dx: 32, dy: 6 },
+  { dx: 12, dy: 19 },
+  { dx: 28, dy: 16 },
+];
+
+export function createNewCityState(random = Math.random) {
+  const anchor = START_ANCHORS[Math.floor(random() * START_ANCHORS.length)] || START_ANCHORS[0];
+  const city = structuredClone(DEFAULT_NEW_CITY);
+  city.roads = city.roads.map((road) => ({ ...road, x: road.x + anchor.dx, y: road.y + anchor.dy }));
+  city.placedBuildings = city.placedBuildings.map((building) => ({
+    ...building,
+    gridX: building.gridX + anchor.dx,
+    gridY: building.gridY + anchor.dy,
+  }));
+  return city;
+}
+
 export function gridKey(x, y) {
   return `${x},${y}`;
 }
@@ -297,7 +325,7 @@ export function makeLegacyCityState(buildings, layout) {
 }
 
 export function normalizeCityState(raw, legacyFactory) {
-  if (!raw) return structuredClone(DEFAULT_NEW_CITY);
+  if (!raw) return createNewCityState();
   if (!raw.cityBuilder) return legacyFactory();
 
   const incoming = raw.cityBuilder;
