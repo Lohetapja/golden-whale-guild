@@ -2357,6 +2357,50 @@ export default class TownScene extends Phaser.Scene {
     return blocked;
   }
 
+  pointInPolygon(point, polygon) {
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+      const a = polygon[i];
+      const b = polygon[j];
+      const crosses = ((a.y > point.y) !== (b.y > point.y))
+        && point.x < ((b.x - a.x) * (point.y - a.y)) / Math.max(0.0001, b.y - a.y) + a.x;
+      if (crosses) inside = !inside;
+    }
+    return inside;
+  }
+
+  clearStaticPropsInsideFootprint(gridX, gridY, footprint) {
+    if (!this.isBuilderCity || !this.decorationObjectsById) return;
+    const polygon = this.getVisualFootprintPolygon(gridX, gridY, footprint);
+    const bounds = polygon.reduce((acc, point) => ({
+      left: Math.min(acc.left, point.x),
+      right: Math.max(acc.right, point.x),
+      top: Math.min(acc.top, point.y),
+      bottom: Math.max(acc.bottom, point.y),
+    }), { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity });
+
+    for (const decoration of this.decorations || []) {
+      if (!decoration?.isPlaced || decoration.interactive || decoration.spot || decoration.path) continue;
+      const points = [
+        { x: decoration.x, y: decoration.y },
+        { x: decoration.x, y: decoration.y - (decoration.h || 44) * 0.45 },
+      ];
+      const nearBounds = points.some((point) => (
+        point.x >= bounds.left - 12
+        && point.x <= bounds.right + 12
+        && point.y >= bounds.top - 12
+        && point.y <= bounds.bottom + 12
+      ));
+      if (!nearBounds || !points.some((point) => this.pointInPolygon(point, polygon))) continue;
+      decoration.isPlaced = false;
+      for (const obj of this.decorationObjectsById[decoration.id] || []) obj.destroy?.();
+      delete this.decorationObjectsById[decoration.id];
+      delete this.placeSpriteById[decoration.id];
+      delete this.placeLabelsById[decoration.id];
+      this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== decoration.id);
+    }
+  }
+
   // Ground decor is one RenderTexture (zero per-frame cost) but now
   // placement-aware and redrawable: clutter keeps out of building footprints,
   // entrances, and road shoulders; the town core stays clean; everything is
@@ -3462,6 +3506,7 @@ export default class TownScene extends Phaser.Scene {
     this.redrawCityRoads();
     this.redrawTerrainDetails();
     this.redrawTerrainVariety();
+    this.redrawWildernessDressing();
     const world = this.gridTileVisualCenter(gridX, gridY);
     this.floatText(world.x, world.y - 30, refund > 0 ? `+${refund}g` : 'REMOVED', '#f6c945');
 
@@ -3491,6 +3536,7 @@ export default class TownScene extends Phaser.Scene {
     this.revealArea(gridX, gridY, FOG_REVEAL_RADIUS.road);
     this.redrawTerrainDetails();
     this.redrawTerrainVariety();
+    this.redrawWildernessDressing();
     this.redrawCityRoads();
     const world = this.gridTileVisualCenter(gridX, gridY);
     this.floatText(world.x, world.y - 30, `-${cost}g`, '#f6c945');
@@ -3521,9 +3567,11 @@ export default class TownScene extends Phaser.Scene {
       footprint: catalog.footprint,
       isPlaced: true,
     });
+    this.clearStaticPropsInsideFootprint(gridX, gridY, catalog.footprint);
     this.renderBuilding(building);
     this.redrawTerrainDetails();
     this.redrawTerrainVariety();
+    this.redrawWildernessDressing();
     this.doorById[building.id] = this.getDoorSpotForPlace(building);
     this.placeById[building.id] = building;
     this.getBuildingRuntime(id);
@@ -3837,7 +3885,10 @@ export default class TownScene extends Phaser.Scene {
   getDefaultPlaceLabelAlpha(place) {
     const priority = this.getPlaceLabelPriority(place);
     if (priority <= 1) return 0.96;
-    if (priority === 2) return this.isCompactView() ? 0.78 : 0.88;
+    if (priority === 2) {
+      if (this.useIsoRendering()) return this.isCompactView() ? 0.18 : 0.56;
+      return this.isCompactView() ? 0.78 : 0.88;
+    }
     if (priority === 3) {
       const visibleIds = this.isCompactView() ? COMPACT_SPECIAL_LABEL_IDS : DEFAULT_SPECIAL_LABEL_IDS;
       return visibleIds.has(place.id) && this.isLocationUnlocked(place.id) ? 0.74 : 0;
