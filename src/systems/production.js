@@ -101,6 +101,7 @@ export const PRODUCTION_PRIORITIES = {
 };
 
 export function normalizeProductionRuntime(raw = {}, buildingId = '') {
+  raw = raw || {}; // guard: default param only covers undefined, not a saved null
   const recipeId = RECIPE_BY_ID[raw.recipeId]?.building === buildingId
     ? raw.recipeId
     : DEFAULT_RECIPE_BY_BUILDING[buildingId] || null;
@@ -142,6 +143,7 @@ export const TRADE_PRICES = {
 };
 
 export function normalizeTradeSettings(raw = {}) {
+  raw = raw || {}; // guard: default param only covers undefined, not a saved null
   return {
     preferredExport: TRADE_PRICES[raw.preferredExport] ? raw.preferredExport : 'tradeGoods',
     autoExport: raw.autoExport !== false,
@@ -166,6 +168,7 @@ export const EQUIPMENT_QUALITY = {
 };
 
 export function normalizeHeroEquipment(raw = {}) {
+  raw = raw || {}; // guard: default param only covers undefined, not a saved null
   return {
     weapon: EQUIPMENT_QUALITY[raw.weapon] ? raw.weapon : 'Poor',
     armor: EQUIPMENT_QUALITY[raw.armor] ? raw.armor : 'Poor',
