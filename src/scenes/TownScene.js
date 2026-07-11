@@ -80,12 +80,42 @@ import {
   getBedCapacity,
   normalizeInventory,
   POI_RESOURCE_YIELDS,
-  PRODUCTION_RULES,
   RESOURCE_TYPES,
   REST_BUILDINGS,
   SERVICE_WALKERS,
   WALKER_DAILY_CAPS,
 } from '../systems/townEconomy.js';
+import {
+  BASE_STORAGE_CAP,
+  CARRIER_CONFIG,
+  EXTRACTION_BUILDINGS,
+  EXTRACTION_IDS,
+  EXTRACTION_RANGE_TILES,
+  FRONTIER_BUILD_SURCHARGE,
+  STORED_RESOURCES,
+  STOREHOUSE_CAP_PER_LEVEL,
+  TERRITORY_RADIUS,
+  normalizeNodeRuntime,
+} from '../systems/extraction.js';
+import {
+  DEFAULT_RECIPE_BY_BUILDING,
+  EQUIPMENT_QUALITY,
+  formatResourceAmountMap,
+  getRankForScore,
+  hasRecipeInputs,
+  HERO_SUPPLY_RESOURCES,
+  normalizeHeroEquipment,
+  normalizeProductionRuntime,
+  normalizeTradeSettings,
+  PROCESSED_RESOURCES,
+  PRODUCTION_PRIORITIES,
+  RECIPES_BY_BUILDING,
+  RECIPE_BY_ID,
+  RESOURCE_BY_ID,
+  RESOURCE_CATALOG,
+  TOWN_RANKS,
+  TRADE_PRICES,
+} from '../systems/production.js';
 import { getResponsiveUi } from '../ui/responsive.js';
 import {
   getIsoDepth,
@@ -136,7 +166,7 @@ const IMPORTANT_BUBBLE_DURATION_MS = 5600;
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
 const SAVE_KEY = 'golden-whale-guild-save-v2';
-const SAVE_VERSION = 9;
+const SAVE_VERSION = 10;
 const TAP_MOVE_THRESHOLD = 14;
 const SIMULATION_DAY_MS = 45000;
 const HERO_LABEL_DEFAULT_ALPHA = 0;
@@ -168,6 +198,7 @@ const BUILD_TAB_ICON_KEYS = {
   core: 'ui_build_category_core',
   rest: 'ui_build_category_rest',
   economy: 'ui_build_category_shops',
+  production: 'ui_build_category_shops',
   defense: 'ui_build_category_defense',
   premium: 'ui_build_category_premium',
   social: 'ui_build_category_social',
@@ -663,6 +694,7 @@ export default class TownScene extends Phaser.Scene {
     };
     this.completedObjectives = new Set(saved?.completedObjectives || []);
     this.townStageId = saved?.townStageId || 'garage';
+    this.townRankId = saved?.townRankId || 'camp';
     this.townIdentityId = saved?.townIdentityId || 'balanced';
     this.townLog = Array.isArray(saved?.townLog) ? saved.townLog.slice(-80) : [];
     this.crises = saved?.crises || {};
@@ -684,12 +716,29 @@ export default class TownScene extends Phaser.Scene {
       : {};
     // town stores + service-walker state (walkers regenerate from buildings)
     this.townInventory = normalizeInventory(saved?.townInventory);
+    this.tradeSettings = normalizeTradeSettings(saved?.tradeSettings);
+    this.productionSummary = {
+      producedToday: {},
+      consumedToday: {},
+      incidents: Array.isArray(saved?.productionIncidents) ? saved.productionIncidents.slice(-8) : [],
+    };
     this.areaReputation = this.normalizeAreaReputation(saved?.areaReputation);
     this.townReputation = Number.isFinite(saved?.townReputation) ? saved.townReputation : 50;
     this.townPrestige = Number.isFinite(saved?.townPrestige) ? saved.townPrestige : 0;
     this.serviceWalkers = [];
     this.walkerRotation = 0;
     this.walkerDailyTally = { threatReduction: 0, evangelistGold: 0 };
+    // resource extraction: node runtime, visible carriers, and harvested/
+    // regrowing forest cells. Nodes lazily hydrate from POI_RESOURCE_YIELDS.
+    this.resourceNodes = this.hydrateResourceNodes(saved?.resourceNodes);
+    this.carriers = [];
+    this.harvestedForestCells = new Map(
+      Array.isArray(saved?.harvestedForest)
+        ? saved.harvestedForest
+          .filter((entry) => entry && typeof entry.key === 'string')
+          .map((entry) => [entry.key, Number(entry.regrowDay) || 0])
+        : [],
+    );
     this.activeMonsterActors = [];
     this.aftermathDrops = this.normalizeAftermathDrops(this.monsterState.aftermathDrops);
     this.autonomousExplorerLimit = 2;
@@ -720,6 +769,7 @@ export default class TownScene extends Phaser.Scene {
     this.buildMode = null;
     this.buildPreviewCell = null;
     this.buildMenuCategory = 'core';
+    this.storeFilter = 'all';
     this.buildMenuSelectedItemId = 'guildhall';
     this.buildMenuSelectionByCategory = { core: 'guildhall' };
 
@@ -776,6 +826,7 @@ export default class TownScene extends Phaser.Scene {
     this.publishTownHint();
     this.checkUnlocks(true);
     this.checkStageProgression(true);
+    this.checkTownRankProgression(true);
     this.checkTownIdentity(true);
 
     this.scene.launch('UIScene');
@@ -816,9 +867,20 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-open-delete', this.openDeleteTool, this);
     this.game.events.on('gwg-assign-quest', this.assignQuestHeroFromUi, this);
     this.game.events.on('gwg-poi-action', this.runPoiAction, this);
+    this.game.events.on('gwg-node-survey', this.surveyNode, this);
+    this.game.events.on('gwg-node-access', this.establishNodeAccess, this);
+    this.game.events.on('gwg-node-gatherer', this.assignNodeGatherer, this);
+    this.game.events.on('gwg-node-abandon', this.abandonNode, this);
     this.game.events.on('gwg-confirm-build', this.confirmRoadPlan, this);
     this.game.events.on('gwg-focus-hero', this.focusHeroFromRoster, this);
     this.game.events.on('gwg-toggle-hero-favorite', this.toggleHeroFavoriteFromUi, this);
+    this.game.events.on('gwg-production-recipe', this.setProductionRecipeFromUi, this);
+    this.game.events.on('gwg-production-toggle', this.toggleProductionFromUi, this);
+    this.game.events.on('gwg-production-priority', this.cycleProductionPriorityFromUi, this);
+    this.game.events.on('gwg-equip-hero', this.equipHeroFromUi, this);
+    this.game.events.on('gwg-equip-all', this.equipAllHeroesFromUi, this);
+    this.game.events.on('gwg-trade-action', this.runTradeActionFromUi, this);
+    this.game.events.on('gwg-store-filter', this.setStoreFilterFromUi, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       window.removeEventListener('resize', refreshResponsiveState);
       window.removeEventListener('orientationchange', refreshResponsiveState);
@@ -859,9 +921,20 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-open-delete', this.openDeleteTool, this);
       this.game.events.off('gwg-assign-quest', this.assignQuestHeroFromUi, this);
       this.game.events.off('gwg-poi-action', this.runPoiAction, this);
+      this.game.events.off('gwg-node-survey', this.surveyNode, this);
+      this.game.events.off('gwg-node-access', this.establishNodeAccess, this);
+      this.game.events.off('gwg-node-gatherer', this.assignNodeGatherer, this);
+      this.game.events.off('gwg-node-abandon', this.abandonNode, this);
       this.game.events.off('gwg-confirm-build', this.confirmRoadPlan, this);
       this.game.events.off('gwg-focus-hero', this.focusHeroFromRoster, this);
       this.game.events.off('gwg-toggle-hero-favorite', this.toggleHeroFavoriteFromUi, this);
+      this.game.events.off('gwg-production-recipe', this.setProductionRecipeFromUi, this);
+      this.game.events.off('gwg-production-toggle', this.toggleProductionFromUi, this);
+      this.game.events.off('gwg-production-priority', this.cycleProductionPriorityFromUi, this);
+      this.game.events.off('gwg-equip-hero', this.equipHeroFromUi, this);
+      this.game.events.off('gwg-equip-all', this.equipAllHeroesFromUi, this);
+      this.game.events.off('gwg-trade-action', this.runTradeActionFromUi, this);
+      this.game.events.off('gwg-store-filter', this.setStoreFilterFromUi, this);
     });
 
     this.game.events.emit(
@@ -890,6 +963,7 @@ export default class TownScene extends Phaser.Scene {
         stats: parsed.stats || {},
         heroStats: parsed.heroStats || {},
         townStageId: parsed.townStageId || 'garage',
+        townRankId: parsed.townRankId || 'camp',
         townIdentityId: parsed.townIdentityId || 'balanced',
         townLog: Array.isArray(parsed.townLog) ? parsed.townLog : [],
         crises: parsed.crises || {},
@@ -898,6 +972,10 @@ export default class TownScene extends Phaser.Scene {
         discoveredPois: Array.isArray(parsed.discoveredPois) ? parsed.discoveredPois : [],
         poiCooldowns: parsed.poiCooldowns || null,
         townInventory: parsed.townInventory || null,
+        tradeSettings: parsed.tradeSettings || null,
+        productionIncidents: Array.isArray(parsed.productionIncidents) ? parsed.productionIncidents : [],
+        resourceNodes: parsed.resourceNodes && typeof parsed.resourceNodes === 'object' ? parsed.resourceNodes : null,
+        harvestedForest: Array.isArray(parsed.harvestedForest) ? parsed.harvestedForest : null,
         areaReputation: parsed.areaReputation || {},
         townReputation: Number.isFinite(parsed.townReputation) ? parsed.townReputation : null,
         townPrestige: Number.isFinite(parsed.townPrestige) ? parsed.townPrestige : null,
@@ -1235,6 +1313,7 @@ export default class TownScene extends Phaser.Scene {
       upkeepPaid: 0,
       overloadedDays: 0,
       lastUpkeepDay: 0,
+      production: normalizeProductionRuntime({}, getBaseBuildingId(id)),
     };
     this.cityState.buildingRuntime[id] = {
       ...defaults,
@@ -1245,6 +1324,7 @@ export default class TownScene extends Phaser.Scene {
       actionDays: {
         ...(savedRuntime.actionDays || {}),
       },
+      production: normalizeProductionRuntime(savedRuntime.production, getBaseBuildingId(id)),
     };
     return this.cityState.buildingRuntime[id];
   }
@@ -1381,6 +1461,14 @@ export default class TownScene extends Phaser.Scene {
     if (role?.inputResource && (this.townInventory?.[role.inputResource] || 0) <= 0) {
       problems.push({ text: role.lacking, className: 'gwg-bad' });
     }
+    const production = this.getProductionRecipes(place).length ? this.getProductionState(place) : null;
+    if (production && /Waiting|Locked/.test(production.lastStatus || '')) {
+      problems.push({ text: `Production ${production.lastStatus.toLowerCase()}.`, className: 'gwg-bad' });
+    }
+    if (getBaseBuildingId(place.baseId || place.id) === 'warehouse') {
+      const full = PROCESSED_RESOURCES.filter((id) => this.isResourceStorageFull(id));
+      if (full.length) problems.push({ text: `Finished storage full: ${full.join(', ')}.`, className: 'gwg-bad' });
+    }
     const areaRep = this.getAreaReputation(this.getAreaIdForPlace(place));
     if (areaRep >= 45) {
       problems.push({ text: `Local danger reputation ${areaRep}/100. Heroes distrust the neighborhood.`, className: 'gwg-bad' });
@@ -1405,7 +1493,12 @@ export default class TownScene extends Phaser.Scene {
     const progressMet = (Number(runtime.upgradeProgress) || 0) >= requiredProgress;
     const usageMet = (Number(runtime.usageCount) || 0) >= requiredUses;
     const counterMet = counterValue >= counterGoal;
-    const met = nextLevel <= 2 ? (progressMet || usageMet || counterMet) : (progressMet && (usageMet || counterMet));
+    const materialCost = nextLevel >= 3 && getBuildingCatalogEntry(place.id)
+      ? { planks: Math.max(1, nextLevel - 2), ...(nextLevel >= 4 ? { tools: 1 } : {}) }
+      : {};
+    const materialsMet = hasRecipeInputs(this.townInventory, materialCost);
+    const usageRequirementMet = nextLevel <= 2 ? (progressMet || usageMet || counterMet) : (progressMet && (usageMet || counterMet));
+    const met = usageRequirementMet && materialsMet;
     const counterLabel = counterKey === 'usageCount'
       ? `${runtime.usageCount || 0}/${requiredUses} uses`
       : `${counterValue}/${counterGoal} ${counterKey.replace(/[A-Z]/g, (m) => ` ${m.toLowerCase()}`)}`;
@@ -1413,7 +1506,9 @@ export default class TownScene extends Phaser.Scene {
       met,
       requiredProgress,
       requiredUses,
-      text: `Growth: ${Math.floor(runtime.upgradeProgress || 0)}/${requiredProgress}% or ${counterLabel}.`,
+      materialCost,
+      materialsMet,
+      text: `Growth: ${Math.floor(runtime.upgradeProgress || 0)}/${requiredProgress}% or ${counterLabel}.${Object.keys(materialCost).length ? ` Materials: ${formatResourceAmountMap(materialCost)} (${materialsMet ? 'ready' : 'short'}).` : ''}`,
       blockedText: Phaser.Utils.Array.GetRandom(BUILDING_SATIRE_LINES.progressBlocked),
     };
   }
@@ -1699,6 +1794,7 @@ export default class TownScene extends Phaser.Scene {
       completedObjectives: [...this.completedObjectives],
       stats: { ...this.stats },
       townStageId: this.townStageId,
+      townRankId: this.townRankId,
       townIdentityId: this.townIdentityId,
       townLog: (this.townLog || []).slice(-80),
       crises: { ...this.crises },
@@ -1707,6 +1803,10 @@ export default class TownScene extends Phaser.Scene {
       discoveredPois: [...(this.discoveredPois || [])],
       poiCooldowns: { ...(this.poiCooldowns || {}) },
       townInventory: { ...(this.townInventory || {}) },
+      tradeSettings: structuredClone(this.tradeSettings || normalizeTradeSettings()),
+      productionIncidents: (this.productionSummary?.incidents || []).slice(-8),
+      resourceNodes: structuredClone(this.resourceNodes || {}),
+      harvestedForest: [...(this.harvestedForestCells || new Map())].map(([key, regrowDay]) => ({ key, regrowDay })),
       areaReputation: { ...(this.areaReputation || {}) },
       townReputation: this.townReputation,
       townPrestige: this.townPrestige,
@@ -1762,12 +1862,14 @@ export default class TownScene extends Phaser.Scene {
         resentmentTargetId: hero.stats.resentmentTargetId || null,
         injuredUntilDay: hero.stats.injuredUntilDay || 0,
         injuryState: hero.stats.injuryState || 'healthy',
+        gatheringNodeId: hero.stats.gatheringNodeId || null,
         deathDay: hero.stats.deathDay || 0,
         deathLocation: hero.stats.deathLocation || null,
         favorite: Boolean(hero.stats.favorite),
         intent: hero.intent ? { ...hero.intent } : null,
         animationState: hero.animationState || hero.stats.animationState || 'idle',
         premiumExposure: hero.stats.premiumExposure || 0,
+        equipment: normalizeHeroEquipment(hero.stats.equipment),
         awayUntil: hero.awayUntil || 0,
       }])),
     };
@@ -1899,6 +2001,7 @@ export default class TownScene extends Phaser.Scene {
   openTownStoresPanel() {
     this.activeInspector = { type: 'stores' };
     this.clearSelection(false);
+    const townRank = this.getTownRankSnapshot();
     const resourceUse = {
       wood: {
         gained: 'Wood Grove, Resource Grove, exploration hauls',
@@ -1908,7 +2011,7 @@ export default class TownScene extends Phaser.Scene {
       iron: {
         gained: 'Iron Outcrop, Old Ruins, dangerous exploration',
         used: 'Blacksmith gear production and future defense upgrades',
-        shortage: (this.townInventory?.iron || 0) <= 0 && (this.townInventory?.gear || 0) <= 0 ? 'No iron or gear stock. Heroes are bringing optimism to weapon fights.' : '',
+        shortage: (this.townInventory?.iron || 0) <= 0 && ((this.townInventory?.weapons || 0) + (this.townInventory?.armor || 0)) <= 0 ? 'No iron or equipment stock. Heroes are bringing optimism to weapon fights.' : '',
       },
       herbs: {
         gained: 'Herb Patch, Resource Grove, careful exploration',
@@ -1925,41 +2028,86 @@ export default class TownScene extends Phaser.Scene {
         used: 'Healing injured or missing heroes faster',
         shortage: this.getActiveHeroes().some((hero) => this.isHeroInjured(hero)) ? 'Injuries detected. Potions are no longer decorative soup.' : '',
       },
-      gear: {
+      weapons: {
         gained: 'Blacksmith from iron',
         used: 'Quest success, monster response, exploration safety',
-        shortage: (this.townInventory?.gear || 0) <= 1 && this.resources.threat > 45 ? 'Threat is rising and gear stock is thin.' : '',
+        shortage: (this.townInventory?.weapons || 0) <= 1 && this.resources.threat > 45 ? 'Threat is rising and weapon stock is thin.' : '',
       },
+      armor: { gained: 'Blacksmith from iron', used: 'Injury and death mitigation', shortage: '' },
+      planks: { gained: 'Sawmill from wood', used: 'Workshops and construction progression', shortage: '' },
+      tools: { gained: 'Workshop or Blacksmith', used: 'Extraction and production efficiency', shortage: '' },
+      tradeGoods: { gained: 'Salvage Yard from loot', used: 'Stable Market exports', shortage: '' },
+      premiumSalvage: { gained: 'Premium wreckage nodes', used: 'Premium Fabricator', shortage: '' },
+      premiumComponents: { gained: 'Premium Fabricator', used: 'Premium hero equipment', shortage: '' },
     };
-    const rows = RESOURCE_TYPES.map((resource) => {
+    const rows = RESOURCE_TYPES
+      .filter((resource) => this.storeFilter === 'all' || RESOURCE_BY_ID[resource.id]?.group === this.storeFilter)
+      .map((resource) => {
       const info = resourceUse[resource.id] || {};
       const amount = this.townInventory?.[resource.id] || 0;
+      const stored = STORED_RESOURCES.includes(resource.id) || PROCESSED_RESOURCES.includes(resource.id);
+      const cap = this.getStorageCap(resource.id);
+      const incoming = this.getIncomingDeliveries(resource.id);
+      const production = this.getResourceProductionRate(resource.id);
+      const full = stored && amount >= cap;
       return {
         title: resource.label,
-        meta: `${amount}`,
-        kind: info.shortage ? 'shady' : 'fair',
+        meta: `${RESOURCE_BY_ID[resource.id]?.group || 'stock'} - ${stored ? `${amount}/${cap}` : amount}`,
+        kind: (info.shortage || full) ? 'shady' : 'fair',
         preview: this.getAssetPreviewUrl(resource.icon),
         lines: [
           resource.blurb,
+          ...(stored ? [`Storage: ${amount}/${cap}${incoming ? ` (+${incoming} incoming)` : ''}. Extraction rate ~${production}/day.`] : []),
           `Gained from: ${info.gained || 'town events and future systems'}.`,
           `Used by: ${info.used || 'future town services'}.`,
-          ...(info.shortage ? [{ text: info.shortage, className: 'gwg-bad' }] : [{ text: 'No urgent shortage right now.', className: 'gwg-muted' }]),
+          ...(full ? [{ text: 'Storage FULL - extraction paused. Build/upgrade a Storehouse.', className: 'gwg-bad' }] : []),
+          ...(info.shortage ? [{ text: info.shortage, className: 'gwg-bad' }] : (full ? [] : [{ text: 'No urgent shortage right now.', className: 'gwg-muted' }])),
         ],
       };
     });
     this.game.events.emit('gwg-inspector-open', {
       panelType: 'stores',
       title: 'Town Stores',
-      subtitle: `${formatInventoryLine(this.townInventory)} - resources are local, fictional, and judgmental`,
-      sections: [{
-        title: 'Why This Matters',
-        lines: [
-          'Resources are the city-builder pressure under the satire: services turn stored stuff into hero survival.',
-          'Shortage notes point to useful buildings instead of asking you to memorize the economy.',
-        ],
-      }],
+      subtitle: `${townRank.name} - rank score ${townRank.score}${townRank.next ? `/${townRank.next.score}` : ' / MAX'}`,
+      tabs: [
+        { id: 'all', label: 'All', event: 'gwg-store-filter', active: this.storeFilter === 'all' },
+        { id: 'raw', label: 'Raw', event: 'gwg-store-filter', active: this.storeFilter === 'raw' },
+        { id: 'processed', label: 'Processed', event: 'gwg-store-filter', active: this.storeFilter === 'processed' },
+        { id: 'hero', label: 'Hero Supplies', event: 'gwg-store-filter', active: this.storeFilter === 'hero' },
+        { id: 'trade', label: 'Trade', event: 'gwg-store-filter', active: this.storeFilter === 'trade' },
+      ],
+      sections: [
+        {
+          title: 'Why This Matters',
+          lines: [
+            'Raw stock travels to production. Finished goods supply heroes, construction, and trade.',
+            'Shortage notes point to useful buildings instead of asking you to memorize the economy.',
+          ],
+        },
+        {
+          title: `Town Rank - ${townRank.name}`,
+          lines: [
+            townRank.description,
+            townRank.next ? `Progress: ${townRank.score}/${townRank.next.score} toward ${townRank.next.name}.` : 'Progress: MAX. The kingdom has noticed the invoices.',
+            ...townRank.requirements,
+          ],
+        },
+        {
+          title: 'External Trade',
+          lines: this.getTradeInspectorLines(),
+        },
+      ],
       rows,
+      actions: [
+        { label: this.tradeSettings.autoExport ? 'Pause Auto-Export' : 'Enable Auto-Export', event: 'gwg-trade-action', id: 'toggle-auto' },
+        { label: 'Change Export Good', event: 'gwg-trade-action', id: 'cycle-export' },
+      ],
     });
+  }
+
+  setStoreFilterFromUi(filter) {
+    this.storeFilter = ['all', 'raw', 'processed', 'hero', 'trade'].includes(filter) ? filter : 'all';
+    this.openTownStoresPanel();
   }
 
   getOnboardingStep() {
@@ -3431,6 +3579,8 @@ export default class TownScene extends Phaser.Scene {
       for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
         const cell = this.gridCells.get(gridKey(x, y));
         if (!cell || cell.road || cell.occupiedBy || blocked.has(gridKey(x, y))) continue;
+        // harvested forest cells stay cleared until they regrow
+        if (this.harvestedForestCells?.has(gridKey(x, y))) continue;
         const revealed = this.isRevealed(x, y);
         if (!revealed) continue;
         const hash = Math.abs((x * 73856093) ^ (y * 19349663)) % 100000;
@@ -3967,6 +4117,9 @@ export default class TownScene extends Phaser.Scene {
       case 'lootbox': return this.isBuildingPlaced('whale') || this.resources.corruption > 35;
       case 'premiumItems': return hasPremiumItem;
       case 'stage2': return this.getStageIndex() >= 1 || (this.stats.policiesChosen || 0) >= 3;
+      case 'rank1': return this.getTownRankSnapshot().index >= 1;
+      case 'rank2': return this.getTownRankSnapshot().index >= 2;
+      case 'premiumProduction': return this.getTownRankSnapshot().index >= 3 && this.resources.corruption >= 40;
       default: return true;
     }
   }
@@ -4040,14 +4193,31 @@ export default class TownScene extends Phaser.Scene {
         .some((cell) => this.gridCells.get(gridKey(cell.x, cell.y))?.road);
       if (!hasRoad) return { valid: false, reason: 'Needs an adjacent road. Heroes dislike conceptual access.' };
     }
+    const baseCost = movingPlace
+      ? this.getMoveBuildingCost(movingPlace)
+      : this.getEffectiveBuildCost(catalog, gridX, gridY, footprint);
+    const outsideTerritory = !movingPlace && baseCost > catalog.cost;
     return {
-      valid: this.resources.gold >= (movingPlace ? this.getMoveBuildingCost(movingPlace) : catalog.cost),
-      reason: this.resources.gold >= (movingPlace ? this.getMoveBuildingCost(movingPlace) : catalog.cost)
-        ? ''
+      valid: this.resources.gold >= baseCost,
+      reason: this.resources.gold >= baseCost
+        ? (outsideTerritory ? 'Frontier build: costs extra without nearby territory. An Outpost fixes that.' : '')
         : 'Not enough gold. The accountant recommends another road to nowhere.',
-      cost: movingPlace ? this.getMoveBuildingCost(movingPlace) : catalog.cost,
+      cost: baseCost,
       footprint,
+      outsideTerritory,
     };
+  }
+
+  // buildings placed outside supported territory cost more; the frontier
+  // toolkit (camps/storehouse/outpost) is exempt so you can bootstrap out there
+  getEffectiveBuildCost(catalog, gridX, gridY, footprint = { w: 2, h: 2 }) {
+    const base = catalog.cost;
+    const exempt = EXTRACTION_IDS.includes(catalog.id) || catalog.id === 'storehouse' || catalog.id === 'frontier_outpost';
+    if (exempt) return base;
+    const centerX = gridX + footprint.w / 2;
+    const centerY = gridY + footprint.h / 2;
+    if (this.isInTerritory(centerX, centerY)) return base;
+    return Math.round(base * FRONTIER_BUILD_SURCHARGE);
   }
 
   updateBuildPreview(worldX, worldY) {
@@ -6002,7 +6172,7 @@ export default class TownScene extends Phaser.Scene {
   getPoiHeroSuccessChance(hero, place, actionConfig = this.getPoiActionConfig(place)) {
     const power = hero?.stats?.power || 1;
     const morale = hero?.stats?.morale || 50;
-    const gear = this.townInventory?.gear || 0;
+    const gear = this.getHeroEquipmentBonus(hero).power;
     const areaRisk = this.areaReputation?.[place.id]?.danger || 0;
     const threatPenalty = Math.round((this.resources.threat || 0) * 0.25);
     let base = 68 + power * 2 + Math.floor((morale - 50) / 8) + Math.min(8, gear);
@@ -6054,11 +6224,53 @@ export default class TownScene extends Phaser.Scene {
     if (id === 'market' && (inventory.loot || 0) >= 3) {
       return `DEMAND: ${inventory.loot} loot stockpiled. ${built ? 'Upgrade to convert faster.' : 'A Market turns it into gold.'}`;
     }
-    if (id === 'blacksmith' && (inventory.iron || 0) > 0 && (inventory.gear || 0) === 0) {
-      return `DEMAND: ${inventory.iron} iron waiting to become gear.`;
+    if (id === 'blacksmith' && (inventory.iron || 0) > 0 && ((inventory.weapons || 0) + (inventory.armor || 0)) === 0) {
+      return `DEMAND: ${inventory.iron} iron waiting to become weapons, armor, or tools.`;
+    }
+    if (id === 'sawmill' && (inventory.wood || 0) >= 4 && (inventory.planks || 0) < 4) {
+      return `DEMAND: ${inventory.wood} wood is waiting for a useful rectangular future.`;
+    }
+    if (id === 'workshop' && (inventory.planks || 0) >= 2 && (inventory.iron || 0) > 0 && (inventory.tools || 0) < 3) {
+      return 'DEMAND: extraction crews need tools. The inputs are already available.';
+    }
+    if (id === 'salvage_yard' && (inventory.loot || 0) >= 4) {
+      return `DEMAND: ${inventory.loot} loot can become trade goods or recovered equipment.`;
+    }
+    if (id === 'warehouse') {
+      const full = PROCESSED_RESOURCES.filter((res) => this.isResourceStorageFull(res));
+      if (full.length) return `DEMAND: finished storage full (${full.join(', ')}). Production is becoming furniture.`;
     }
     if (['watchtower', 'arena'].includes(id) && this.resources.threat >= 55) {
       return `DEMAND: threat at ${this.resources.threat}. Defenses cut attack damage and fog danger.`;
+    }
+    // extraction camps: point at a discovered matching node with no camp yet
+    const extractionConfig = EXTRACTION_BUILDINGS[id];
+    if (extractionConfig) {
+      const openNode = Object.values(this.explorationPointById || {}).find((place) => (
+        this.isResourceNode(place)
+        && (extractionConfig.accepts || [extractionConfig.resource]).includes(POI_RESOURCE_YIELDS[place.id]?.resource)
+        && this.isRevealed(place.gridX, place.gridY)
+        && this.getCampsNearNode(place).length === 0
+      ));
+      if (openNode) return `DEMAND: ${openNode.name} discovered with no camp. Build within 16 tiles to extract ${extractionConfig.resource}.`;
+      if (id === 'lumber_camp' && (this.forestBlockedCells?.size || 0) > 0) {
+        return 'DEMAND: forests can be harvested for wood. Place near dense forest.';
+      }
+      return '';
+    }
+    if (id === 'storehouse') {
+      const full = STORED_RESOURCES.filter((res) => this.isResourceStorageFull(res));
+      if (full.length) return `DEMAND: ${full.join(', ')} storage full. Build/upgrade a Storehouse to stop wasting extraction.`;
+      return '';
+    }
+    if (id === 'frontier_outpost') {
+      const remoteNode = Object.values(this.explorationPointById || {}).find((place) => (
+        this.isResourceNode(place)
+        && this.isRevealed(place.gridX, place.gridY)
+        && !this.isInTerritory(place.gridX, place.gridY)
+      ));
+      if (remoteNode) return `DEMAND: distant nodes like ${remoteNode.name} sit outside territory. An Outpost makes frontier building cheaper and safer.`;
+      return '';
     }
     return '';
   }
@@ -6121,6 +6333,101 @@ export default class TownScene extends Phaser.Scene {
     ];
   }
 
+  getProductionInspector(place) {
+    const recipes = this.getProductionRecipes(place);
+    if (!recipes.length) return null;
+    const state = this.getProductionState(place);
+    const recipe = RECIPE_BY_ID[state.recipeId] || recipes[0];
+    const priority = PRODUCTION_PRIORITIES[state.priority] || PRODUCTION_PRIORITIES.normal;
+    const buffer = Object.fromEntries(Object.entries(state.outputBuffer || {}).filter(([, amount]) => amount > 0));
+    const nextEvolution = state.batches < 8 ? 8 : state.batches < 20 ? 20 : state.batches < 40 ? 40 : null;
+    return {
+      state,
+      recipe,
+      recipes,
+      lines: [
+        `Recipe: ${recipe?.name || 'None selected'}`,
+        recipe ? `Inputs: ${formatResourceAmountMap(recipe.inputs)}` : 'Inputs: none',
+        recipe ? `Outputs: ${formatResourceAmountMap(recipe.outputs)}` : 'Outputs: none',
+        recipe ? `Production time: ${recipe.days} day${recipe.days === 1 ? '' : 's'} - priority ${priority.label}` : 'Production time: idle',
+        `Status: ${state.lastStatus}`,
+        `Progress: ${Math.floor(state.progress * 100) / 100}/${recipe?.days || 1} - batches ${state.batches}`,
+        Object.keys(buffer).length ? `Awaiting delivery: ${formatResourceAmountMap(buffer)}` : 'Awaiting delivery: none',
+        nextEvolution
+          ? `Use evolution: ${state.batches}/${nextEvolution} batches toward the next efficiency step.`
+          : 'Use evolution: mature production line; further use still supports town rank.',
+      ],
+      actions: [
+        ...recipes.map((option) => ({
+          label: option.id === state.recipeId ? `${option.name} - Selected` : option.name,
+          event: 'gwg-production-recipe',
+          id: `${place.id}:${option.id}`,
+          disabled: option.id === state.recipeId || this.getProductionRank() < option.minRank,
+          className: option.id.includes('premium') || option.id.includes('fabricate') ? 'gwg-whale' : '',
+        })),
+        { label: state.paused ? 'Resume Production' : 'Pause Production', event: 'gwg-production-toggle', id: place.id },
+        { label: `Priority: ${priority.label}`, event: 'gwg-production-priority', id: place.id },
+      ],
+    };
+  }
+
+  runTradeActionFromUi(actionId) {
+    const market = this.getPlacedBuildingsByBaseId('market')[0];
+    if (!market) return;
+    const exports = ['tradeGoods', 'planks', 'tools', 'weapons', 'armor', 'potions'];
+    if (actionId === 'toggle-auto') this.tradeSettings.autoExport = !this.tradeSettings.autoExport;
+    else if (actionId === 'cycle-export') {
+      const current = exports.indexOf(this.tradeSettings.preferredExport);
+      this.tradeSettings.preferredExport = exports[(current + 1) % exports.length];
+    } else if (actionId === 'buy-iron') {
+      const amount = 3;
+      const cost = TRADE_PRICES.iron.buy * amount;
+      if (this.resources.gold < cost) {
+        this.game.events.emit('gwg-event', `Need ${cost}g to import iron. The caravan accepts neither exposure nor optimism.`);
+        return;
+      }
+      this.applyDeltas({ gold: -cost });
+      this.addTownResource('iron', amount, 'Market import');
+    } else if (actionId === 'emergency-supplies') {
+      const cost = 260;
+      if (this.resources.gold < cost) {
+        this.game.events.emit('gwg-event', `Need ${cost}g for emergency supplies. Convenience remains inconveniently priced.`);
+        return;
+      }
+      this.applyDeltas({ gold: -cost, corruption: 2, trust: -1 });
+      this.addTownResource('wood', 3);
+      this.addTownResource('iron', 2);
+      this.addTownResource('herbs', 2);
+    }
+    const text = `Trade settings updated: ${this.tradeSettings.autoExport ? 'auto-exporting' : 'reserving'} ${RESOURCE_BY_ID[this.tradeSettings.preferredExport]?.label || this.tradeSettings.preferredExport}.`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.saveGame(false);
+    this.showPlaceInspector(market);
+  }
+
+  getTradeInspectorLines() {
+    const id = this.tradeSettings.preferredExport;
+    return [
+      `Auto-export: ${this.tradeSettings.autoExport ? 'On' : 'Off'}`,
+      `Preferred export: ${RESOURCE_BY_ID[id]?.label || id} (${TRADE_PRICES[id]?.sell || 0}g each)`,
+      `Reserve: ${this.tradeSettings.reserves[id] || 0} - current stock ${this.townInventory[id] || 0}`,
+      'Imports are deliberately expensive. The caravan has read the demand curve.',
+    ];
+  }
+
+  getTownHeroSupplyLines() {
+    const active = this.getActiveHeroes();
+    const weaponsNeeded = active.filter((hero) => normalizeHeroEquipment(hero.stats.equipment).weapon === 'Poor').length;
+    const armorNeeded = active.filter((hero) => this.getHeroTierIndex(hero) >= 2 && normalizeHeroEquipment(hero.stats.equipment).armor === 'Poor').length;
+    const potionNeeded = active.filter((hero) => this.isHeroInjured(hero) && normalizeHeroEquipment(hero.stats.equipment).potions <= 0).length;
+    return [
+      `Town stock: ${this.townInventory.weapons} weapons, ${this.townInventory.armor} armor, ${this.townInventory.potions} potions.`,
+      `Requests: ${weaponsNeeded} weapons, ${armorNeeded} veteran armor, ${potionNeeded} injury potions.`,
+      'Equip Best Available prioritizes weapon, armor, then a carried potion. Better town rank improves issued quality.',
+    ];
+  }
+
   getPlaceInspectorPayload(place) {
     if (place.mapPoint) {
       const actionConfig = this.getPoiActionConfig(place);
@@ -6133,32 +6440,41 @@ export default class TownScene extends Phaser.Scene {
         combat: 'Risk: combat. Injury is a real outcome.',
         corruption: 'Risk: premium residue. Gold likely, ethics optional.',
       }[actionConfig.risk] || 'Risk: unclear, which is also information.';
+      const node = this.isResourceNode(place) ? this.getResourceNode(place.id) : null;
+      const sections = [
+        {
+          title: 'Map Note',
+          lines: [place.description, ...(place.tooltipLines || [])].filter(Boolean),
+        },
+        {
+          title: 'Field Assessment',
+          lines: [
+            `Action: ${actionConfig.id === 'clear' ? 'Clear threat' : actionConfig.id === 'harvest' ? 'Harvest' : 'Investigate'}.`,
+            place.effect || 'A point of interest with opinions.',
+            this.getPoiRewardPreview(place, actionConfig),
+            `Danger: ${this.getPoiDangerLabel(place, actionConfig)}.`,
+            bestHero
+              ? `Best hero: ${bestHero.hero.def.name} (${bestHero.chance}% estimated success).`
+              : { text: 'Best hero: nobody free and healthy. Let someone recover first.', className: 'gwg-bad' },
+            riskLine,
+            onCooldown
+              ? { text: `Recently visited. Worth returning after Day ${cooldownDay}.`, className: 'gwg-muted' }
+              : 'A hero can be sent from town right now.',
+          ],
+        },
+      ];
+      if (node) {
+        sections.push({
+          title: 'Resource Node',
+          lines: this.getResourceNodeStatusLines(place, node),
+        });
+      }
       return {
         title: place.name,
-        subtitle: 'Exploration Point',
-        sections: [
-          {
-            title: 'Map Note',
-            lines: [place.description, ...(place.tooltipLines || [])].filter(Boolean),
-          },
-          {
-            title: 'Field Assessment',
-            lines: [
-              `Action: ${actionConfig.id === 'clear' ? 'Clear threat' : actionConfig.id === 'harvest' ? 'Harvest' : 'Investigate'}.`,
-              place.effect || 'A point of interest with opinions.',
-              this.getPoiRewardPreview(place, actionConfig),
-              `Danger: ${this.getPoiDangerLabel(place, actionConfig)}.`,
-              bestHero
-                ? `Best hero: ${bestHero.hero.def.name} (${bestHero.chance}% estimated success).`
-                : { text: 'Best hero: nobody free and healthy. Let someone recover first.', className: 'gwg-bad' },
-              riskLine,
-              onCooldown
-                ? { text: `Recently visited. Worth returning after Day ${cooldownDay}.`, className: 'gwg-muted' }
-                : 'A hero can be sent from town right now.',
-            ],
-          },
-        ],
+        subtitle: node ? 'Resource Node' : 'Exploration Point',
+        sections,
         actions: [
+          ...(node ? this.getResourceNodeActions(place, node) : []),
           {
             label: onCooldown ? `Visited (Day ${cooldownDay})` : actionConfig.label,
             event: 'gwg-poi-action',
@@ -6184,8 +6500,19 @@ export default class TownScene extends Phaser.Scene {
     const problems = metrics ? this.getBuildingProblems(place) : [];
     const specializations = catalog ? getBuildingSpecializations(place.id) : [];
     const specialization = metrics?.specialization || null;
+    const production = catalog && place.isPlaced ? this.getProductionInspector(place) : null;
     const detailLines = [place.description, ...(place.tooltipLines || [])].filter(Boolean).slice(0, 4);
     const actions = [];
+
+    if (production) actions.push(...production.actions);
+    if (baseId === 'guildhall') actions.push({ label: 'Equip All Heroes', event: 'gwg-equip-all', id: place.id });
+    if (baseId === 'market') {
+      actions.push(
+        { label: this.tradeSettings.autoExport ? 'Pause Auto-Export' : 'Enable Auto-Export', event: 'gwg-trade-action', id: 'toggle-auto' },
+        { label: 'Change Export Good', event: 'gwg-trade-action', id: 'cycle-export' },
+        { label: `Import 3 Iron (${TRADE_PRICES.iron.buy * 3}g)`, event: 'gwg-trade-action', id: 'buy-iron', disabled: this.resources.gold < TRADE_PRICES.iron.buy * 3 },
+      );
+    }
 
     if (info.cost && !info.maxed) {
       actions.push({
@@ -6253,6 +6580,9 @@ export default class TownScene extends Phaser.Scene {
       subtitle: lockReason || `Level ${info.level}${info.maxed ? ' / MAX' : ''}${catalog?.category ? ` - ${catalog.category}` : ''}${specialization ? ` - ${specialization.name}` : ''}`,
       primaryActions: actions,
       sections: [
+        ...(production ? [{ title: 'Production', lines: production.lines }] : []),
+        ...(baseId === 'market' ? [{ title: 'External Trade', lines: this.getTradeInspectorLines() }] : []),
+        ...(baseId === 'guildhall' ? [{ title: 'Hero Supply', lines: this.getTownHeroSupplyLines() }] : []),
         {
           title: 'What This Solves',
           lines: this.getBuildingClarityLines(place, role, metrics, problems),
@@ -6320,10 +6650,16 @@ export default class TownScene extends Phaser.Scene {
         }] : []),
         ...(metrics?.districtBonuses?.length ? [{
           title: 'District Bonuses',
-          lines: metrics.districtBonuses.map((bonus) => ({
-            text: `${bonus.name}: ${bonus.effect}`,
-            className: bonus.className || 'gwg-good',
-          })),
+          lines: metrics.districtBonuses.flatMap((bonus) => {
+            const contributors = [place, ...this.getNearbyPlacedBuildings(place, bonus.radius)]
+              .filter((candidate) => bonus.buildingIds.includes(getBaseBuildingId(candidate.baseId || candidate.id)))
+              .map((candidate) => candidate.name)
+              .slice(0, 5);
+            return [
+              { text: `${bonus.name}: ${bonus.effect}`, className: bonus.className || 'gwg-good' },
+              `Contributors: ${contributors.join(', ')}.`,
+            ];
+          }),
         }] : []),
         {
           title: 'Problems',
@@ -6948,6 +7284,7 @@ export default class TownScene extends Phaser.Scene {
     else if (this.activeInspector.type === 'report') this.showCycleReport();
     else if (this.activeInspector.type === 'townlog') this.openTownLog();
     else if (this.activeInspector.type === 'help') this.openHelpPanel();
+    else if (this.activeInspector.type === 'stores') this.openTownStoresPanel();
     else if (this.activeInspector.type === 'policies') this.showPolicyPanel();
     else if (this.activeInspector.type === 'loot') {
       const drop = this.aftermathDrops?.find((item) => item.id === this.activeInspector.id);
@@ -7248,6 +7585,112 @@ export default class TownScene extends Phaser.Scene {
     return this.buildingById?.guildhall || place;
   }
 
+  getHeroTierIndex(hero) {
+    const label = `${hero?.stats?.status || ''} ${hero?.stats?.currentPersonality || ''}`;
+    if (/Whale Champion|Sponsored Hero/i.test(label)) return 4;
+    if (/Champion|Town Legend/i.test(label)) return 3;
+    if (/Veteran|Mentor|Leader|Prophet/i.test(label)) return 2;
+    if (/Regular|Grinder|Optimist|Clerk|Merchant/i.test(label)) return 1;
+    return 0;
+  }
+
+  getHeroEquipmentBonus(hero) {
+    const equipment = normalizeHeroEquipment(hero?.stats?.equipment);
+    return {
+      power: (EQUIPMENT_QUALITY[equipment.weapon]?.power || 0) + (equipment.premium ? 2 : 0),
+      armor: EQUIPMENT_QUALITY[equipment.armor]?.armor || 0,
+      readiness: equipment.readiness || 0,
+    };
+  }
+
+  getEquipmentQualityForTown() {
+    const rank = this.getTownRankSnapshot().index;
+    if (rank >= 4) return 'Excellent';
+    if (rank >= 2) return 'Good';
+    return 'Common';
+  }
+
+  equipHeroBest(hero, quiet = false) {
+    if (!hero || hero.stats.active === false || hero.stats.deathDay) return false;
+    const equipment = normalizeHeroEquipment(hero.stats.equipment);
+    const quality = this.getEquipmentQualityForTown();
+    let changed = false;
+    if ((this.townInventory.weapons || 0) > 0 && equipment.weapon === 'Poor') {
+      this.townInventory.weapons -= 1;
+      equipment.weapon = quality;
+      changed = true;
+    }
+    if ((this.townInventory.armor || 0) > 0 && equipment.armor === 'Poor') {
+      this.townInventory.armor -= 1;
+      equipment.armor = quality;
+      changed = true;
+    }
+    if ((this.townInventory.potions || 0) > 0 && equipment.potions < 1) {
+      this.townInventory.potions -= 1;
+      equipment.potions += 1;
+      changed = true;
+    }
+    if (
+      (hero.stats.whaleAccess || this.getHeroTierIndex(hero) >= 4)
+      && (this.townInventory.premiumComponents || 0) > 0
+      && equipment.weapon !== 'Premium'
+    ) {
+      this.townInventory.premiumComponents -= 1;
+      equipment.weapon = 'Premium';
+      equipment.premium = true;
+      hero.stats.envy = Phaser.Math.Clamp((hero.stats.envy || 0) + 8, 0, 100);
+      this.applyDeltas({ corruption: 1, trust: -1 });
+      changed = true;
+    }
+    hero.stats.equipment = normalizeHeroEquipment(equipment);
+    if (changed && !quiet) {
+      const text = `${hero.def.name} equipped the best available town supplies. The armory called this allocation; everyone else called dibs.`;
+      this.game.events.emit('gwg-event', text);
+      this.addTownLog(text, 'npc');
+    }
+    return changed;
+  }
+
+  equipHeroFromUi(heroId) {
+    const hero = this.heroes?.find((item) => item.def.id === heroId);
+    if (!hero) return;
+    if (!this.equipHeroBest(hero)) this.game.events.emit('gwg-event', 'No useful equipment available. The Guild Hall issued encouragement instead.');
+    this.saveGame(false);
+    this.showHeroInspector(hero);
+  }
+
+  equipAllHeroesFromUi() {
+    let equipped = 0;
+    for (const hero of this.getActiveHeroes().sort((a, b) => this.getHeroTierIndex(b) - this.getHeroTierIndex(a))) {
+      if (this.equipHeroBest(hero, true)) equipped += 1;
+    }
+    const text = equipped
+      ? `Equipped ${equipped} hero${equipped === 1 ? '' : 'es'} from town stores. Procurement briefly resembled governance.`
+      : 'No heroes could use the current supply stock.';
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.saveGame(false);
+    if (this.activeInspector?.type === 'place' && this.buildingById[this.activeInspector.id]) this.showPlaceInspector(this.buildingById[this.activeInspector.id]);
+  }
+
+  getHeroSupplyLines(hero) {
+    const equipment = normalizeHeroEquipment(hero.stats.equipment);
+    const tier = this.getHeroTierIndex(hero);
+    const needs = [];
+    if (equipment.weapon === 'Poor') needs.push('weapon');
+    if (tier >= 2 && equipment.armor === 'Poor') needs.push('armor');
+    if (this.isHeroInjured(hero) && equipment.potions <= 0) needs.push('potion');
+    return [
+      `Weapon: ${equipment.weapon} (+${EQUIPMENT_QUALITY[equipment.weapon]?.power || 0} power)`,
+      `Armor: ${equipment.armor} (-${EQUIPMENT_QUALITY[equipment.armor]?.armor || 0} injury pressure)`,
+      `Carried potions: ${equipment.potions}/3`,
+      `Readiness: ${equipment.readiness}/100`,
+      needs.length
+        ? { text: `Requests: ${needs.join(', ')}. Unmet expectations reduce morale and retention.`, className: 'gwg-bad' }
+        : { text: 'Supply needs met for current tier.', className: 'gwg-good' },
+    ];
+  }
+
   getHeroInspectorPayload(hero) {
     const whaleAccess = hero.stats.whaleAccess ? 'Yes' : (hero.stats.debt > 250 ? 'Technically' : 'No');
     const history = (hero.stats.history || []).slice(-5).reverse();
@@ -7255,12 +7698,15 @@ export default class TownScene extends Phaser.Scene {
     return {
       title: hero.def.name,
       subtitle: `Status: ${hero.stats.status || hero.def.personality}`,
-      primaryActions: [{
-        label: hero.stats.favorite ? 'Unfavorite Hero' : 'Favorite Hero',
-        event: 'gwg-toggle-hero-favorite',
-        id: hero.def.id,
-        className: hero.stats.favorite ? 'gwg-favorite-action active' : 'gwg-favorite-action',
-      }],
+      primaryActions: [
+        { label: 'Equip Best Available', event: 'gwg-equip-hero', id: hero.def.id },
+        {
+          label: hero.stats.favorite ? 'Unfavorite Hero' : 'Favorite Hero',
+          event: 'gwg-toggle-hero-favorite',
+          id: hero.def.id,
+          className: hero.stats.favorite ? 'gwg-favorite-action active' : 'gwg-favorite-action',
+        },
+      ],
       sections: [
         {
           title: 'Identity',
@@ -7288,6 +7734,10 @@ export default class TownScene extends Phaser.Scene {
             `Animation: ${hero.animationState || 'idle'}${hero.hasStateFrames ? ' (state frames)' : ' (static fallback)'}`,
             this.getHeroRelationshipLine(hero),
           ],
+        },
+        {
+          title: 'Equipment & Readiness',
+          lines: this.getHeroSupplyLines(hero),
         },
         {
           title: 'Inventory',
@@ -7524,6 +7974,9 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.emit('gwg-event', `${place.name} is not ready to upgrade. ${requirement.blockedText}`);
       this.showPlaceInspector(place);
       return;
+    }
+    for (const [resource, amount] of Object.entries(requirement.materialCost || {})) {
+      this.townInventory[resource] = Math.max(0, (this.townInventory[resource] || 0) - amount);
     }
 
     const bonus = info.def?.deltas || {};
@@ -7796,6 +8249,7 @@ export default class TownScene extends Phaser.Scene {
         deathLocation: null,
           favorite: false,
           premiumExposure: 0,
+          equipment: normalizeHeroEquipment(),
           animationState: 'idle',
           ...def.stats,
           ...savedStats,
@@ -7816,6 +8270,7 @@ export default class TownScene extends Phaser.Scene {
           deathLocation: savedStats.deathLocation || null,
           favorite: Boolean(savedStats.favorite),
           premiumExposure: Number(savedStats.premiumExposure) || 0,
+          equipment: normalizeHeroEquipment(savedStats.equipment),
           animationState: savedStats.animationState || 'idle',
         },
         at: spot.id, pathNode: this.getPathNodeForPlaceId(spot.id)?.id || null, destination: null, state: 'idle',
@@ -8043,7 +8498,18 @@ export default class TownScene extends Phaser.Scene {
       }
 
       if (S.loyalty < 8 || S.morale < 8 || S.debt > 1600) {
-        this.leaveHeroPermanently(hero, 'The economy found the last nerve.');
+        const equipment = normalizeHeroEquipment(S.equipment);
+        const lodging = this.getLodgingReport();
+        const reason = lodging.homeless > 0
+          ? 'No bed remained, and sleeping beside industrial output lost its charm.'
+          : equipment.weapon === 'Poor' && this.getHeroTierIndex(hero) >= 2
+            ? 'The town kept offering veteran danger with rookie equipment.'
+            : this.resources.corruption > 80 && !S.whaleAccess
+              ? 'The premium dependency exceeded their remaining tolerance.'
+              : S.debt > 1600
+                ? 'Their debt became a district and they left before zoning approval.'
+                : 'The economy found the last nerve.';
+        this.leaveHeroPermanently(hero, reason);
         continue;
       }
 
@@ -8055,6 +8521,7 @@ export default class TownScene extends Phaser.Scene {
     this.maybeResolveItemConflict();
     this.buildRelationship(null, 'mentor');
     this.updateTownReputationStats();
+    this.checkTownRankProgression();
     if (this.heroTooltipTarget) this.showHeroInspector(this.heroTooltipTarget);
   }
 
@@ -8094,18 +8561,22 @@ export default class TownScene extends Phaser.Scene {
 
   getHeroArrivalTier() {
     this.updateTownReputationStats();
+    const rank = this.getTownRankSnapshot();
     const serviceQuality = Object.values(this.cityState?.buildingRuntime || {})
       .reduce((sum, runtime) => sum + (Number(runtime.serviceQuality) || 0), 0);
     const safety = Phaser.Math.Clamp(100 - this.resources.threat, 0, 100);
     const districtScore = this.getActiveDistrictBonuses().length * 5;
+    const supplyScore = Math.min(18, (this.townInventory.weapons || 0) * 3 + (this.townInventory.armor || 0) * 4 + (this.townInventory.potions || 0) * 2);
     const score = this.townReputation * 0.42
       + this.townPrestige * 0.34
       + safety * 0.18
       + serviceQuality * 0.5
-      + districtScore;
+      + districtScore
+      + supplyScore
+      + rank.index * 4;
     if (this.getPlaceLevel(this.buildingById.whale) >= 4 && this.resources.corruption > 58) return 'Whale Champion';
-    if (score >= 82) return 'Champion';
-    if (score >= 64 || this.resources.threat > 70) return 'Veteran';
+    if (rank.index >= 4 && score >= 82) return 'Champion';
+    if (rank.index >= 2 && (score >= 64 || this.resources.threat > 70)) return 'Veteran';
     if (score >= 42) return 'Regular';
     return 'Rookie';
   }
@@ -8159,10 +8630,15 @@ export default class TownScene extends Phaser.Scene {
     this.setHeroAnimationState(candidate, 'happy');
     this.addHeroHistory(candidate, `Returned as ${candidate.stats.status}, suspiciously informed.`);
     this.refreshHeroStatusMarker(candidate);
-    this.game.events.emit(
-      'gwg-event',
-      `${candidate.def.name} arrived as ${candidate.stats.status}. Capacity ${activeCount + 1}/${townCapacity}.`,
-    );
+    const supplyReason = (this.townInventory.armor || 0) > 0 && (this.townInventory.potions || 0) > 0
+      ? 'armor, potions, and a reputation for surviving'
+      : (this.townInventory.weapons || 0) > 0
+        ? 'available weapons and a functioning road network'
+        : 'beds, quest rumors, and dangerous optimism';
+    const arrivalText = `${candidate.def.name} arrived as ${candidate.stats.status}, attracted by ${supplyReason}. Capacity ${activeCount + 1}/${townCapacity}.`;
+    this.game.events.emit('gwg-event', arrivalText);
+    this.addTownLog(arrivalText, 'npc');
+    this.addReportLine('npc', arrivalText);
     this.scheduleAmbient(candidate, Phaser.Math.Between(1200, 3200));
   }
 
@@ -9479,7 +9955,8 @@ export default class TownScene extends Phaser.Scene {
       const tiredPenalty = hero.stats.morale < 30 ? 3 : 0;
       const premiumBonus = hero.stats.whaleAccess ? 3 : 0;
       const roll = Phaser.Math.Between(0, 8);
-      const score = hero.stats.power + Math.floor(defenseBonus / 2) + premiumBonus + roll - tiredPenalty;
+      const equipment = this.getHeroEquipmentBonus(hero);
+      const score = hero.stats.power + equipment.power + Math.floor(equipment.readiness / 25) + Math.floor(defenseBonus / 2) + premiumBonus + roll - tiredPenalty;
       const wonThisRound = score >= remainingPower;
       stepLines.push(`${hero.def.name} intercepted ${monster.name}.`);
       this.addHeroHistory(hero, `Intercepted ${monster.name} near ${target.name}.`);
@@ -9828,6 +10305,8 @@ export default class TownScene extends Phaser.Scene {
       34
       + assignedBonus
       + hero.stats.power * 4
+      + this.getHeroEquipmentBonus(hero).power * 3
+      + this.getHeroEquipmentBonus(hero).readiness * 0.08
       + R.morale * 0.22
       + R.trust * 0.12
       + blacksmith * 5
@@ -10085,12 +10564,505 @@ export default class TownScene extends Phaser.Scene {
   addTownResource(id, amount, source = '') {
     if (!this.townInventory || !Number.isFinite(amount) || amount === 0) return 0;
     const before = this.townInventory[id] || 0;
-    this.townInventory[id] = Phaser.Math.Clamp(before + amount, 0, 99);
+    const cap = this.getStorageCap(id);
+    this.townInventory[id] = Phaser.Math.Clamp(before + amount, 0, cap);
     const gained = this.townInventory[id] - before;
     if (gained > 0 && source) {
       this.addTownLog(`${source} added ${gained} ${id} to the town stores.`, 'economy');
     }
     return gained;
+  }
+
+  // Raw and finished goods use different storage networks. Old saves without
+  // Warehouses retain a modest finished-goods buffer instead of losing stock.
+  getStorageCap(id) {
+    const processed = PROCESSED_RESOURCES.includes(id);
+    if (!STORED_RESOURCES.includes(id) && !processed) return 99;
+    let cap = processed ? 18 : BASE_STORAGE_CAP;
+    for (const placement of this.cityState.placedBuildings) {
+      const baseId = getBaseBuildingId(placement.id);
+      if (baseId !== 'storehouse' && baseId !== 'warehouse') continue;
+      const runtime = this.getBuildingRuntime(placement.id);
+      if (runtime.closed) continue;
+      const level = Math.max(1, this.getPlaceLevel(this.buildingById[placement.id]));
+      if (processed && baseId === 'warehouse') cap += 35 * level;
+      else if (processed && baseId === 'storehouse') cap += 8 * level;
+      else if (!processed && baseId === 'storehouse') cap += STOREHOUSE_CAP_PER_LEVEL * level;
+      else if (!processed && baseId === 'warehouse') cap += 10 * level;
+    }
+    return cap;
+  }
+
+  isResourceStorageFull(id) {
+    return (this.townInventory?.[id] || 0) >= this.getStorageCap(id);
+  }
+
+  getStorageReport() {
+    return RESOURCE_CATALOG.map(({ id }) => ({
+      id,
+      current: this.townInventory?.[id] || 0,
+      cap: this.getStorageCap(id),
+      incoming: this.getIncomingDeliveries(id),
+    }));
+  }
+
+  getIncomingDeliveries(id) {
+    return (this.carriers || [])
+      .filter((carrier) => carrier.container?.active && carrier.resource === id)
+      .reduce((sum, carrier) => sum + (carrier.cargo || 0), 0);
+  }
+
+  // total daily extraction rate into stores for one resource, across all nodes
+  getResourceProductionRate(id) {
+    let rate = 0;
+    for (const place of Object.values(this.explorationPointById || {})) {
+      if (!this.isResourceNode(place)) continue;
+      const node = this.getResourceNode(place.id);
+      if (node.resource !== id) continue;
+      rate += this.getNodeExtractionRate(place, node);
+    }
+    return rate;
+  }
+
+  // --- resource nodes: ownership, survey, access ----------------------------
+
+  hydrateResourceNodes(saved) {
+    const nodes = {};
+    for (const [poiId, yieldConfig] of Object.entries(POI_RESOURCE_YIELDS)) {
+      nodes[poiId] = normalizeNodeRuntime(saved?.[poiId], yieldConfig.resource, Boolean(yieldConfig.premium));
+    }
+    return nodes;
+  }
+
+  isResourceNode(place) {
+    return Boolean(place?.id && POI_RESOURCE_YIELDS[place.id]);
+  }
+
+  getResourceNode(poiId) {
+    if (!POI_RESOURCE_YIELDS[poiId]) return null;
+    if (!this.resourceNodes[poiId]) {
+      const yieldConfig = POI_RESOURCE_YIELDS[poiId];
+      this.resourceNodes[poiId] = normalizeNodeRuntime(null, yieldConfig.resource, Boolean(yieldConfig.premium));
+    }
+    return this.resourceNodes[poiId];
+  }
+
+  getNodeDistanceTiles(place) {
+    const core = this.getTownCoreCenter();
+    return Math.round(Math.hypot((place.gridX || 0) - core.x, (place.gridY || 0) - core.y));
+  }
+
+  // a node has access if a road tile is within 3, or a camp/outpost is within
+  // extraction range — access makes extraction faster and safer
+  nodeHasRoadAccess(place) {
+    for (let dy = -3; dy <= 3; dy += 1) {
+      for (let dx = -3; dx <= 3; dx += 1) {
+        if (this.gridCells.get(gridKey((place.gridX || 0) + dx, (place.gridY || 0) + dy))?.road) return true;
+      }
+    }
+    return false;
+  }
+
+  getCampsNearNode(place) {
+    const nx = place.gridX || 0;
+    const ny = place.gridY || 0;
+    const resource = POI_RESOURCE_YIELDS[place.id]?.resource;
+    return this.cityState.placedBuildings.filter((placement) => {
+      const config = EXTRACTION_BUILDINGS[getBaseBuildingId(placement.id)];
+      const accepted = config?.accepts || [config?.resource];
+      if (!config || !accepted.includes(resource)) return false;
+      const footprint = getBuildingCatalogEntry(placement.id)?.footprint || { w: 2, h: 2 };
+      const cx = placement.gridX + footprint.w / 2;
+      const cy = placement.gridY + footprint.h / 2;
+      return Math.hypot(cx - nx, cy - ny) <= EXTRACTION_RANGE_TILES;
+    });
+  }
+
+  surveyNode(poiId) {
+    const place = this.explorationPointById?.[poiId];
+    const node = this.getResourceNode(poiId);
+    if (!place || !node) return;
+    node.surveyed = true;
+    const text = `Surveyed the ${place.name}: about ${node.amount} ${node.resource} left, danger ${node.danger}, ${this.getNodeDistanceTiles(place)} tiles out.`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.saveGame(false);
+    if (this.activeInspector?.type === 'place') this.showPlaceInspector(place);
+  }
+
+  establishNodeAccess(poiId) {
+    const place = this.explorationPointById?.[poiId];
+    const node = this.getResourceNode(poiId);
+    if (!place || !node) return;
+    const hasRoad = this.nodeHasRoadAccess(place);
+    const hasCamp = this.getCampsNearNode(place).length > 0;
+    if (!hasRoad && !hasCamp) {
+      this.game.events.emit('gwg-event', 'No access yet. Run a road toward the node or build a Frontier Outpost/camp nearby first.');
+      return;
+    }
+    node.accessEstablished = true;
+    node.danger = Math.max(5, node.danger - 15);
+    const text = `Access established to the ${place.name}. Extraction is faster and less likely to eat a gatherer.`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.saveGame(false);
+    if (this.activeInspector?.type === 'place') this.showPlaceInspector(place);
+  }
+
+  assignNodeGatherer(poiId) {
+    const place = this.explorationPointById?.[poiId];
+    const node = this.getResourceNode(poiId);
+    if (!place || !node) return;
+    const hero = this.getActiveHeroes()
+      .filter((item) => item.state !== 'away' && !this.isHeroInjured(item) && !item.stats.gatheringNodeId)
+      .sort((a, b) => (b.stats.power || 0) - (a.stats.power || 0))[0];
+    if (!hero) {
+      this.game.events.emit('gwg-event', 'No free healthy hero to assign as gatherer.');
+      return;
+    }
+    node.gathererId = hero.def.id;
+    hero.stats.gatheringNodeId = poiId;
+    const text = `${hero.def.name} is now gathering ${node.resource} at the ${place.name}. They will bring extra each day.`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.saveGame(false);
+    if (this.activeInspector?.type === 'place') this.showPlaceInspector(place);
+  }
+
+  abandonNode(poiId) {
+    const node = this.getResourceNode(poiId);
+    if (!node) return;
+    if (node.gathererId) {
+      const hero = this.heroes?.find((item) => item.def.id === node.gathererId);
+      if (hero) hero.stats.gatheringNodeId = null;
+    }
+    node.gathererId = null;
+    node.accessEstablished = false;
+    this.game.events.emit('gwg-event', 'Node abandoned. The wilderness resumes ownership immediately.');
+    this.saveGame(false);
+    const place = this.explorationPointById?.[poiId];
+    if (place && this.activeInspector?.type === 'place') this.showPlaceInspector(place);
+  }
+
+  // node ownership actions for the POI inspector
+  getResourceNodeActions(place, node) {
+    const actions = [];
+    if (!node.surveyed) {
+      actions.push({ label: 'Survey Node', event: 'gwg-node-survey', id: place.id });
+    }
+    if (!node.accessEstablished) {
+      actions.push({ label: 'Establish Access', event: 'gwg-node-access', id: place.id });
+    }
+    if (!node.gathererId) {
+      actions.push({ label: 'Assign Gatherer', event: 'gwg-node-gatherer', id: place.id });
+    } else {
+      actions.push({ label: 'Reassign / Abandon', event: 'gwg-node-abandon', id: place.id });
+    }
+    return actions;
+  }
+
+  getResourceNodeStatusLines(place, node) {
+    const camps = this.getCampsNearNode(place).length;
+    const gatherer = node.gathererId
+      ? (this.heroes?.find((h) => h.def.id === node.gathererId)?.def.name || 'a hero')
+      : 'none';
+    const rate = this.getNodeExtractionRate(place, node);
+    const depleted = node.amount <= 0;
+    return [
+      node.surveyed
+        ? `Available: ${node.amount}/${node.maxAmount} ${node.resource}${depleted ? ' (depleted, regrowing)' : ''}.`
+        : 'Available: unknown until surveyed.',
+      `Distance: ${this.getNodeDistanceTiles(place)} tiles from town core.`,
+      {
+        text: `Access: ${node.accessEstablished ? 'established' : this.nodeHasRoadAccess(place) ? 'road nearby (not yet claimed)' : 'none - slow and dangerous'}.`,
+        className: node.accessEstablished ? 'gwg-good' : (this.nodeHasRoadAccess(place) ? '' : 'gwg-bad'),
+      },
+      `Extraction camps in range: ${camps}${camps ? '' : ' - build a matching camp within 16 tiles.'}`,
+      `Assigned gatherer: ${gatherer}.`,
+      rate > 0
+        ? { text: `Extraction rate: ~${rate}/day into the town stores.`, className: 'gwg-good' }
+        : 'Extraction rate: 0/day. Needs a camp or a gatherer.',
+    ];
+  }
+
+  // --- extraction, transport, storage ---------------------------------------
+
+  getNodeExtractionRate(place, node) {
+    if (!node || node.amount <= 0) return 0;
+    let rate = 0;
+    for (const placement of this.getCampsNearNode(place)) {
+      const config = EXTRACTION_BUILDINGS[getBaseBuildingId(placement.id)];
+      const runtime = this.getBuildingRuntime(placement.id);
+      if (runtime.closed) continue;
+      const level = this.getPlaceLevel(this.buildingById[placement.id]);
+      let campRate = config.baseRate + (level - 1);
+      if (this.getBuildingRoadAccess(this.buildingById[placement.id]).connected) campRate += 1;
+      if (node.accessEstablished) campRate += 1;
+      campRate += this.getDistrictBonusesForPlace(this.buildingById[placement.id])
+        .reduce((sum, bonus) => sum + (Number(bonus.extractionBonus) || 0), 0);
+      if ((this.townInventory.tools || 0) > 0) campRate += 1;
+      rate += campRate;
+    }
+    if (node.gathererId) rate += 2;
+    return rate;
+  }
+
+  // day-cycle: every working camp/gatherer pulls from its node into a pending
+  // package, harvests forest for lumber camps, then regen ticks the nodes
+  runExtractionStep() {
+    let anyBottleneck = false;
+    for (const place of Object.values(this.explorationPointById || {})) {
+      if (!this.isResourceNode(place) || !this.isRevealed(place.gridX, place.gridY)) continue;
+      const node = this.getResourceNode(place.id);
+      if (!node) continue;
+      // regrow first (loot ruins have regenPerDay 0)
+      if (node.amount < node.maxAmount) {
+        node.amount = Math.min(node.maxAmount, node.amount + (node.regenPerDay || 0));
+      }
+      const rate = this.getNodeExtractionRate(place, node);
+      if (rate <= 0 || node.amount <= 0) continue;
+      const freeStorage = Math.max(0, this.getStorageCap(node.resource) - (this.townInventory[node.resource] || 0) - node.pending);
+      if (freeStorage <= 0) {
+        anyBottleneck = true;
+        continue;
+      }
+      const extracted = Math.min(rate, node.amount, freeStorage);
+      node.amount -= extracted;
+      node.pending += extracted;
+      for (const placement of this.getCampsNearNode(place)) {
+        const runtime = this.getBuildingRuntime(placement.id);
+        runtime.productionDone = (runtime.productionDone || 0) + 1;
+        runtime.upgradeProgress = Math.min(100, (runtime.upgradeProgress || 0) + 2);
+      }
+      // premium wreckage salvage leaks a little corruption as satire
+      if (node.premium && extracted > 0 && Math.random() < 0.5) this.applyDeltas({ corruption: 1 });
+      // gatherer can be injured in dangerous unclaimed nodes
+      if (node.gathererId && !node.accessEstablished && node.danger >= 40 && Math.random() < 0.12) {
+        const hero = this.heroes?.find((h) => h.def.id === node.gathererId);
+        if (hero) {
+          this.injureHero(hero, 2, 'injured', `the ${place.name}`);
+          this.addReportLine('warnings', `${hero.def.name} was hurt gathering at the unsecured ${place.name}.`);
+        }
+      }
+    }
+    // lumber camps also thin nearby forest into wood
+    this.harvestForestFromCamps();
+    if (anyBottleneck) {
+      this.addReportLine('warnings', 'Storage full: some extraction paused. Build or upgrade a Storehouse.');
+    }
+    // deliver pending packages via visible carriers (also credits inventory)
+    this.dispatchCarriers();
+  }
+
+  // carriers pick up pending packages and walk them toward a delivery building
+  dispatchCarriers() {
+    if (!this.isBuilderCity) return;
+    this.carriers = (this.carriers || []).filter((carrier) => carrier.container?.active);
+    const maxCarriers = this.rsp?.compact ? 2 : 4;
+    for (const place of Object.values(this.explorationPointById || {})) {
+      if (this.carriers.length >= maxCarriers) break;
+      if (!this.isResourceNode(place)) continue;
+      const node = this.getResourceNode(place.id);
+      if (!node || node.pending <= 0) continue;
+      if (this.carriers.some((carrier) => carrier.nodeId === place.id)) continue;
+      const camps = this.getCampsNearNode(place);
+      if (!camps.length) {
+        // no camp (pure gatherer) - deliver directly, no carrier art
+        const delivered = this.addTownResource(node.resource, node.pending, `Gatherer at ${place.name}`);
+        node.pending -= delivered;
+        continue;
+      }
+      const camp = this.buildingById[camps[0].id];
+      const load = Math.min(node.pending, 6);
+      node.pending -= load;
+      this.spawnCarrier(camp, node.resource, load, place.id, place.name);
+    }
+  }
+
+  getDeliveryTarget(fromPlace, resource = null) {
+    const preferred = HERO_SUPPLY_RESOURCES.includes(resource)
+      ? ['guildhall', 'warehouse', 'storehouse', 'market']
+      : PROCESSED_RESOURCES.includes(resource)
+        ? ['warehouse', 'market', 'storehouse', 'guildhall']
+        : ['storehouse', 'warehouse', 'market', 'guildhall'];
+    const candidates = preferred
+      .flatMap((baseId) => this.cityState.placedBuildings.filter((p) => getBaseBuildingId(p.id) === baseId))
+      .map((p) => this.doorById[p.id])
+      .filter(Boolean);
+    if (!candidates.length) return null;
+    return candidates.sort((a, b) => (
+      Phaser.Math.Distance.Between(fromPlace.x, fromPlace.y, a.x, a.y)
+      - Phaser.Math.Distance.Between(fromPlace.x, fromPlace.y, b.x, b.y)
+    ))[0];
+  }
+
+  spawnCarrier(camp, resource, amount, nodeId, nodeName, options = {}) {
+    if (!camp || amount <= 0) return false;
+    const config = Object.values(CARRIER_CONFIG).find((c) => c.resource === resource) || CARRIER_CONFIG.wood_carrier;
+    const target = this.getDeliveryTarget(camp, resource);
+    const door = this.doorById[camp.id] || camp;
+    if (!target) {
+      if (options.directFallback === false) return false;
+      const delivered = this.addTownResource(resource, amount, `${nodeName} camp`);
+      const node = this.getResourceNode(nodeId);
+      if (node) node.pending += (amount - delivered);
+      return true;
+    }
+    const textureKey = this.textures.exists(config.assetKey)
+      ? config.assetKey
+      : resolveTexture(this, config.fallbackKey, 'hero_default');
+    if (!textureKey || !this.textures.exists(textureKey)) {
+      if (options.directFallback === false) return false;
+      this.addTownResource(resource, amount, `${nodeName} camp`);
+      return true;
+    }
+    const sprite = this.add.image(0, 0, textureKey).setOrigin(0.5, 1);
+    sprite.setScale(this.getTextureScaleForHeight(textureKey, 24, 1.1));
+    if (!this.textures.exists(config.assetKey) && config.tint) sprite.setTint(config.tint);
+    const container = this.add.container(door.x, door.y, [sprite]).setDepth(door.y);
+
+    const carrier = {
+      def: { id: `carrier-${resource}-${this.time.now}`, name: config.name, speed: 66, assetKey: textureKey },
+      sprite,
+      container,
+      stats: {},
+      walker: true,
+      spriteHeight: 24,
+      resource,
+      cargo: amount,
+      nodeId,
+      originId: options.originId || camp.id,
+      originName: camp.name || nodeName,
+      destinationName: target.name || this.getPlaceName(target.id),
+      currentAction: `carrying ${amount} ${resource}`,
+    };
+    this.prepareHeroAnimation(carrier);
+    this.carriers.push(carrier);
+    carrier.targetEntry = this.registerWorldInteractionTarget({
+      id: `carrier-${carrier.def.id}`,
+      type: 'carrier',
+      hit: container,
+      img: container,
+      walker: carrier,
+      width: 40,
+      height: 50,
+      getCenter: () => ({ x: container.x, y: container.y - 22 }),
+      onSelect: () => this.showCarrierInspector(carrier),
+    });
+    this.walkTo(carrier, target, () => {
+      const delivered = this.addTownResource(resource, amount, '');
+      const leftover = amount - delivered;
+      if (leftover > 0) {
+        if (options.onLeftover) options.onLeftover(leftover);
+        else {
+          const node = this.getResourceNode(nodeId);
+          if (node) node.pending += leftover;
+        }
+      }
+      if (delivered > 0) {
+        this.floatText(target.x, target.y - 34, `+${delivered} ${resource}`, '#d7f3d0');
+      }
+      this.worldInteractionTargets = this.worldInteractionTargets.filter((entry) => entry !== carrier.targetEntry);
+      this.tweens.add({
+        targets: container,
+        alpha: 0,
+        duration: 500,
+        delay: 300,
+        onComplete: () => container.destroy(),
+      });
+    });
+    return true;
+  }
+
+  showCarrierInspector(carrier) {
+    if (!carrier?.container?.active) return;
+    this.activeInspector = { type: 'carrier', id: carrier.def.id };
+    this.game.events.emit('gwg-inspector-open', {
+      title: carrier.def.name,
+      subtitle: 'Goods Carrier',
+      sections: [
+        {
+          title: 'Delivery',
+          lines: [
+            `Cargo: ${carrier.cargo} ${RESOURCE_BY_ID[carrier.resource]?.label || carrier.resource}`,
+            `Origin: ${carrier.originName || 'unknown supplier'}`,
+            `Destination: ${carrier.destinationName || 'town storage'}`,
+            `Status: ${carrier.currentAction || 'walking with inventory'}`,
+          ],
+        },
+        {
+          title: 'Route Note',
+          lines: ['Carriers prefer connected roads. Missing storage leaves finished goods waiting at the producer.'],
+        },
+      ],
+    });
+  }
+
+  // --- forest harvesting ----------------------------------------------------
+
+  harvestForestFromCamps() {
+    const lumberCamps = this.cityState.placedBuildings.filter((p) => getBaseBuildingId(p.id) === 'lumber_camp');
+    if (!lumberCamps.length || !this.forestBlockedCells?.size) return;
+    for (const placement of lumberCamps) {
+      const runtime = this.getBuildingRuntime(placement.id);
+      if (runtime.closed) continue;
+      const footprint = getBuildingCatalogEntry(placement.id)?.footprint || { w: 2, h: 2 };
+      const cx = placement.gridX + footprint.w / 2;
+      const cy = placement.gridY + footprint.h / 2;
+      // harvest the nearest 1-2 still-forested cells within range
+      const targets = [...this.forestBlockedCells]
+        .filter((key) => !this.harvestedForestCells.has(key))
+        .map((key) => {
+          const [x, y] = key.split(',').map(Number);
+          return { key, x, y, dist: Math.hypot(x - cx, y - cy) };
+        })
+        .filter((cell) => cell.dist <= EXTRACTION_RANGE_TILES)
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, 2);
+      if (!targets.length) continue;
+      for (const cell of targets) {
+        this.harvestedForestCells.set(cell.key, this.day + 12); // regrow after 12 days
+        this.addTownResource('wood', 2, 'Lumber Camp');
+      }
+      this.addReportLine('stage', `A Lumber Camp thinned ${targets.length} forest tile${targets.length === 1 ? '' : 's'} for wood.`);
+    }
+    this.redrawWildernessDressing();
+  }
+
+  regrowForest() {
+    if (!this.harvestedForestCells?.size) return;
+    let regrew = false;
+    for (const [key, regrowDay] of [...this.harvestedForestCells]) {
+      if (regrowDay > 0 && this.day >= regrowDay) {
+        this.harvestedForestCells.delete(key);
+        regrew = true;
+      }
+    }
+    if (regrew) this.redrawWildernessDressing();
+  }
+
+  // --- territory ------------------------------------------------------------
+
+  getTerritoryAnchors() {
+    const anchors = [];
+    for (const placement of this.cityState.placedBuildings) {
+      const baseId = getBaseBuildingId(placement.id);
+      const radius = TERRITORY_RADIUS[baseId];
+      if (!radius) continue;
+      const footprint = getBuildingCatalogEntry(placement.id)?.footprint || { w: 2, h: 2 };
+      anchors.push({
+        x: placement.gridX + footprint.w / 2,
+        y: placement.gridY + footprint.h / 2,
+        radius,
+      });
+    }
+    return anchors;
+  }
+
+  isInTerritory(gridX, gridY) {
+    return this.getTerritoryAnchors().some((anchor) => (
+      Math.hypot(gridX - anchor.x, gridY - anchor.y) <= anchor.radius
+    ));
   }
 
   isHeroInjured(hero) {
@@ -10099,7 +11071,9 @@ export default class TownScene extends Phaser.Scene {
 
   injureHero(hero, days = 2, severity = 'injured', source = 'town hazard') {
     if (!hero?.stats || hero.stats.active === false) return;
-    hero.stats.injuredUntilDay = Math.max(hero.stats.injuredUntilDay || 0, this.day + days);
+    const armor = this.getHeroEquipmentBonus(hero).armor;
+    const protectedDays = Math.max(1, days - Math.floor(armor / 3));
+    hero.stats.injuredUntilDay = Math.max(hero.stats.injuredUntilDay || 0, this.day + protectedDays);
     hero.stats.injuryState = severity;
     hero.stats.morale = Phaser.Math.Clamp((hero.stats.morale || 50) - (severity === 'badly injured' ? 9 : 5), 0, 100);
     this.stats.heroInjuries = (this.stats.heroInjuries || 0) + 1;
@@ -10190,7 +11164,7 @@ export default class TownScene extends Phaser.Scene {
   getStockInspectorLine(placeId) {
     if (!this.townInventory) return null;
     if (placeId === 'market') return `Stores: ${this.townInventory.loot} loot waiting for conversion.`;
-    if (placeId === 'blacksmith') return `Stores: ${this.townInventory.iron} iron, ${this.townInventory.gear} gear ready.`;
+    if (placeId === 'blacksmith') return `Stores: ${this.townInventory.iron} iron, ${this.townInventory.weapons} weapons, ${this.townInventory.armor} armor.`;
     if (placeId === 'potion_shop') return `Stores: ${this.townInventory.herbs} herbs, ${this.townInventory.potions} potions ready.`;
     return null;
   }
@@ -10209,6 +11183,15 @@ export default class TownScene extends Phaser.Scene {
         text: `District bonuses: ${districtBonuses.map((bonus) => bonus.name).join(', ')}.`,
         className: 'gwg-good',
       });
+    }
+    const productionBottlenecks = this.cityState.placedBuildings
+      .map((placement) => this.buildingById?.[placement.id])
+      .filter((place) => place?.isPlaced && this.getProductionRecipes(place).length)
+      .map((place) => ({ place, state: this.getProductionState(place) }))
+      .filter(({ state }) => /Waiting|Locked/.test(state.lastStatus || ''))
+      .slice(0, 3);
+    for (const { place, state } of productionBottlenecks) {
+      notes.push({ text: `${place.name}: ${state.lastStatus}.`, className: 'gwg-bad' });
     }
     const buildingProblems = Object.values(this.buildingById || {})
       .filter((place) => place?.isPlaced && getBuildingCatalogEntry(place.id))
@@ -10240,8 +11223,8 @@ export default class TownScene extends Phaser.Scene {
     if (disconnected.length) {
       notes.push({ text: `No road access: ${disconnected.join(', ')}. Services and walkers are idle there.`, className: 'gwg-bad' });
     }
-    if ((this.townInventory?.gear || 0) === 0 && this.isBuildingPlaced('blacksmith') && (this.townInventory?.iron || 0) === 0) {
-      notes.push('Gear supply empty: the Blacksmith has no iron. Heroes explore under-equipped.');
+    if (((this.townInventory?.weapons || 0) + (this.townInventory?.armor || 0)) === 0 && this.isBuildingPlaced('blacksmith') && (this.townInventory?.iron || 0) === 0) {
+      notes.push('Equipment supply empty: the Blacksmith has no iron. Heroes explore under-equipped.');
     }
     if (this.resources.threat >= 60) {
       notes.push({ text: 'Threat is rising. Watchtowers, patrols, and hero hunts push it back.', className: 'gwg-bad' });
@@ -10265,14 +11248,49 @@ export default class TownScene extends Phaser.Scene {
     if (injuredCount > 0 && (this.townInventory?.potions || 0) === 0) {
       notes.push({ text: `${injuredCount} injured hero${injuredCount === 1 ? '' : 'es'} and no potions in store. Herbs and a Potion Shop would help.`, className: 'gwg-bad' });
     }
+    // extraction economy: bottlenecks and idle opportunities
+    for (const note of this.getExtractionAdvisorNotes()) notes.push(note);
     // town rank: the long-term score behind hero attraction
     const reputation = this.getTownReputation();
     const rank = this.getTownRank(reputation);
     notes.push({
-      text: `Town reputation ${reputation}/100 - Rank: ${rank.name}. Higher rank attracts heroes faster.`,
+      text: rank.next
+        ? `Town Rank: ${rank.name} (${rank.score}/${rank.next.score}). ${rank.remaining} score to ${rank.next.name}.`
+        : `Town Rank: ${rank.name} - maximum institutional concern achieved.`,
       className: reputation >= 50 ? 'gwg-good' : 'gwg-muted',
     });
+    const needWeapons = activeHeroes.filter((hero) => normalizeHeroEquipment(hero.stats.equipment).weapon === 'Poor').length;
+    const needArmor = activeHeroes.filter((hero) => this.getHeroTierIndex(hero) >= 2 && normalizeHeroEquipment(hero.stats.equipment).armor === 'Poor').length;
+    if (needWeapons || needArmor) notes.push({ text: `Hero supply shortage: ${needWeapons} need weapons, ${needArmor} need armor. Select Guild Hall to equip stock.`, className: 'gwg-bad' });
     return notes;
+  }
+
+  getExtractionAdvisorNotes() {
+    const notes = [];
+    const full = [...STORED_RESOURCES, ...PROCESSED_RESOURCES].filter((res) => this.isResourceStorageFull(res));
+    if (full.length) {
+      notes.push({ text: `Storage full (${full.join(', ')}). Extraction paused - build or upgrade a Storehouse.`, className: 'gwg-bad' });
+    }
+    // discovered resource node with no camp = build opportunity
+    for (const place of Object.values(this.explorationPointById || {})) {
+      if (!this.isResourceNode(place) || !this.isRevealed(place.gridX, place.gridY)) continue;
+      const node = this.getResourceNode(place.id);
+      if (node.amount <= 0) continue;
+      if (this.getCampsNearNode(place).length === 0 && !node.gathererId) {
+        const config = Object.values(EXTRACTION_BUILDINGS).find((c) => (c.accepts || [c.resource]).includes(node.resource));
+        notes.push(`${place.name} (${node.resource}) has no camp. Build a ${config?.label || 'camp'} within ${EXTRACTION_RANGE_TILES} tiles.`);
+      } else if (!node.accessEstablished && !this.nodeHasRoadAccess(place)) {
+        notes.push({ text: `${place.name} extraction is slow and dangerous with no road access.`, className: 'gwg-bad' });
+      }
+    }
+    // camps that lost their node (depleted) or a delivery target
+    const hasDelivery = ['storehouse', 'warehouse', 'market', 'guildhall'].some((baseId) => (
+      this.cityState.placedBuildings.some((p) => getBaseBuildingId(p.id) === baseId)
+    ));
+    if (!hasDelivery && this.cityState.placedBuildings.some((p) => EXTRACTION_IDS.includes(getBaseBuildingId(p.id)))) {
+      notes.push({ text: 'Extraction camps have nowhere to deliver. Build a Storehouse or Market.', className: 'gwg-bad' });
+    }
+    return notes.slice(0, 4);
   }
 
   applyBuildingUpkeep() {
@@ -10340,14 +11358,280 @@ export default class TownScene extends Phaser.Scene {
     if (lines.length) this.addReportLine('economy', `Specializations produced side effects: ${lines.join(', ')}.`);
   }
 
-  getProductionBatch(rule, place) {
+  getProductionState(place) {
+    if (!place?.id) return null;
+    const baseId = getBaseBuildingId(place.baseId || place.id);
+    const runtime = this.getBuildingRuntime(place.id);
+    runtime.production = normalizeProductionRuntime(runtime.production, baseId);
+    return runtime.production;
+  }
+
+  getProductionRecipes(place) {
+    const baseId = getBaseBuildingId(place?.baseId || place?.id);
+    return RECIPES_BY_BUILDING[baseId] || [];
+  }
+
+  getProductionRank() {
+    return this.getTownRankSnapshot().index;
+  }
+
+  setProductionRecipeFromUi(token) {
+    const [placeId, recipeId] = String(token || '').split(':');
+    const place = this.buildingById?.[placeId];
+    const recipe = RECIPE_BY_ID[recipeId];
+    if (!place || !recipe || recipe.building !== getBaseBuildingId(place.baseId || place.id)) return;
+    if (this.getProductionRank() < recipe.minRank) {
+      this.game.events.emit('gwg-event', `Recipe locked until Town Rank ${recipe.minRank + 1}. The foreman has laminated the refusal.`);
+      return;
+    }
+    const state = this.getProductionState(place);
+    state.recipeId = recipeId;
+    state.progress = 0;
+    state.lastStatus = `Selected: ${recipe.name}`;
+    this.game.events.emit('gwg-event', `${place.name} selected ${recipe.name}. Materials began negotiating.`);
+    this.saveGame(false);
+    this.showPlaceInspector(place);
+  }
+
+  toggleProductionFromUi(placeId) {
+    const place = this.buildingById?.[placeId];
+    if (!place) return;
+    const state = this.getProductionState(place);
+    state.paused = !state.paused;
+    state.lastStatus = state.paused ? 'Paused by player' : 'Ready';
+    this.game.events.emit('gwg-event', `${place.name} production ${state.paused ? 'paused' : 'resumed'}. The machinery took this personally.`);
+    this.saveGame(false);
+    this.showPlaceInspector(place);
+  }
+
+  cycleProductionPriorityFromUi(placeId) {
+    const place = this.buildingById?.[placeId];
+    if (!place) return;
+    const state = this.getProductionState(place);
+    const order = ['low', 'normal', 'high'];
+    state.priority = order[(order.indexOf(state.priority) + 1) % order.length];
+    this.game.events.emit('gwg-event', `${place.name} priority: ${PRODUCTION_PRIORITIES[state.priority].label}. Urgency has been formally categorized.`);
+    this.saveGame(false);
+    this.showPlaceInspector(place);
+  }
+
+  recordProductionFlow(target, values) {
+    for (const [id, amount] of Object.entries(values || {})) {
+      if (id === 'gold') continue;
+      target[id] = (target[id] || 0) + amount;
+    }
+  }
+
+  getProductionSpeed(place, state) {
+    const priority = PRODUCTION_PRIORITIES[state.priority] || PRODUCTION_PRIORITIES.normal;
     const level = this.getPlaceLevel(place);
-    const spec = this.getBuildingSpecializationEffects(rule.building);
-    const districtBonus = this.getActiveDistrictBonuses().some((bonus) => bonus.id === 'market')
-      && ['market', 'blacksmith', 'potion_shop'].includes(rule.building)
-      ? 1
-      : 0;
-    return Math.max(0, rule.batch(level) + (Number(spec.productionBonus) || 0) + districtBonus);
+    const spec = this.getBuildingSpecializationEffects(place.id);
+    const district = this.getDistrictBonusesForPlace(place)
+      .reduce((sum, bonus) => sum + (Number(bonus.productionBonus) || 0), 0);
+    const tools = Math.min(0.4, (this.townInventory.tools || 0) * 0.04);
+    const evolution = Math.min(0.5, Math.floor((state.batches || 0) / 12) * 0.1);
+    return Math.max(0.25, priority.progress + (level - 1) * 0.12 + district * 0.18 + tools + evolution + (Number(spec.productionBonus) || 0) * 0.18);
+  }
+
+  runProductionStep() {
+    this.productionSummary.producedToday = {};
+    this.productionSummary.consumedToday = {};
+    for (const placement of this.cityState.placedBuildings) {
+      const place = this.buildingById?.[placement.id];
+      if (!place?.isPlaced || !this.getProductionRecipes(place).length) continue;
+      const runtime = this.getBuildingRuntime(place.id);
+      const state = this.getProductionState(place);
+      const recipe = RECIPE_BY_ID[state.recipeId] || RECIPE_BY_ID[DEFAULT_RECIPE_BY_BUILDING[getBaseBuildingId(place.baseId || place.id)]];
+      if (!recipe) continue;
+      if (runtime.closed || state.paused) {
+        state.lastStatus = runtime.closed ? 'Closed' : 'Paused by player';
+        continue;
+      }
+      if (!this.getBuildingRoadAccess(place).connected) {
+        state.lastStatus = 'Waiting: no road access';
+        continue;
+      }
+      if (this.getProductionRank() < recipe.minRank) {
+        state.lastStatus = `Locked until Town Rank ${recipe.minRank + 1}`;
+        continue;
+      }
+      const priority = PRODUCTION_PRIORITIES[state.priority] || PRODUCTION_PRIORITIES.normal;
+      if (priority.upkeep > 0 && this.resources.gold < priority.upkeep) {
+        state.lastStatus = 'Waiting: high-priority overtime unpaid';
+        continue;
+      }
+      const spec = this.getBuildingSpecializationEffects(place.id);
+      const inputs = { ...recipe.inputs };
+      if (spec.inputEfficiency) {
+        const firstInput = Object.keys(inputs)[0];
+        if (firstInput) inputs[firstInput] = Math.max(1, inputs[firstInput] - spec.inputEfficiency);
+      }
+      if (!hasRecipeInputs(this.townInventory, inputs)) {
+        state.lastStatus = `Waiting: needs ${formatResourceAmountMap(inputs)}`;
+        continue;
+      }
+      state.progress += this.getProductionSpeed(place, state);
+      if (state.progress < recipe.days) {
+        state.lastStatus = `Working: ${Math.floor((state.progress / recipe.days) * 100)}%`;
+        continue;
+      }
+      state.progress = Math.max(0, state.progress - recipe.days);
+      for (const [id, amount] of Object.entries(inputs)) this.townInventory[id] = Math.max(0, (this.townInventory[id] || 0) - amount);
+      if (priority.upkeep > 0) this.applyDeltas({ gold: -priority.upkeep });
+      this.recordProductionFlow(this.productionSummary.consumedToday, inputs);
+      for (const [id, baseAmount] of Object.entries(recipe.outputs)) {
+        const amount = Math.max(1, baseAmount + Math.max(0, Number(spec.productionBonus) || 0));
+        if (id === 'gold') this.applyDeltas({ gold: amount });
+        else state.outputBuffer[id] = (state.outputBuffer[id] || 0) + amount;
+        this.recordProductionFlow(this.productionSummary.producedToday, { [id]: amount });
+      }
+      if (recipe.corruption || recipe.trust) this.applyDeltas({ corruption: recipe.corruption, trust: recipe.trust });
+      state.batches += 1;
+      state.resourcesProcessed += Object.values(inputs).reduce((sum, amount) => sum + amount, 0);
+      state.lastStatus = `Batch complete: ${formatResourceAmountMap(recipe.outputs)}`;
+      runtime.productionDone = (runtime.productionDone || 0) + 1;
+      runtime.servicesProvided = (runtime.servicesProvided || 0) + 1;
+      runtime.upgradeProgress = Math.min(100, (runtime.upgradeProgress || 0) + 3);
+      if ([8, 20, 40].includes(state.batches)) {
+        runtime.serviceQuality = (runtime.serviceQuality || 1) + 1;
+        const evolutionText = `${place.name} evolved through use after ${state.batches} batches. Efficiency gained a tiny hat.`;
+        this.addTownLog(evolutionText, 'upgrade');
+        this.addReportLine('unlocks', evolutionText);
+        this.floatText(place.x, place.y - (place.h || 56) - 18, 'PRODUCTION EVOLVED', '#7fdc93');
+        const sprite = this.placeSpriteById?.[place.id];
+        if (sprite) {
+          sprite.setTint(0xfff3c0);
+          this.time.delayedCall(320, () => sprite.clearTint?.());
+        }
+      }
+      if (getBaseBuildingId(place.baseId || place.id) === 'market') runtime.lootProcessed = (runtime.lootProcessed || 0) + 1;
+      this.addReportLine('economy', `${place.name}: ${recipe.flavor}`);
+    }
+    this.dispatchProductionCarriers();
+  }
+
+  dispatchProductionCarriers() {
+    if (!this.isBuilderCity) {
+      for (const placement of this.cityState.placedBuildings) {
+        const place = this.buildingById?.[placement.id];
+        const state = place && this.getProductionRecipes(place).length ? this.getProductionState(place) : null;
+        if (!state) continue;
+        for (const [id, amount] of Object.entries(state.outputBuffer)) {
+          const delivered = this.addTownResource(id, amount, place.name);
+          state.outputBuffer[id] = Math.max(0, amount - delivered);
+        }
+      }
+      return;
+    }
+    this.carriers = (this.carriers || []).filter((carrier) => carrier.container?.active);
+    const maxCarriers = this.rsp?.compact ? 3 : 6;
+    for (const placement of this.cityState.placedBuildings) {
+      if (this.carriers.length >= maxCarriers) break;
+      const place = this.buildingById?.[placement.id];
+      const state = place && this.getProductionRecipes(place).length ? this.getProductionState(place) : null;
+      if (!state) continue;
+      for (const [resource, buffered] of Object.entries(state.outputBuffer)) {
+        if (this.carriers.length >= maxCarriers) break;
+        if (buffered <= 0 || this.carriers.some((carrier) => carrier.originId === place.id && carrier.resource === resource)) continue;
+        const load = Math.min(buffered, 5);
+        const started = this.spawnCarrier(place, resource, load, null, place.name, {
+          directFallback: false,
+          originId: place.id,
+          onLeftover: (leftover) => { state.outputBuffer[resource] = (state.outputBuffer[resource] || 0) + leftover; },
+        });
+        if (started) state.outputBuffer[resource] -= load;
+        else state.lastStatus = 'Waiting: no Warehouse, Storehouse, Market, or Guild Hall route';
+      }
+    }
+  }
+
+  runHeroSupplyStep() {
+    let missingWeapons = 0;
+    let missingArmor = 0;
+    for (const hero of this.getActiveHeroes()) {
+      hero.stats.equipment = normalizeHeroEquipment(hero.stats.equipment);
+      const equipment = hero.stats.equipment;
+      if (equipment.weapon === 'Poor') missingWeapons += 1;
+      if (equipment.armor === 'Poor' && this.getHeroTierIndex(hero) >= 2) missingArmor += 1;
+      equipment.readiness = Phaser.Math.Clamp(
+        45 + (equipment.weapon !== 'Poor' ? 18 : 0) + (equipment.armor !== 'Poor' ? 16 : 0) + equipment.potions * 5 + Math.floor((hero.stats.morale || 0) / 5),
+        0,
+        100,
+      );
+      if (this.isHeroInjured(hero) && equipment.potions > 0) {
+        equipment.potions -= 1;
+        hero.stats.injuredUntilDay = Math.max(this.day, (hero.stats.injuredUntilDay || this.day) - 2);
+        this.addTownLog(`${hero.def.name} used a carried potion. Recovery stopped being entirely theoretical.`, 'npc');
+      } else if (this.isHeroInjured(hero) && (this.townInventory.potions || 0) > 0) {
+        this.townInventory.potions -= 1;
+        hero.stats.injuredUntilDay = Math.max(this.day, (hero.stats.injuredUntilDay || this.day) - 1);
+      }
+      if (this.getHeroTierIndex(hero) >= 2 && equipment.weapon === 'Poor') {
+        hero.stats.morale = Phaser.Math.Clamp((hero.stats.morale || 0) - 1, 0, 100);
+        hero.stats.loyalty = Phaser.Math.Clamp((hero.stats.loyalty || 0) - 1, 0, 100);
+      }
+    }
+    if (missingWeapons || missingArmor) {
+      this.addReportLine('warnings', `Hero supply: ${missingWeapons} need weapons, ${missingArmor} veteran-tier heroes need armor.`);
+    }
+  }
+
+  runTradeStep() {
+    if (!this.tradeSettings.autoExport || !this.isBuildingPlaced('market')) return;
+    const id = this.tradeSettings.preferredExport;
+    const reserve = this.tradeSettings.reserves[id] || 0;
+    const amount = Math.min(3, Math.max(0, (this.townInventory[id] || 0) - reserve));
+    const price = TRADE_PRICES[id]?.sell || 0;
+    if (amount <= 0 || price <= 0) return;
+    this.townInventory[id] -= amount;
+    const gold = amount * price;
+    this.applyDeltas({ gold });
+    const market = this.getPlacedBuildingsByBaseId('market')[0];
+    if (market) {
+      const runtime = this.getBuildingRuntime(market.id);
+      runtime.lootProcessed = (runtime.lootProcessed || 0) + amount;
+      runtime.servicesProvided = (runtime.servicesProvided || 0) + amount;
+    }
+    this.addReportLine('economy', `External trade sold ${amount} ${RESOURCE_BY_ID[id]?.label || id} for ${gold}g. The price was stable and therefore suspicious.`);
+  }
+
+  maybeRunProductionIncident() {
+    if (this.day < 4 || Math.random() > 0.14) return;
+    const active = this.cityState.placedBuildings
+      .map((placement) => this.buildingById?.[placement.id])
+      .filter((place) => place?.isPlaced && this.getProductionRecipes(place).length && !this.getBuildingRuntime(place.id).closed);
+    if (!active.length) return;
+    const place = Phaser.Utils.Array.GetRandom(active);
+    const baseId = getBaseBuildingId(place.baseId || place.id);
+    let text = '';
+    if (baseId === 'sawmill' && (this.townInventory.planks || 0) > 0) {
+      const lost = Math.min(2, this.townInventory.planks);
+      this.townInventory.planks -= lost;
+      text = `Sawmill spark incident: ${lost} planks became atmosphere. The fire marshal requested straighter grain.`;
+    } else if (baseId === 'blacksmith' && (this.townInventory.tools || 0) > 0) {
+      this.townInventory.tools -= 1;
+      text = 'Blacksmith tool shortage: one tool broke while making tools. The loop was declared vertical integration.';
+    } else if (baseId === 'potion_shop') {
+      this.applyDeltas({ morale: 2, corruption: 1 });
+      text = 'A potion batch caused temporary confidence. Side effects included volunteering.';
+    } else if (baseId === 'premium_fabricator' && (this.townInventory.premiumComponents || 0) > 0) {
+      this.townInventory.premiumComponents -= 1;
+      this.applyDeltas({ corruption: 1 });
+      text = 'A premium component became obsolete overnight. The replacement has the same shape and better monetization.';
+    } else if (baseId === 'market' && (this.townInventory.tradeGoods || 0) > 0) {
+      this.townInventory.tradeGoods -= 1;
+      text = 'The Market announced a sale on goods already owned. One crate vanished into promotional accounting.';
+    } else if (baseId === 'salvage_yard' && (this.townInventory.loot || 0) > 0) {
+      this.townInventory.loot -= 1;
+      this.addTownResource('tradeGoods', 1);
+      text = 'The Salvage Yard found a useful object by accident. Management denied setting a precedent.';
+    }
+    if (!text) return;
+    this.productionSummary.incidents.push({ day: this.day, placeId: place.id, text });
+    this.productionSummary.incidents = this.productionSummary.incidents.slice(-8);
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.addReportLine('warnings', text);
   }
 
   // day-cycle step: lodging pressure + simple production conversions
@@ -10356,6 +11640,9 @@ export default class TownScene extends Phaser.Scene {
     this.applyBuildingUpkeep();
     this.applyDistrictDailyEffects();
     this.applySpecializationDailyEffects();
+    // extract from nodes/forest and regrow before production consumes stock
+    this.runExtractionStep();
+    this.regrowForest();
 
     // hero lodging: over capacity drains morale and trust, quietly but daily
     const lodging = this.getLodgingReport();
@@ -10374,54 +11661,18 @@ export default class TownScene extends Phaser.Scene {
       this.stats.heroInjuries = this.stats.heroInjuries || 0;
     }
 
-    // production: market loot->gold, blacksmith iron->gear, herbs->potions
-    for (const rule of PRODUCTION_RULES) {
-      if (!this.isBuildingPlaced(rule.building)) continue;
-      const place = this.buildingById[rule.building];
-      const runtime = this.getBuildingRuntime(rule.building);
-      if (runtime.closed) continue;
-      if (!this.getBuildingRoadAccess(place).connected) continue;
-      const available = this.townInventory[rule.from] || 0;
-      if (available <= 0) continue;
-      const amount = Math.min(available, this.getProductionBatch(rule, place));
-      if (amount <= 0) continue;
-      this.townInventory[rule.from] -= amount;
-      runtime.servicesProvided = (runtime.servicesProvided || 0) + amount;
-      runtime.productionDone = (runtime.productionDone || 0) + amount;
-      if (rule.building === 'market') runtime.lootProcessed = (runtime.lootProcessed || 0) + amount;
-      runtime.upgradeProgress = Math.min(100, runtime.upgradeProgress + amount * 2);
-      let logLine;
-      if (rule.to === 'gold') {
-        const gold = amount * rule.perUnitGold;
-        this.applyDeltas({ gold });
-        logLine = rule.log(amount, gold);
-      } else {
-        this.townInventory[rule.to] = Phaser.Math.Clamp((this.townInventory[rule.to] || 0) + amount, 0, 99);
-        logLine = rule.log(amount);
-      }
-      this.addTownLog(logLine, 'economy');
-      this.addReportLine('stage', logLine);
-    }
+    this.runProductionStep();
+    this.runTradeStep();
+    this.runHeroSupplyStep();
 
-    // potions heal the injured; gear equips the under-armed
+    // clear expired injury visuals after supplies and rest have done their work
     for (const hero of this.getActiveHeroes()) {
       if (!this.isHeroInjured(hero) && !hero.stats.deathDay && hero.stats.injuryState !== 'healthy') {
         hero.stats.injuryState = 'healthy';
         this.setHeroAnimationState(hero, hero.state === 'walking' ? 'walk' : 'idle');
       }
-      if (this.isHeroInjured(hero) && (this.townInventory.potions || 0) > 0) {
-        this.townInventory.potions -= 1;
-        hero.stats.injuredUntilDay = 0;
-        hero.stats.injuryState = 'healthy';
-        hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale + 4, 0, 100);
-        this.setHeroAnimationState(hero, hero.state === 'walking' ? 'walk' : 'idle');
-        this.addTownLog(`${hero.def.name} drank a town potion and recovered. The label said "probably".`, 'npc');
-      } else if (!this.isHeroInjured(hero) && (this.townInventory.gear || 0) > 0 && (hero.stats.power || 0) < 6) {
-        this.townInventory.gear -= 1;
-        hero.stats.power = (hero.stats.power || 0) + 1;
-        this.addTownLog(`${hero.def.name} was issued town gear. Power increased, humility unchanged.`, 'npc');
-      }
     }
+    this.maybeRunProductionIncident();
   }
 
   // --- service walkers (Caesar-style, lightweight) ---------------------------
@@ -10600,10 +11851,11 @@ export default class TownScene extends Phaser.Scene {
         break;
       case 'gear_runner': {
         const needy = nearby.find((hero) => (hero.stats.power || 0) < 6);
-        if (needy && (this.townInventory.gear || 0) > 0) {
-          this.townInventory.gear -= 1;
-          clampStat(needy, 'power', 1, 999);
-          floatLine = `${needy.def.name} +gear`;
+        if (needy && (this.townInventory.weapons || 0) > 0) {
+          this.townInventory.weapons -= 1;
+          needy.stats.equipment = normalizeHeroEquipment(needy.stats.equipment);
+          needy.stats.equipment.weapon = this.getEquipmentQualityForTown();
+          floatLine = `${needy.def.name} +weapon`;
         }
         break;
       }
@@ -10719,7 +11971,7 @@ export default class TownScene extends Phaser.Scene {
         ? (MONSTERS.find((entry) => entry.id === place.monsterSource) || rollMonster())
         : rollMonster();
       const support = this.getPlaceLevel(this.buildingById.watchtower)
-        + ((this.townInventory?.gear || 0) > 0 ? 1 : 0);
+        + this.getHeroEquipmentBonus(hero).power;
       const success = (hero.stats.power || 0) + support + Phaser.Math.Between(0, 7) >= monster.threat * 3 + 3;
       this.showMonsterEncounter(monster, place.x, place.y);
       if (success) {
@@ -10782,12 +12034,66 @@ export default class TownScene extends Phaser.Scene {
     return Math.round(Phaser.Math.Clamp(Number(this.townReputation) || 0, 0, 100));
   }
 
-  getTownRank(reputation = this.getTownReputation()) {
-    if (reputation >= 80) return { tier: 4, name: 'Renowned Guild City' };
-    if (reputation >= 60) return { tier: 3, name: 'Respected Guild Town' };
-    if (reputation >= 40) return { tier: 2, name: 'Working Guild Village' };
-    if (reputation >= 20) return { tier: 1, name: 'Struggling Guild Camp' };
-    return { tier: 0, name: 'Cautionary Tale' };
+  getTownRankScore() {
+    const activeHeroes = this.getActiveHeroes().length;
+    const lodging = this.getLodgingReport();
+    const batches = Object.values(this.cityState?.buildingRuntime || {})
+      .reduce((sum, runtime) => sum + (Number(runtime.production?.batches) || 0), 0);
+    const territory = this.revealedTiles?.size || 0;
+    const balance = Math.max(0, Math.min(this.resources.trust, 100 - this.resources.corruption));
+    return Phaser.Math.Clamp(Math.round(
+      this.getTownReputation() * 0.24
+      + this.townPrestige * 0.16
+      + Math.min(12, activeHeroes) * 1.15
+      + Math.min(12, this.stats.questsCompleted || 0) * 1.1
+      + Math.min(14, batches) * 0.8
+      + Math.min(8, lodging.beds) * 0.45
+      + (100 - this.resources.threat) * 0.08
+      + Math.min(10, Math.floor(territory / 80))
+      + balance * 0.08,
+    ), 0, 100);
+  }
+
+  getTownRankSnapshot() {
+    const score = this.getTownRankScore();
+    const rank = getRankForScore(score);
+    const index = Math.max(0, TOWN_RANKS.findIndex((item) => item.id === rank.id));
+    const next = TOWN_RANKS[index + 1] || null;
+    return {
+      ...rank,
+      tier: index,
+      index,
+      score,
+      next,
+      remaining: next ? Math.max(0, next.score - score) : 0,
+      requirements: [
+        `Reputation ${this.getTownReputation()}/100 and prestige ${this.townPrestige}/100`,
+        `${this.getActiveHeroes().length} active heroes, ${this.stats.questsCompleted || 0} completed quests`,
+        `${Object.values(this.cityState?.buildingRuntime || {}).reduce((sum, runtime) => sum + (Number(runtime.production?.batches) || 0), 0)} production batches`,
+        `Safety ${100 - this.resources.threat}/100, beds ${this.getLodgingReport().used}/${this.getLodgingReport().beds}`,
+      ],
+    };
+  }
+
+  getTownRank() {
+    return this.getTownRankSnapshot();
+  }
+
+  checkTownRankProgression(silent = false) {
+    const rank = this.getTownRankSnapshot();
+    if (rank.id === this.townRankId) return rank;
+    const previous = TOWN_RANKS.findIndex((item) => item.id === this.townRankId);
+    this.townRankId = rank.id;
+    if (rank.index > previous) {
+      const text = `Town Rank: ${rank.name}. ${rank.description}`;
+      this.addTownLog(text, 'stage');
+      this.addReportLine('unlocks', text);
+      if (!silent) {
+        this.game.events.emit('gwg-event', text);
+        this.floatText(PLAZA.x, PLAZA.y - 126, rank.name.toUpperCase(), '#ffe08a');
+      }
+    }
+    return rank;
   }
 
   // successful expeditions can carry resources home from discovered POIs
@@ -10833,7 +12139,7 @@ export default class TownScene extends Phaser.Scene {
     const support = this.getPlaceLevel(this.buildingById.watchtower)
       + Math.floor(this.getPlaceLevel(this.buildingById.blacksmith) / 2)
       + Math.floor(this.getPlaceLevel(this.buildingById.training) / 2)
-      + ((this.townInventory?.gear || 0) > 0 ? 1 : 0) // stocked gear helps
+      + this.getHeroEquipmentBonus(hero).power
       - (this.isHeroInjured(hero) ? 2 : 0)
       - Math.floor(badReputation / 25); // dangerous reputations become self-fulfilling
     const hazardPressure = monster.threat * 3 + 4 + Math.floor(this.resources.threat / 18) + Math.floor(badReputation / 18);

@@ -220,6 +220,77 @@ export const BUILDING_CATALOG = [
       action('disappointment', 'Sell Shiny Disappointment', '+Gold, -Morale.', 0, { gold: 210, morale: -2, corruption: 2 }, null, 'item_shiny_disappointment_box'),
     ],
   }),
+
+  // --- Frontier / Supply: extraction, storage, and expansion anchors --------
+  // These reuse existing node/prop art so no PixelLab assets are needed.
+  core('lumber_camp', 'Lumber Camp', 'Frontier / Supply', 180, { w: 2, h: 2 }, 'Harvests wood from nearby forest or grove nodes.', {
+    assetKey: 'resource_wood_grove',
+    effect: 'Extracts wood while within range of a forest or wood node. Road access speeds delivery.',
+    flavor: 'Turns majestic ancient trees into practical bunk beds.',
+  }),
+  core('mining_camp', 'Mining Camp', 'Frontier / Supply', 220, { w: 2, h: 2 }, 'Digs iron from a nearby outcrop node.', {
+    assetKey: 'resource_iron_outcrop',
+    effect: 'Extracts iron for the Blacksmith while near an iron node.',
+    flavor: 'The pickaxes are unionised; the ore is not.',
+  }),
+  core('herbalist_hut', 'Herbalist Hut', 'Frontier / Supply', 180, { w: 2, h: 2 }, 'Gathers herbs from a nearby patch node.', {
+    assetKey: 'resource_herb_patch',
+    effect: 'Extracts herbs for the Potion Shop while near a herb node.',
+    flavor: 'Smells medicinal in a way that is either healing or a lawsuit.',
+  }),
+  core('salvage_camp', 'Salvage Camp', 'Frontier / Supply', 240, { w: 2, h: 2 }, 'Recovers loot from nearby ruins or wreckage.', {
+    assetKey: 'resource_old_ruins',
+    kind: 'mixed',
+    effect: 'Extracts loot for the Market while near a ruins/wreckage node. Premium wreckage adds corruption.',
+    flavor: 'One hero\'s tragedy is another town\'s inventory.',
+  }),
+  core('storehouse', 'Storehouse', 'Frontier / Supply', 260, { w: 2, h: 2 }, 'Raises storage capacity and receives carrier deliveries.', {
+    assetKey: 'object_market_stall',
+    effect: 'Adds +30 storage per level for wood/iron/herbs/loot. Full storage pauses extraction.',
+    flavor: 'A building whose entire personality is "more shelves".',
+  }),
+  core('frontier_outpost', 'Frontier Outpost', 'Frontier / Supply', 300, { w: 2, h: 2 }, 'Projects safe territory into the wilds and reveals nearby fog.', {
+    assetKey: 'building_watchtower',
+    effect: 'Establishes remote territory: cheaper/safer frontier construction and a small reveal radius.',
+    flavor: 'A flag, a fence, and the confident assumption that this counts as civilisation.',
+  }),
+  core('sawmill', 'Sawmill', 'Production', 340, { w: 2, h: 2 }, 'Processes wood into construction planks.', {
+    assetKey: 'resource_wood_grove',
+    unlockKey: 'rank1',
+    lockReason: 'Reach Garage Guild rank and secure wood.',
+    effect: 'Wood -> Planks. Tools and specialization improve throughput.',
+    flavor: 'Standardized rectangles: the first sign of civilization and flat-pack furniture.',
+  }),
+  core('workshop', 'Workshop', 'Production', 480, { w: 2, h: 2 }, 'Combines planks and iron into useful tools.', {
+    assetKey: 'building_blacksmith',
+    unlockKey: 'rank2',
+    lockReason: 'Reach Recognized Settlement rank.',
+    effect: 'Planks + Iron -> Tools. Tools improve extraction and production.',
+    flavor: 'A room where raw materials acquire handles and labor expectations.',
+  }),
+  core('salvage_yard', 'Salvage Yard', 'Production', 440, { w: 2, h: 2 }, 'Sorts raw loot into trade goods or recovered equipment.', {
+    assetKey: 'resource_old_ruins',
+    unlockKey: 'rank2',
+    lockReason: 'Reach Recognized Settlement rank.',
+    kind: 'mixed',
+    effect: 'Loot -> Trade Goods or recovered Weapons.',
+    flavor: 'Nothing is junk after the inventory screen opens.',
+  }),
+  core('warehouse', 'Warehouse', 'Production', 560, { w: 3, h: 2 }, 'Stores processed goods and anchors commercial supply routes.', {
+    assetKey: 'building_loot_warehouse',
+    unlockKey: 'rank2',
+    lockReason: 'Reach Recognized Settlement rank.',
+    effect: '+35 processed-goods storage per level and better carrier routing.',
+    flavor: 'A cathedral dedicated to shelves, manifests, and finding neither quickly.',
+  }),
+  core('premium_fabricator', 'Premium Fabricator', 'Premium', 980, { w: 3, h: 2 }, 'Turns premium salvage into questionable components.', {
+    assetKey: 'decor_premium_temple',
+    unlockKey: 'premiumProduction',
+    lockReason: 'Reach Renowned Guild Town and acquire Premium Salvage.',
+    kind: 'shady',
+    effect: 'Premium Salvage -> Premium Components, Corruption, and Envy.',
+    flavor: 'The machine is powered by salvage and the phrase "best value".',
+  }),
 ];
 
 export const CATALOG_BY_ID = Object.fromEntries(BUILDING_CATALOG.map((entry) => [entry.id, entry]));
@@ -281,6 +352,18 @@ export const BUILD_MENU_CATEGORIES = [
     label: 'Public Order',
     description: 'Fair progress, mentoring, and licensed dissent.',
     buildingIds: ['mentor_hall'],
+  },
+  {
+    id: 'frontier',
+    label: 'Frontier & Supply',
+    description: 'Reach out, extract resources, store them, and hold the wilds.',
+    buildingIds: ['lumber_camp', 'mining_camp', 'herbalist_hut', 'salvage_camp', 'storehouse', 'frontier_outpost'],
+  },
+  {
+    id: 'production',
+    label: 'Production',
+    description: 'Turn frontier stock into tools, supplies, exports, and stronger heroes.',
+    buildingIds: ['sawmill', 'workshop', 'salvage_yard', 'warehouse', 'premium_fabricator'],
   },
   {
     id: 'decorations',

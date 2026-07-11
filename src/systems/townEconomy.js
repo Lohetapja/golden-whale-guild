@@ -3,22 +3,22 @@
 // lodging capacity, town resource inventory, and simple production hooks.
 // Pure data/logic only — TownScene owns rendering and state mutation.
 
+import { RESOURCE_CATALOG } from './production.js';
+
 // --- town inventory ---------------------------------------------------------
 
-export const RESOURCE_TYPES = [
-  { id: 'wood', label: 'Wood', icon: 'icon_wood', blurb: 'Beds and building upgrades, eventually.' },
-  { id: 'iron', label: 'Iron', icon: 'icon_iron', blurb: 'The blacksmith turns this into gear.' },
-  { id: 'herbs', label: 'Herbs', icon: 'icon_herbs', blurb: 'The potion shop turns this into recovery.' },
-  { id: 'loot', label: 'Loot', icon: 'item_gem_bag', blurb: 'The market turns this into gold.' },
-  { id: 'potions', label: 'Potions', icon: 'item_healing_potion', blurb: 'Heals injured heroes.' },
-  { id: 'gear', label: 'Gear', icon: 'icon_gear', blurb: 'Equips heroes for exploration.' },
-];
+export const RESOURCE_TYPES = RESOURCE_CATALOG.map((resource) => ({ ...resource, blurb: resource.use }));
 
 export function normalizeInventory(raw) {
   const inventory = {};
   for (const resource of RESOURCE_TYPES) {
     const value = Number(raw?.[resource.id]);
     inventory[resource.id] = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  }
+  const legacyGear = Math.max(0, Math.floor(Number(raw?.gear) || 0));
+  if (legacyGear > 0 && inventory.weapons === 0 && inventory.armor === 0) {
+    inventory.weapons = Math.ceil(legacyGear / 2);
+    inventory.armor = Math.floor(legacyGear / 2);
   }
   return inventory;
 }
@@ -135,34 +135,6 @@ export const WALKER_DAILY_CAPS = {
   evangelistGold: 30,
 };
 
-// --- production hooks -------------------------------------------------------
-
-// building id -> daily conversion (consumes `from`, produces `to`)
-export const PRODUCTION_RULES = [
-  {
-    building: 'market',
-    from: 'loot',
-    to: 'gold',
-    perUnitGold: 14,
-    batch: (level) => 2 + level,
-    log: (n, gold) => `The Market moved ${n} loot for ${gold}g. The margin remains a trade secret.`,
-  },
-  {
-    building: 'blacksmith',
-    from: 'iron',
-    to: 'gear',
-    batch: (level) => 1 + Math.floor(level / 2),
-    log: (n) => `The Blacksmith hammered ${n} iron into gear. The anvil filed no complaints.`,
-  },
-  {
-    building: 'potion_shop',
-    from: 'herbs',
-    to: 'potions',
-    batch: (level) => 1 + level,
-    log: (n) => `The Potion Shop brewed ${n} potion${n === 1 ? '' : 's'}. Side effects are narrative.`,
-  },
-];
-
 // POI kinds/ids -> what exploring heroes can carry home
 export const POI_RESOURCE_YIELDS = {
   poi_resource_grove: { resource: 'wood', min: 1, max: 3 },
@@ -173,10 +145,10 @@ export const POI_RESOURCE_YIELDS = {
   loot_stash_remains: { resource: 'loot', min: 1, max: 1 },
   poi_skeleton_ruins: { resource: 'iron', min: 1, max: 1 },
   old_balance_ruin: { resource: 'loot', min: 1, max: 1 },
-  poi_premium_ruin: { resource: 'loot', min: 1, max: 2, premium: true },
+  poi_premium_ruin: { resource: 'premiumSalvage', min: 1, max: 2, premium: true },
   resource_wood_grove_east: { resource: 'wood', min: 2, max: 4 },
   resource_iron_outcrop_south: { resource: 'iron', min: 2, max: 3 },
   resource_herb_patch_far: { resource: 'herbs', min: 2, max: 4 },
   resource_old_ruins_far: { resource: 'loot', min: 2, max: 3 },
-  resource_premium_wreckage_far: { resource: 'loot', min: 2, max: 4, premium: true },
+  resource_premium_wreckage_far: { resource: 'premiumSalvage', min: 2, max: 4, premium: true },
 };

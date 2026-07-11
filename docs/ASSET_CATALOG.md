@@ -292,3 +292,21 @@ hero_broke_optimist, hero_debt_goblin, hero_veteran, hero_lucky_idiot,
 hero_noble_whale. Downloaded from the PixelLab character library (not
 regenerated). Manifest entries are loop-generated; static sprites remain the
 fallback for every missing state.
+
+## 2026-07 Production Economy Reuse
+
+No new PixelLab generations were used for the production pass. Existing art
+is reused through `assetManifest` and remains fallback-safe:
+
+- Sawmill: `resource_wood_grove`
+- Workshop: `building_blacksmith`
+- Salvage Yard: `resource_old_ruins`
+- Warehouse: `building_loot_warehouse`
+- Premium Fabricator: `decor_premium_temple`
+- Lumber/Ore/Goods/Potion carriers: existing worker character assets
+- Product icons: existing wood, iron, herb, upgrade, equipment, potion, loot,
+  gem, and whale icon slots
+
+These are integration placeholders, not claims that the reused source art is
+final. Dedicated Sawmill, Workshop, Salvage Yard, and product icons remain
+good candidates for a later controlled asset batch.

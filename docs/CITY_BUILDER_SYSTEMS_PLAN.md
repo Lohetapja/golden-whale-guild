@@ -486,3 +486,86 @@ fog edges, UI panels/buttons, RNGesus set, monster camps. Terrain fills via
 
 Rule of thumb for every pass: pick the highest item that is safe, keep saves
 compatible, update this plan when reality changes.
+
+---
+
+## Extraction & Frontier Loop (implemented 2026-07)
+
+Config lives in `src/systems/extraction.js`; runtime in TownScene. See
+[INSPIRATION_SYSTEMS.md](INSPIRATION_SYSTEMS.md) for the loop diagram.
+
+Core loop: **explore → discover node → secure area → build extraction camp →
+connect road → carriers transport goods → Storehouse stores them → town
+buildings consume them → attract better heroes → expand farther → bigger
+hazards.**
+
+- **Resource nodes**: every resource POI has runtime state (finite amount,
+  regen, danger, surveyed/access/gatherer). Inspector actions: Survey,
+  Establish Access, Assign Gatherer, Collect, Abandon. Persisted in
+  `save.resourceNodes`.
+- **Extraction buildings** (Frontier & Supply build category): lumber_camp,
+  mining_camp, herbalist_hut, salvage_camp (extract a matching resource from a
+  node within `EXTRACTION_RANGE_TILES`), storehouse (storage caps + delivery
+  target), frontier_outpost (territory anchor + reveal). All reuse existing
+  node/prop art — no new PixelLab assets.
+- **Carriers**: `spawnCarrier` reuses the walker/animation system; delivers a
+  node's `pending` package to the nearest Storehouse/Market/Guild Hall and
+  credits `townInventory` on arrival.
+- **Storage**: `getStorageCap(resource)` = base + storehouse levels; STORED
+  resources (wood/iron/herbs/loot) are capped, outputs (gold/potions/gear)
+  are not. Full storage pauses extraction (surfaced in advisor + Town Stores).
+- **Territory**: `getTerritoryAnchors` / `isInTerritory`; `getEffectiveBuildCost`
+  applies `FRONTIER_BUILD_SURCHARGE` outside territory (frontier toolkit
+  exempt).
+- **Forest**: `forestBlockedCells` block building; `harvestForestFromCamps`
+  moves cells into `harvestedForestCells` (persisted, with regrow day);
+  `regrowForest` restores them. `redrawWildernessDressing` skips harvested
+  cells.
+- **Save/load**: `resourceNodes`, `harvestedForest`, and hero
+  `gatheringNodeId` persist; old saves hydrate safe defaults from
+  `POI_RESOURCE_YIELDS`.
+
+Next candidates: road-quality transport speed, depletion-driven camp
+relocation, cursed-forest POIs, and per-district storage.
+
+---
+
+## Production, Supply, And Rank Loop (implemented 2026-07)
+
+Canonical loop:
+
+**Raw resources -> transport -> storage -> processing -> finished goods ->
+hero supply -> quests and exploration -> reputation and town rank -> stronger
+heroes and larger threats -> expanded production and districts.**
+
+- `src/systems/production.js` is the canonical data source for the 12-item
+  inventory, recipes, priorities, trade prices, equipment quality, and six
+  Town Ranks. `townEconomy.js` retains walkers, beds, and POI yields.
+- Raw stock: wood, iron, herbs, loot, premium salvage. Finished stock:
+  planks, tools, weapons, armor, potions, trade goods, premium components.
+- Producers: Sawmill, Workshop, Blacksmith, Potion Shop, Salvage Yard,
+  Market, and Premium Fabricator. A producer keeps one selected recipe,
+  progress, priority, pause state, completed batches, and an output buffer.
+- Goods wait in the producer output buffer until a visible carrier can reach
+  a Warehouse, Storehouse, Market, or Guild Hall. Finished storage comes from
+  Warehouses; raw storage remains the Storehouse's main job.
+- Heroes have simple weapon/armor quality, carried potions, and readiness.
+  The Guild Hall can equip one hero or distribute available supplies. This is
+  intentionally not an RPG inventory grid.
+- Production batches improve building efficiency and upgrade progress.
+  Later upgrades also require a small amount of planks/tools, making the
+  processed economy useful without blocking the first upgrade.
+- Commercial, Industrial, and Frontier districts join the existing Rest,
+  Defense, Premium, and Civic districts. District identity is inferred from
+  nearby contributing buildings; there is no zone-painting UI.
+- External trade uses a preferred export and minimum reserve. Prices are
+  stable and deliberately simple. Imports are available at bad prices.
+- Town Rank is a computed score using reputation, prestige, heroes, quests,
+  production, beds, safety, revealed territory, and trust/corruption balance.
+  Rank gates production buildings and stronger hero arrivals.
+- Production incidents are low-frequency, system-linked consequences and are
+  recorded in the town log/week report.
+
+Planned, not implemented: furniture/remedies as extra goods, per-carrier
+manual route editing, a full worker job market, production graphs, and a
+real-time external commodity simulation.

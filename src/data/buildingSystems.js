@@ -71,7 +71,7 @@ export const BUILDING_ROLES = {
     serviceRangeTiles: 10,
     upkeep: 3,
     inputResource: 'iron',
-    outputResource: 'gear',
+    outputResource: 'weapons',
     districtTags: ['market', 'supply'],
     progressCounter: 'productionDone',
   }),
@@ -340,6 +340,77 @@ export const BUILDING_ROLES = {
     upkeep: 3,
     districtTags: ['premium', 'civic'],
   }),
+  lumber_camp: role('lumber_camp', {
+    type: 'Extraction', role: 'Harvests nearby forests and Wood Groves.',
+    usedBy: ['Lumber carriers'], provides: ['Wood'], consumes: ['Nearby forest'],
+    improves: ['Frontier supply'], repeatValue: 'More camps shorten timber routes and spread harvesting pressure.',
+    lacking: 'No forest or Wood Grove is close enough to inconvenience.', capacityLabel: 'Timber loads',
+    baseCapacity: 4, serviceRangeTiles: 16, upkeep: 2, outputResource: 'wood', districtTags: ['frontier', 'industrial'], progressCounter: 'productionDone',
+  }),
+  mining_camp: role('mining_camp', {
+    type: 'Extraction', role: 'Pulls iron from surveyed outcrops.',
+    usedBy: ['Ore carriers'], provides: ['Iron'], consumes: ['Iron Outcrop'],
+    improves: ['Forge supply'], repeatValue: 'More camps make distant ore useful before the carrier retires.',
+    lacking: 'No Iron Outcrop is within extraction range.', capacityLabel: 'Ore loads',
+    baseCapacity: 4, serviceRangeTiles: 16, upkeep: 2, outputResource: 'iron', districtTags: ['frontier', 'industrial'], progressCounter: 'productionDone',
+  }),
+  herbalist_hut: role('herbalist_hut', {
+    type: 'Extraction', role: 'Collects herbs for recovery supplies.',
+    usedBy: ['Herb collectors'], provides: ['Herbs'], consumes: ['Herb Patch'],
+    improves: ['Potion supply'], repeatValue: 'More huts keep recovery local when the frontier expands.',
+    lacking: 'No Herb Patch is close enough to smell medicinal.', capacityLabel: 'Herb bundles',
+    baseCapacity: 4, serviceRangeTiles: 16, upkeep: 2, outputResource: 'herbs', districtTags: ['frontier'], progressCounter: 'productionDone',
+  }),
+  salvage_camp: role('salvage_camp', {
+    type: 'Extraction', role: 'Recovers loot and premium debris from ruins.',
+    usedBy: ['Salvage runners'], provides: ['Loot', 'Premium salvage'], consumes: ['Ruins and wreckage'],
+    improves: ['Trade and fabrication supply'], repeatValue: 'More camps make separate ruins economically regrettable.',
+    lacking: 'No salvage node is within extraction range.', capacityLabel: 'Salvage loads',
+    baseCapacity: 4, serviceRangeTiles: 16, upkeep: 2, outputResource: 'loot', districtTags: ['frontier', 'industrial'], progressCounter: 'productionDone',
+  }),
+  storehouse: role('storehouse', {
+    type: 'Storage', role: 'Stores raw materials before weather claims seniority.',
+    usedBy: ['All carriers'], provides: ['Raw storage'], consumes: ['Gold upkeep'], improves: ['Extraction continuity'],
+    repeatValue: 'Each Storehouse adds local raw capacity and a shorter delivery route.', lacking: 'Raw storage is full. Extraction has begun producing waiting.',
+    capacityLabel: 'Raw storage', baseCapacity: 30, capacityPerLevel: 30, serviceRangeTiles: 10, upkeep: 2, districtTags: ['commercial', 'frontier'],
+  }),
+  frontier_outpost: role('frontier_outpost', {
+    type: 'Frontier', role: 'Projects safe territory around distant operations.',
+    usedBy: ['Explorers', 'Carriers'], provides: ['Territory', 'Safer routes'], consumes: ['Gold upkeep'], improves: ['Frontier construction'],
+    repeatValue: 'Each outpost supports another patch of profitable uncertainty.', lacking: 'Remote work remains expensive and enthusiastically dangerous.',
+    capacityLabel: 'Frontier routes', baseCapacity: 4, serviceRangeTiles: 13, upkeep: 3, districtTags: ['frontier', 'defense'],
+  }),
+  sawmill: role('sawmill', {
+    type: 'Production', role: 'Turns wood into standardized construction rectangles.', usedBy: ['Plank runners'],
+    provides: ['Planks'], consumes: ['Wood'], improves: ['Construction supply'], repeatValue: 'Duplicate mills can favor speed or efficiency near separate forests.',
+    lacking: 'No wood. The saw is cutting workplace tension.', capacityLabel: 'Production batches', baseCapacity: 5, serviceRangeTiles: 10,
+    upkeep: 3, inputResource: 'wood', outputResource: 'planks', districtTags: ['industrial'], progressCounter: 'productionDone',
+  }),
+  workshop: role('workshop', {
+    type: 'Production', role: 'Combines planks and iron into useful tools.', usedBy: ['Goods runners', 'Extraction crews'],
+    provides: ['Tools'], consumes: ['Planks', 'Iron'], improves: ['Extraction efficiency'], repeatValue: 'More workshops support more frontier crews without sharing one hammer.',
+    lacking: 'Needs planks and iron. Currently assembling explanations.', capacityLabel: 'Tool batches', baseCapacity: 4, serviceRangeTiles: 10,
+    upkeep: 3, inputResource: 'planks', outputResource: 'tools', districtTags: ['industrial'], progressCounter: 'productionDone',
+  }),
+  salvage_yard: role('salvage_yard', {
+    type: 'Production', role: 'Turns monster loot into trade goods or recovered equipment.', usedBy: ['Salvage runners', 'Traders'],
+    provides: ['Trade goods', 'Recovered weapons'], consumes: ['Loot'], improves: ['Trade value'], repeatValue: 'Separate yards can recover equipment while another feeds the Market.',
+    lacking: 'No loot. The Yard is sorting the same buckle again.', capacityLabel: 'Salvage batches', baseCapacity: 5, serviceRangeTiles: 10,
+    upkeep: 3, inputResource: 'loot', outputResource: 'tradeGoods', districtTags: ['industrial', 'commercial'], progressCounter: 'productionDone',
+  }),
+  warehouse: role('warehouse', {
+    type: 'Storage', role: 'Stores finished goods between production and consequences.', usedBy: ['Goods runners', 'Traders'],
+    provides: ['Processed storage'], consumes: ['Gold upkeep'], improves: ['Production continuity'], repeatValue: 'Each Warehouse expands finished-goods capacity and shortens delivery routes.',
+    lacking: 'Processed storage is full. The economy has become a hallway.', capacityLabel: 'Finished storage', baseCapacity: 35, capacityPerLevel: 35,
+    serviceRangeTiles: 11, upkeep: 3, districtTags: ['commercial', 'industrial'],
+  }),
+  premium_fabricator: role('premium_fabricator', {
+    type: 'Premium Production', role: 'Turns suspicious wreckage into powerful branded components.', usedBy: ['Premium evangelists', 'Whale heroes'],
+    provides: ['Premium components'], consumes: ['Premium salvage', 'Trust'], improves: ['Premium equipment', 'Whale attraction'],
+    repeatValue: 'Additional fabricators increase component output and municipal side-eye.', lacking: 'No premium salvage. The machine is monetizing its idle screen.',
+    capacityLabel: 'Fabrication batches', baseCapacity: 3, serviceRangeTiles: 10, upkeep: 6, inputResource: 'premiumSalvage', outputResource: 'premiumComponents',
+    districtTags: ['industrial', 'premium'], progressCounter: 'productionDone',
+  }),
 };
 
 const spec = (id, name, summary, effects = {}) => ({
@@ -465,6 +536,22 @@ export const BUILDING_SPECIALIZATIONS = {
       flavor: 'Side effects include revenue.',
     }),
   ],
+  sawmill: [
+    spec('fast_planks', 'Fast Planks', 'More output with less patience.', { productionBonus: 1, upkeepDelta: 1, flavor: 'The saw discovered urgency and lost several breaks.' }),
+    spec('efficient_wood', 'Efficient Wood Use', 'Occasionally saves one wood per batch.', { inputEfficiency: 1, flavor: 'Offcuts were promoted to inventory.' }),
+    spec('frontier_construction', 'Frontier Construction', 'Better service near distant outposts.', { rangeBonusTiles: 3, serviceQualityBonus: 1, flavor: 'The mill now exports walls and confidence.' }),
+  ],
+  workshop: [
+    spec('tool_contracts', 'Tool Contracts', 'More tool output with higher upkeep.', { productionBonus: 1, upkeepDelta: 1, flavor: 'Every hammer now has a delivery schedule.' }),
+    spec('durable_tools', 'Durable Tools', 'Slower batches support stronger extraction.', { serviceQualityBonus: 2, productionBonus: -1, flavor: 'The tools last longer than the policy that funded them.' }),
+  ],
+  salvage_yard: [
+    spec('trade_recovery', 'Trade Recovery', 'Prioritizes dependable trade goods.', { productionBonus: 1, flavor: 'Every buckle found a buyer and a backstory.' }),
+    spec('gear_recovery', 'Gear Recovery', 'Improves recovered equipment quality.', { serviceQualityBonus: 2, flavor: 'The dents are now provenance.' }),
+  ],
+  premium_fabricator: [
+    spec('whale_components', 'Whale Components', 'More components, more corruption.', { productionBonus: 1, dailyDeltas: { corruption: 1, gold: 12 }, flavor: 'The component now glows in a legally distinct way.' }),
+  ],
 };
 
 export const DISTRICT_BONUSES = [
@@ -480,12 +567,32 @@ export const DISTRICT_BONUSES = [
   },
   {
     id: 'market',
-    name: 'Market District',
-    buildingIds: ['market', 'blacksmith', 'potion_shop', 'gem_exchange', 'bank_debt_office'],
+    name: 'Commercial District',
+    buildingIds: ['market', 'warehouse', 'storehouse', 'salvage_yard', 'potion_shop', 'gem_exchange', 'bank_debt_office'],
     radius: 300,
     required: 2,
     effect: '+Trade, gear, and potion throughput.',
     productionBonus: 1,
+    className: 'gwg-good',
+  },
+  {
+    id: 'industrial',
+    name: 'Industrial District',
+    buildingIds: ['sawmill', 'workshop', 'blacksmith', 'salvage_yard', 'premium_fabricator'],
+    radius: 320,
+    required: 2,
+    effect: '+Production throughput; nearby morale becomes occupational.',
+    productionBonus: 1,
+    className: 'gwg-muted',
+  },
+  {
+    id: 'frontier',
+    name: 'Frontier District',
+    buildingIds: ['frontier_outpost', 'lumber_camp', 'mining_camp', 'herbalist_hut', 'salvage_camp', 'storehouse'],
+    radius: 360,
+    required: 2,
+    effect: '+Extraction reliability and wilderness support.',
+    extractionBonus: 1,
     className: 'gwg-good',
   },
   {
