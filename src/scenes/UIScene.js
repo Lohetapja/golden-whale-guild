@@ -69,9 +69,11 @@ export default class UIScene extends Phaser.Scene {
       this.buildTimeControls();
     }
     this.buildHtmlPanels();
+    this.buildHeroRoster();
     this.setupResponsiveRestart();
 
     this.registry.events.on('changedata-resources', (_p, value) => this.updateResources(value));
+    this.registry.events.on('changedata-heroRoster', (_p, value) => this.updateHeroRoster(value));
     this.registry.events.on('changedata-objectives', (_p, value) => this.updateObjectives(value));
     this.registry.events.on('changedata-townHint', (_p, value) => this.updateTownHint(value));
     this.registry.events.on('changedata-townStage', (_p, value) => this.updateTownStage(value));
@@ -107,6 +109,7 @@ export default class UIScene extends Phaser.Scene {
     });
 
     this.updateResources(this.registry.get('resources'));
+    this.updateHeroRoster(this.registry.get('heroRoster'));
     this.updateObjectives(this.registry.get('objectives'));
     this.updateTownHint(this.registry.get('townHint'));
     this.updateTownStage(this.registry.get('townStage'));
@@ -481,10 +484,11 @@ export default class UIScene extends Phaser.Scene {
   }
 
   buildTownLedgerButton() {
-    this.makeUtilityButton(48, HEIGHT - 64, 'Help', 'gwg-open-help', 58);
-    this.makeUtilityButton(128, HEIGHT - 64, 'Town Log', 'gwg-open-town-log', 88);
-    this.makeUtilityButton(210, HEIGHT - 64, 'Policy', 'gwg-open-policies', 66);
-    this.makeUtilityButton(304, HEIGHT - 64, 'Ledger', 'gwg-open-ledger', 92);
+    this.makeUtilityButton(42, HEIGHT - 64, 'Help', 'gwg-open-help', 54);
+    this.makeUtilityButton(113, HEIGHT - 64, 'Town Log', 'gwg-open-town-log', 80);
+    this.makeUtilityButton(188, HEIGHT - 64, 'Stores', 'gwg-open-stores', 62);
+    this.makeUtilityButton(256, HEIGHT - 64, 'Policy', 'gwg-open-policies', 64);
+    this.makeUtilityButton(330, HEIGHT - 64, 'Ledger', 'gwg-open-ledger', 74);
   }
 
   buildTimeControls() {
@@ -723,6 +727,70 @@ export default class UIScene extends Phaser.Scene {
     });
   }
 
+  buildHeroRoster() {
+    document.getElementById('gwg-hero-roster')?.remove();
+    this.heroRosterEl = document.createElement('aside');
+    this.heroRosterEl.id = 'gwg-hero-roster';
+    this.heroRosterEl.className = 'gwg-hero-roster';
+    this.heroRosterEl.innerHTML = `
+      <div class="gwg-hero-roster-head">
+        <strong>Heroes</strong>
+        <span></span>
+      </div>
+      <div class="gwg-hero-roster-body"></div>
+    `;
+    document.body.appendChild(this.heroRosterEl);
+    this.heroRosterCountEl = this.heroRosterEl.querySelector('.gwg-hero-roster-head span');
+    this.heroRosterBodyEl = this.heroRosterEl.querySelector('.gwg-hero-roster-body');
+
+    const releaseUiPointer = () => {
+      window.setTimeout(() => this.registry.set('uiPointerBlocked', false), 0);
+    };
+    this.heroRosterEl.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      this.registry.set('uiPointerBlocked', true);
+    });
+    this.heroRosterEl.addEventListener('pointerup', (event) => {
+      event.stopPropagation();
+      releaseUiPointer();
+    });
+    this.heroRosterEl.addEventListener('pointercancel', releaseUiPointer);
+    this.heroRosterEl.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const row = event.target.closest('[data-hero-id]');
+      if (!row) return;
+      this.game.events.emit('gwg-focus-hero', row.dataset.heroId);
+    });
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.heroRosterEl?.remove();
+      this.registry.set('uiPointerBlocked', false);
+    });
+  }
+
+  updateHeroRoster(payload = {}) {
+    if (!this.heroRosterEl || !this.heroRosterBodyEl) return;
+    const heroes = Array.isArray(payload?.heroes) ? payload.heroes : [];
+    const activeCount = heroes.filter((hero) => hero.status !== 'Dead' && hero.status !== 'Left').length;
+    if (this.heroRosterCountEl) this.heroRosterCountEl.textContent = `${activeCount}/${heroes.length || 0}`;
+    this.heroRosterBodyEl.innerHTML = heroes.slice(0, 28).map((hero) => {
+      const statusClass = this.escapeHtml(String(hero.status || '').toLowerCase().replace(/\s+/g, '-'));
+      const intent = hero.destination ? `${hero.action || 'Going'} -> ${hero.destination}` : (hero.action || 'Idle');
+      const icon = hero.icon
+        ? `<img class="gwg-hero-roster-icon" src="${this.escapeHtml(hero.icon)}" alt="" />`
+        : `<span class="gwg-hero-roster-icon fallback">${this.escapeHtml((hero.name || '?').charAt(0))}</span>`;
+      return `
+        <button class="gwg-hero-row ${statusClass}" type="button" data-hero-id="${this.escapeHtml(hero.id)}" title="${this.escapeHtml(intent)}">
+          ${icon}
+          <span class="gwg-hero-row-copy">
+            <strong>${this.escapeHtml(hero.name)}</strong>
+            <small>${this.escapeHtml(intent)}</small>
+          </span>
+          <span class="gwg-hero-status">${this.escapeHtml(hero.status || 'Idle')}</span>
+        </button>
+      `;
+    }).join('') || '<p class="gwg-hero-roster-empty">No heroes available. Even the volunteers read the terms.</p>';
+  }
+
   setWorldInputBlocked(blocked) {
     const town = this.scene.get('TownScene');
     if (town?.input) town.input.enabled = !blocked;
@@ -778,6 +846,10 @@ export default class UIScene extends Phaser.Scene {
       </section>
     `).join('');
 
+    const primaryActions = payload.primaryActions?.length
+      ? `<div class="gwg-primary-actions">${payload.primaryActions.map((action) => this.renderAction(action)).join('')}</div>`
+      : '';
+
     const rows = (payload.rows || []).map((row) => `
       <div class="gwg-row ${this.escapeHtml(row.kind || '')}">
         <div class="gwg-row-layout">
@@ -798,10 +870,10 @@ export default class UIScene extends Phaser.Scene {
       </div>
     `).join('');
 
-    const actions = payload.actions?.length
+    const actions = payload.actions?.length && !payload.primaryActions?.length
       ? `<div class="gwg-actions">${payload.actions.map((action) => this.renderAction(action)).join('')}</div>`
       : '';
-    return `${tabs}${sections}${rows}${actions}`;
+    return `${tabs}${primaryActions}${sections}${rows}${actions}`;
   }
 
   renderTownLedger(payload = {}) {

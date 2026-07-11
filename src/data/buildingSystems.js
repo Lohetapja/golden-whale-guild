@@ -543,9 +543,11 @@ export const BUILDING_SATIRE_LINES = {
 };
 
 export function getBuildingRole(id) {
-  return BUILDING_ROLES[id] || null;
+  const baseId = String(id || '').split('__')[0];
+  return BUILDING_ROLES[id] || BUILDING_ROLES[baseId] || null;
 }
 
 export function getBuildingSpecializations(id) {
-  return BUILDING_SPECIALIZATIONS[id] || [];
+  const baseId = String(id || '').split('__')[0];
+  return BUILDING_SPECIALIZATIONS[id] || BUILDING_SPECIALIZATIONS[baseId] || [];
 }

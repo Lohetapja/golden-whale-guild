@@ -184,6 +184,7 @@ export const DEFAULT_NEW_CITY = {
     { id: 'tavern', gridX: 5, gridY: 5 },
     { id: 'market', gridX: 12, gridY: 5 },
   ],
+  placedDecor: [],
   buildingRuntime: {
     guildhall: {
       usageCount: 0,
@@ -347,6 +348,11 @@ export function normalizeCityState(raw, legacyFactory) {
       ? incoming.placedBuildings
         .filter((building) => building?.id && Number.isInteger(building.gridX) && Number.isInteger(building.gridY))
         .map((building) => ({ ...building }))
+      : [],
+    placedDecor: Array.isArray(incoming.placedDecor)
+      ? incoming.placedDecor
+        .filter((decor) => decor?.id && decor?.catalogId && Number.isInteger(decor.gridX) && Number.isInteger(decor.gridY))
+        .map((decor) => ({ ...decor }))
       : [],
     buildingRuntime: incoming.buildingRuntime && typeof incoming.buildingRuntime === 'object'
       ? structuredClone(incoming.buildingRuntime)

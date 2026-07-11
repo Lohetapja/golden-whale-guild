@@ -153,7 +153,8 @@ export const UPGRADE_DEFS = {
 };
 
 export function getUpgradeDef(id) {
-  return UPGRADE_DEFS[id] || null;
+  const baseId = String(id || '').split('__')[0];
+  return UPGRADE_DEFS[id] || UPGRADE_DEFS[baseId] || null;
 }
 
 export function getUpgradeCost(def, level) {

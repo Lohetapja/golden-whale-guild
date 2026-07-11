@@ -1,16 +1,17 @@
 export const INTERACTION_PRIORITY = {
-  building: 400,
-  monster: 360,
-  hero: 300,
-  loot: 260,
-  decoration: 200,
+  hero: 520,
+  service: 500,
+  loot: 480,
+  monster: 450,
+  decoration: 340,
+  building: 300,
   fallback: 100,
 };
 
 const SPECIAL_PRIORITY = {
-  watchtower: 470,
-  dungeon: 445,
-  whale: 430,
+  watchtower: 410,
+  dungeon: 390,
+  whale: 380,
 };
 
 export function getInteractionPriority(target) {

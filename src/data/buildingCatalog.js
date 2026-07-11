@@ -27,7 +27,7 @@ const core = (
   description,
   assetKey: options.assetKey || `building_${id}`,
   roadRequired: options.roadRequired !== false,
-  maxCount: options.maxCount || 1,
+  maxCount: options.maxCount ?? 99,
   unlockKey: options.unlockKey || null,
   lockReason: options.lockReason || null,
   upkeep: options.upkeep || 0,
@@ -41,6 +41,7 @@ const core = (
 export const BUILDING_CATALOG = [
   core('guildhall', 'Guild Hall', 'Core Buildings', 420, { w: 3, h: 3 }, 'Posts quests and produces heroic paperwork.', {
     capacity: 6,
+    maxCount: 1,
   }),
   core('tavern', 'Tavern', 'Rest / Housing', 260, { w: 2, h: 2 }, 'Adds beds and morale recovery.', {
     capacity: 6,
@@ -58,9 +59,11 @@ export const BUILDING_CATALOG = [
   }),
   core('dungeon', 'Dungeon Gate', 'Defense / Missions', 500, { w: 3, h: 2 }, 'Quest access, threat control, and a door monsters respect selectively.', {
     kind: 'mixed',
+    maxCount: 1,
   }),
   core('whale', 'Golden Whale Milking Station', 'Premium', 680, { w: 3, h: 3 }, 'Generates gold, corruption, and social collapse.', {
     kind: 'shady',
+    maxCount: 1,
     flavor: 'Totally optional. Unless you enjoy winning.',
     actions: [
       action('premium_weapon', 'Sell Premium Weapon', '+Gold, whale Power, +Envy.', 0, { gold: 240, corruption: 3, trust: -2 }, 'whalePower', 'item_sword_of_unfair_advantage'),
@@ -221,6 +224,10 @@ export const BUILDING_CATALOG = [
 
 export const CATALOG_BY_ID = Object.fromEntries(BUILDING_CATALOG.map((entry) => [entry.id, entry]));
 
+export function getBaseBuildingId(id) {
+  return String(id || '').split('__')[0];
+}
+
 export const BUILD_CATEGORIES = [
   'Roads',
   'Core',
@@ -285,5 +292,5 @@ export const BUILD_MENU_CATEGORIES = [
 ];
 
 export function getBuildingCatalogEntry(id) {
-  return CATALOG_BY_ID[id] || null;
+  return CATALOG_BY_ID[id] || CATALOG_BY_ID[getBaseBuildingId(id)] || null;
 }

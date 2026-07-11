@@ -56,7 +56,7 @@ export function resolveTexture(scene, assetKey, fallbackKey = null) {
 }
 
 export function buildingTexture(scene, def) {
-  return resolveTexture(scene, def.assetKey, `ph-${def.id}`);
+  return resolveTexture(scene, def.assetKey, `ph-${def.baseId || String(def.id || '').split('__')[0]}`);
 }
 
 export function heroTexture(scene, def) {

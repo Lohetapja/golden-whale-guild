@@ -12,6 +12,7 @@ import { EXPLORATION_POINTS } from '../data/explorationPoints.js';
 import {
   BUILDING_CATALOG,
   BUILD_MENU_CATEGORIES,
+  getBaseBuildingId,
   getBuildingCatalogEntry,
 } from '../data/buildingCatalog.js';
 import {
@@ -172,6 +173,24 @@ const BUILD_TAB_ICON_KEYS = {
   social: 'ui_build_category_social',
   decorations: 'ui_build_category_decor',
 };
+
+const DECOR_BUILD_CATALOG = [
+  { id: 'decor_tree', title: 'Tree', assetKey: 'prop_tree', fallbackKey: 'tree', cost: 18, w: 42, h: 56, effect: '+Tiny prestige, softens empty land.', flavor: 'Shade, leaves, and no subscription tier.' },
+  { id: 'decor_rock', title: 'Rock', assetKey: 'prop_rock', fallbackKey: 'rock', cost: 8, w: 32, h: 28, effect: '+District texture, legally not a building.', flavor: 'Nature placed it first. The guild sent an invoice.' },
+  { id: 'decor_fence', title: 'Fence', assetKey: 'prop_fence', fallbackKey: 'fence_h', cost: 14, w: 44, h: 22, effect: '+District boundary and civic pretending.', flavor: 'Keeps problems aesthetically contained.' },
+  { id: 'decor_lamp', title: 'Lamp', assetKey: 'prop_lamp', fallbackKey: 'lamp', cost: 26, w: 28, h: 54, effect: '+Tiny morale near roads.', flavor: 'A light in the dark, billed monthly in spirit.' },
+  { id: 'decor_bench', title: 'Bench', assetKey: 'object_bench', fallbackKey: 'table', cost: 22, w: 44, h: 28, effect: '+Tiny morale for heroes waiting on balance.', flavor: 'Public seating, reinforced against discourse.' },
+  { id: 'decor_barrel', title: 'Barrel', assetKey: 'prop_barrel', fallbackKey: 'barrel', cost: 12, w: 30, h: 34, effect: '+Market clutter, complaint-adjacent.', flavor: 'Contains supplies, rumors, or both.' },
+  { id: 'decor_crate', title: 'Crate', assetKey: 'prop_crate', fallbackKey: 'crate', cost: 12, w: 34, h: 32, effect: '+Trade flavor for markets and workshops.', flavor: 'Full of inventory nobody will reconcile.' },
+  { id: 'decor_signpost', title: 'Signpost', assetKey: 'prop_signpost', fallbackKey: 'signpost', cost: 16, w: 30, h: 46, effect: '+Path readability.', flavor: 'Directions for heroes who reject conceptual access.' },
+  { id: 'decor_well', title: 'Well', assetKey: 'object_well', fallbackKey: 'rock', cost: 44, w: 48, h: 44, effect: '+Prestige and a hydration alibi.', flavor: 'Fresh water with no premium font.' },
+  { id: 'decor_statue', title: 'Statue', assetKey: 'object_statue', fallbackKey: 'rock', cost: 70, w: 46, h: 64, effect: '+Prestige, +future civic arguments.', flavor: 'A monument to whoever funded the plaque.' },
+  { id: 'decor_market_stall', title: 'Market Stall', assetKey: 'object_market_stall', fallbackKey: 'table', cost: 38, w: 58, h: 46, effect: '+Market district identity.', flavor: 'Pop-up commerce with pop-up ethics.' },
+  { id: 'decor_rope_barrier', title: 'Rope Barrier', assetKey: 'object_rope_barrier', fallbackKey: 'fence_h', cost: 35, w: 52, h: 24, effect: '+Premium district identity, +suspicion.', flavor: 'Soft security for hard exclusivity.' },
+  { id: 'decor_premium_lamp', title: 'Premium Lamp', assetKey: 'object_lamp_premium', fallbackKey: 'lamp', cost: 48, w: 30, h: 58, effect: '+Prestige, +tiny corruption.', flavor: 'The light is free. The glow is licensed.' },
+];
+
+const DECOR_BUILD_BY_ID = Object.fromEntries(DECOR_BUILD_CATALOG.map((entry) => [entry.id, entry]));
 
 const RESOURCE_THRESHOLDS = {
   trustWarning: 34,
@@ -750,6 +769,7 @@ export default class TownScene extends Phaser.Scene {
     this.registry.set('townStage', this.getCurrentStage().name);
     this.registry.set('townIdentity', this.getTownIdentity().name);
     this.registry.set('simulationSpeed', this.simulationSpeed);
+    this.publishHeroRoster();
     this.updateTownNotice();
     this.publishObjectives();
     this.publishTownHint();
@@ -768,6 +788,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-open-ledger', this.openTownLedger, this);
     this.game.events.on('gwg-open-town-log', this.openTownLog, this);
     this.game.events.on('gwg-open-help', this.openHelpPanel, this);
+    this.game.events.on('gwg-open-stores', this.openTownStoresPanel, this);
     this.game.events.on('gwg-open-more', this.openMobileMorePanel, this);
     this.game.events.on('gwg-open-policies', this.showPolicyPanel, this);
     this.game.events.on('gwg-open-reset-confirm', this.openResetConfirmPanel, this);
@@ -787,12 +808,15 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-building-action', this.runBuildingAction, this);
     this.game.events.on('gwg-choose-specialization', this.chooseBuildingSpecialization, this);
     this.game.events.on('gwg-toggle-building-open', this.toggleBuildingOpenFromUi, this);
+    this.game.events.on('gwg-move-building', this.startMoveBuildingFromUi, this);
+    this.game.events.on('gwg-delete-building', this.deleteBuildingFromUi, this);
     this.game.events.on('gwg-open-report', this.showCycleReport, this);
     this.game.events.on('gwg-collect-loot', this.collectLootDrop, this);
     this.game.events.on('gwg-open-delete', this.openDeleteTool, this);
     this.game.events.on('gwg-assign-quest', this.assignQuestHeroFromUi, this);
     this.game.events.on('gwg-poi-action', this.runPoiAction, this);
     this.game.events.on('gwg-confirm-build', this.confirmRoadPlan, this);
+    this.game.events.on('gwg-focus-hero', this.focusHeroFromRoster, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       window.removeEventListener('resize', refreshResponsiveState);
       window.removeEventListener('orientationchange', refreshResponsiveState);
@@ -806,6 +830,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-open-ledger', this.openTownLedger, this);
       this.game.events.off('gwg-open-town-log', this.openTownLog, this);
       this.game.events.off('gwg-open-help', this.openHelpPanel, this);
+      this.game.events.off('gwg-open-stores', this.openTownStoresPanel, this);
       this.game.events.off('gwg-open-more', this.openMobileMorePanel, this);
       this.game.events.off('gwg-open-policies', this.showPolicyPanel, this);
       this.game.events.off('gwg-open-reset-confirm', this.openResetConfirmPanel, this);
@@ -825,12 +850,15 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-building-action', this.runBuildingAction, this);
       this.game.events.off('gwg-choose-specialization', this.chooseBuildingSpecialization, this);
       this.game.events.off('gwg-toggle-building-open', this.toggleBuildingOpenFromUi, this);
+      this.game.events.off('gwg-move-building', this.startMoveBuildingFromUi, this);
+      this.game.events.off('gwg-delete-building', this.deleteBuildingFromUi, this);
       this.game.events.off('gwg-open-report', this.showCycleReport, this);
       this.game.events.off('gwg-collect-loot', this.collectLootDrop, this);
       this.game.events.off('gwg-open-delete', this.openDeleteTool, this);
       this.game.events.off('gwg-assign-quest', this.assignQuestHeroFromUi, this);
       this.game.events.off('gwg-poi-action', this.runPoiAction, this);
       this.game.events.off('gwg-confirm-build', this.confirmRoadPlan, this);
+      this.game.events.off('gwg-focus-hero', this.focusHeroFromRoster, this);
     });
 
     this.game.events.emit(
@@ -945,33 +973,64 @@ export default class TownScene extends Phaser.Scene {
   }
 
   applyBuildingPlacements(buildings) {
-    const placementById = Object.fromEntries(
-      this.cityState.placedBuildings.map((placement) => [placement.id, placement]),
-    );
-    return buildings.map((building) => {
-      const placement = placementById[building.id];
-      const catalog = getBuildingCatalogEntry(building.id);
-      if (!placement) {
-        return {
-          ...building,
-          catalog,
-          footprint: catalog?.footprint || { w: 2, h: 2 },
-          isPlaced: false,
-        };
-      }
+    const baseById = Object.fromEntries(buildings.map((building) => [building.id, building]));
+    const placements = this.cityState.placedBuildings.map((placement) => ({
+      ...placement,
+      baseId: placement.baseId || getBaseBuildingId(placement.id),
+    }));
+    const usedPlacementIds = new Set();
+    const buildFromPlacement = (baseBuilding, placement, copyIndex = 1) => {
+      const catalog = getBuildingCatalogEntry(placement.baseId);
       const position = placement.legacyPosition || !this.useIsoRendering()
-        ? { x: building.x, y: building.y }
+        ? { x: baseBuilding.x, y: baseBuilding.y }
         : this.gridToVisual(placement.gridX, placement.gridY, catalog?.footprint);
       return {
-        ...building,
+        ...baseBuilding,
         ...position,
+        id: placement.id,
+        baseId: placement.baseId,
         catalog,
         footprint: catalog?.footprint || { w: 2, h: 2 },
         gridX: placement.gridX,
         gridY: placement.gridY,
         isPlaced: true,
+        name: copyIndex > 1 ? `${baseBuilding.name} ${copyIndex}` : baseBuilding.name,
       };
+    };
+
+    const result = buildings.map((building) => {
+      const exact = placements.find((placement) => placement.id === building.id);
+      const fallback = exact || placements.find((placement) => placement.baseId === building.id && !usedPlacementIds.has(placement.id));
+      const catalog = getBuildingCatalogEntry(building.id);
+      if (!fallback) {
+        return {
+          ...building,
+          baseId: building.id,
+          catalog,
+          footprint: catalog?.footprint || { w: 2, h: 2 },
+          isPlaced: false,
+        };
+      }
+      usedPlacementIds.add(fallback.id);
+      return buildFromPlacement(building, fallback, fallback.copyIndex || 1);
     });
+
+    for (const placement of placements) {
+      if (usedPlacementIds.has(placement.id)) continue;
+      const baseBuilding = baseById[placement.baseId];
+      if (!baseBuilding) continue;
+      const copyIndex = placement.copyIndex || (this.getPlacementIndexForBase(placements, placement.baseId, placement.id) + 1);
+      usedPlacementIds.add(placement.id);
+      result.push(buildFromPlacement(baseBuilding, placement, copyIndex));
+    }
+
+    return result;
+  }
+
+  getPlacementIndexForBase(placements, baseId, placementId) {
+    return placements
+      .filter((placement) => placement.baseId === baseId)
+      .findIndex((placement) => placement.id === placementId);
   }
 
   useIsoRendering() {
@@ -1078,7 +1137,7 @@ export default class TownScene extends Phaser.Scene {
     const guild = this.buildings.find((building) => building.id === 'guildhall');
     const decorationWorldWidth = this.isBuilderCity ? GRID_WORLD.width : TOWN_WORLD.width;
     const decorationWorldHeight = this.isBuilderCity ? GRID_WORLD.height : TOWN_WORLD.height;
-    return decorations.map((decoration) => {
+    const automaticDecorations = decorations.map((decoration) => {
       const isNature = ['tree', 'rock', 'flowers'].includes(decoration.fallbackKey);
       const isEdgeNature = isNature && (
         decoration.district === 'edge'
@@ -1110,6 +1169,39 @@ export default class TownScene extends Phaser.Scene {
         isPlaced: isEdgeNature,
       };
     });
+    const manualDecorations = (this.cityState.placedDecor || [])
+      .map((entry) => {
+        const config = DECOR_BUILD_BY_ID[entry.catalogId];
+        if (!config || !isInsideGrid(entry.gridX, entry.gridY)) return null;
+        const pos = this.gridToVisual(entry.gridX, entry.gridY, { w: 1, h: 1 });
+        return {
+          id: entry.id,
+          name: config.title,
+          x: pos.x,
+          y: pos.y,
+          gridX: entry.gridX,
+          gridY: entry.gridY,
+          w: config.w,
+          h: config.h,
+          scale: config.scale || 0.75,
+          visualScale: config.visualScale || config.scale || 0.75,
+          fallbackKey: config.fallbackKey,
+          assetKey: config.assetKey,
+          description: config.effect,
+          tooltipLines: [config.flavor],
+          effect: config.effect,
+          userPlaced: true,
+          isPlaced: true,
+          interactive: true,
+          label: false,
+          spot: false,
+          interactionPriority: 260,
+          interactionW: Math.max(30, config.w * 0.74),
+          interactionH: Math.max(24, config.h * 0.62),
+        };
+      })
+      .filter(Boolean);
+    return [...automaticDecorations, ...manualDecorations];
   }
 
   getBuildingRuntime(id) {
@@ -1203,11 +1295,12 @@ export default class TownScene extends Phaser.Scene {
 
   getDistrictBonusesForPlace(place) {
     if (!place?.isPlaced) return [];
+    const baseId = getBaseBuildingId(place.baseId || place.id);
     return DISTRICT_BONUSES.filter((bonus) => {
-      if (!bonus.buildingIds.includes(place.id)) return false;
+      if (!bonus.buildingIds.includes(baseId)) return false;
       const nearbyIds = new Set([
-        place.id,
-        ...this.getNearbyPlacedBuildings(place, bonus.radius).map((candidate) => candidate.id),
+        baseId,
+        ...this.getNearbyPlacedBuildings(place, bonus.radius).map((candidate) => getBaseBuildingId(candidate.baseId || candidate.id)),
       ]);
       const matches = bonus.buildingIds.filter((id) => nearbyIds.has(id));
       return matches.length >= bonus.required;
@@ -1264,6 +1357,7 @@ export default class TownScene extends Phaser.Scene {
   getBuildingProblems(place) {
     const catalog = getBuildingCatalogEntry(place?.id);
     if (!place?.isPlaced || !catalog) return [];
+    const baseId = getBaseBuildingId(place.baseId || place.id);
     const metrics = this.getBuildingMetrics(place);
     const role = metrics.role;
     const runtime = metrics.runtime;
@@ -1277,7 +1371,7 @@ export default class TownScene extends Phaser.Scene {
     if (metrics.capacity > 0 && metrics.load >= metrics.capacity) {
       problems.push({ text: `${role?.capacityLabel || 'Capacity'} overloaded (${metrics.load}/${metrics.capacity}).`, className: 'gwg-bad' });
     }
-    if (REST_BUILDINGS[place.id]) {
+    if (REST_BUILDINGS[baseId]) {
       const lodging = this.getLodgingReport();
       if (lodging.homeless > 0) problems.push({ text: `Town beds full: ${lodging.homeless} hero${lodging.homeless === 1 ? '' : 'es'} sleeping outside.`, className: 'gwg-bad' });
     }
@@ -1323,6 +1417,27 @@ export default class TownScene extends Phaser.Scene {
 
   isBuildingPlaced(id) {
     return Boolean(this.buildingById?.[id]?.isPlaced);
+  }
+
+  getPlacedBuildingsByBaseId(baseId) {
+    return Object.values(this.buildingById || {})
+      .filter((place) => place?.isPlaced && (place.baseId || getBaseBuildingId(place.id)) === baseId);
+  }
+
+  getPlacedBuildingCount(baseId) {
+    return this.getPlacedBuildingsByBaseId(baseId).length;
+  }
+
+  isCatalogAtBuildLimit(catalog) {
+    const maxCount = Number(catalog?.maxCount ?? 99);
+    return Number.isFinite(maxCount) && this.getPlacedBuildingCount(catalog.id) >= maxCount;
+  }
+
+  getNextBuildingInstanceId(baseId) {
+    if (!this.buildingById?.[baseId] || !this.buildingById[baseId].isPlaced) return baseId;
+    let index = this.getPlacedBuildingCount(baseId) + 1;
+    while (this.buildingById?.[`${baseId}__${index}`]) index += 1;
+    return `${baseId}__${index}`;
   }
 
   setupCameraControls() {
@@ -1597,6 +1712,7 @@ export default class TownScene extends Phaser.Scene {
         revealed: [...(this.revealedTiles || [])],
         roads: this.cityState.roads.map((road) => ({ ...road })),
         placedBuildings: this.cityState.placedBuildings.map((building) => ({ ...building })),
+        placedDecor: (this.cityState.placedDecor || []).map((decor) => ({ ...decor })),
         buildingRuntime: structuredClone(this.cityState.buildingRuntime || {}),
         simulation: {
           speed: this.simulationSpeed,
@@ -1632,6 +1748,7 @@ export default class TownScene extends Phaser.Scene {
         injuredUntilDay: hero.stats.injuredUntilDay || 0,
         injuryState: hero.stats.injuryState || 'healthy',
         deathDay: hero.stats.deathDay || 0,
+        deathLocation: hero.stats.deathLocation || null,
         intent: hero.intent ? { ...hero.intent } : null,
         animationState: hero.animationState || hero.stats.animationState || 'idle',
         premiumExposure: hero.stats.premiumExposure || 0,
@@ -1680,6 +1797,7 @@ export default class TownScene extends Phaser.Scene {
       actions: [
         { label: 'Help', event: 'gwg-open-help' },
         { label: 'Town Log', event: 'gwg-open-town-log' },
+        { label: 'Town Stores', event: 'gwg-open-stores' },
         { label: 'Policies', event: 'gwg-open-policies' },
         { label: 'Week Report', event: 'gwg-open-report' },
         { label: 'Town Ledger', event: 'gwg-open-ledger' },
@@ -1759,6 +1877,72 @@ export default class TownScene extends Phaser.Scene {
       actions: [
         { label: 'Restart Tips', event: 'gwg-tutorial-start' },
       ],
+    });
+  }
+
+  openTownStoresPanel() {
+    this.activeInspector = { type: 'stores' };
+    this.clearSelection(false);
+    const resourceUse = {
+      wood: {
+        gained: 'Wood Grove, Resource Grove, exploration hauls',
+        used: 'Lodging upgrades, construction hooks, future district comfort',
+        shortage: this.getActiveHeroes().length > this.getLodgingReport().beds ? 'Bed pressure is high. Wood will matter for lodging growth.' : '',
+      },
+      iron: {
+        gained: 'Iron Outcrop, Old Ruins, dangerous exploration',
+        used: 'Blacksmith gear production and future defense upgrades',
+        shortage: (this.townInventory?.iron || 0) <= 0 && (this.townInventory?.gear || 0) <= 0 ? 'No iron or gear stock. Heroes are bringing optimism to weapon fights.' : '',
+      },
+      herbs: {
+        gained: 'Herb Patch, Resource Grove, careful exploration',
+        used: 'Potion Shop recovery and injury mitigation',
+        shortage: this.getActiveHeroes().some((hero) => this.isHeroInjured(hero)) && (this.townInventory?.potions || 0) <= 0 ? 'Injured heroes need potions or rest.' : '',
+      },
+      loot: {
+        gained: 'Quests, monster drops, Loot Cave, abandoned supplies',
+        used: 'Market converts loot into gold',
+        shortage: (this.townInventory?.loot || 0) >= 5 ? 'Loot stockpile is high. Markets should convert it before it becomes decor.' : '',
+      },
+      potions: {
+        gained: 'Potion Shop from herbs',
+        used: 'Healing injured or missing heroes faster',
+        shortage: this.getActiveHeroes().some((hero) => this.isHeroInjured(hero)) ? 'Injuries detected. Potions are no longer decorative soup.' : '',
+      },
+      gear: {
+        gained: 'Blacksmith from iron',
+        used: 'Quest success, monster response, exploration safety',
+        shortage: (this.townInventory?.gear || 0) <= 1 && this.resources.threat > 45 ? 'Threat is rising and gear stock is thin.' : '',
+      },
+    };
+    const rows = RESOURCE_TYPES.map((resource) => {
+      const info = resourceUse[resource.id] || {};
+      const amount = this.townInventory?.[resource.id] || 0;
+      return {
+        title: resource.label,
+        meta: `${amount}`,
+        kind: info.shortage ? 'shady' : 'fair',
+        preview: this.getAssetPreviewUrl(resource.icon),
+        lines: [
+          resource.blurb,
+          `Gained from: ${info.gained || 'town events and future systems'}.`,
+          `Used by: ${info.used || 'future town services'}.`,
+          ...(info.shortage ? [{ text: info.shortage, className: 'gwg-bad' }] : [{ text: 'No urgent shortage right now.', className: 'gwg-muted' }]),
+        ],
+      };
+    });
+    this.game.events.emit('gwg-inspector-open', {
+      panelType: 'stores',
+      title: 'Town Stores',
+      subtitle: `${formatInventoryLine(this.townInventory)} - resources are local, fictional, and judgmental`,
+      sections: [{
+        title: 'Why This Matters',
+        lines: [
+          'Resources are the city-builder pressure under the satire: services turn stored stuff into hero survival.',
+          'Shortage notes point to useful buildings instead of asking you to memorize the economy.',
+        ],
+      }],
+      rows,
     });
   }
 
@@ -3634,6 +3818,10 @@ export default class TownScene extends Phaser.Scene {
   getBuildFootprint() {
     if (!this.buildMode) return { w: 1, h: 1 };
     if (this.buildMode.kind === 'road') return { w: 1, h: 1 };
+    if (this.buildMode.kind === 'move') {
+      const place = this.buildingById?.[this.buildMode.id];
+      return place?.footprint || getBuildingCatalogEntry(place?.baseId || place?.id)?.footprint || { w: 1, h: 1 };
+    }
     return getBuildingCatalogEntry(this.buildMode.id)?.footprint || { w: 1, h: 1 };
   }
 
@@ -3781,16 +3969,17 @@ export default class TownScene extends Phaser.Scene {
       return { valid: true, reason: '', cost: -refund, footprint };
     }
 
-    const catalog = getBuildingCatalogEntry(this.buildMode.id);
+    const movingPlace = this.buildMode.kind === 'move' ? this.buildingById?.[this.buildMode.id] : null;
+    const catalog = getBuildingCatalogEntry(movingPlace?.baseId || this.buildMode.id);
     if (!catalog) return { valid: false, reason: 'The catalog misplaced that building.' };
-    const lockReason = this.getCatalogLockReason(catalog);
+    const lockReason = movingPlace ? null : this.getCatalogLockReason(catalog);
     if (lockReason) return { valid: false, reason: lockReason };
-    if (this.isBuildingPlaced(catalog.id)) {
-      return { valid: false, reason: `${catalog.id === 'tavern' ? 'This prototype supports one tavern for now.' : 'Already built.'}` };
+    if (!movingPlace && this.isCatalogAtBuildLimit(catalog)) {
+      return { valid: false, reason: `${catalog.name} is unique. The town refuses to duplicate that specific problem.` };
     }
     if (cells.some((cell) => {
       const state = this.gridCells.get(gridKey(cell.x, cell.y));
-      return state?.occupiedBy || state?.road;
+      return (state?.occupiedBy && state.occupiedBy !== movingPlace?.id) || state?.road;
     })) {
       return { valid: false, reason: 'Occupied tiles object to architecture.' };
     }
@@ -3800,9 +3989,11 @@ export default class TownScene extends Phaser.Scene {
       if (!hasRoad) return { valid: false, reason: 'Needs an adjacent road. Heroes dislike conceptual access.' };
     }
     return {
-      valid: this.resources.gold >= catalog.cost,
-      reason: this.resources.gold >= catalog.cost ? '' : 'Not enough gold. The accountant recommends another road to nowhere.',
-      cost: catalog.cost,
+      valid: this.resources.gold >= (movingPlace ? this.getMoveBuildingCost(movingPlace) : catalog.cost),
+      reason: this.resources.gold >= (movingPlace ? this.getMoveBuildingCost(movingPlace) : catalog.cost)
+        ? ''
+        : 'Not enough gold. The accountant recommends another road to nowhere.',
+      cost: movingPlace ? this.getMoveBuildingCost(movingPlace) : catalog.cost,
       footprint,
     };
   }
@@ -3903,13 +4094,23 @@ export default class TownScene extends Phaser.Scene {
     if (this.buildMode.kind === 'delete') {
       return { name: 'Delete Tool', cost: 0, description: 'Removes roads for a 50% refund.' };
     }
+    if (this.buildMode.kind === 'move') {
+      const place = this.buildingById?.[this.buildMode.id];
+      const catalog = getBuildingCatalogEntry(place?.baseId || place?.id);
+      return catalog ? {
+        ...catalog,
+        name: `Move ${place.name}`,
+        assetKey: place.assetKey || catalog.assetKey,
+        cost: this.getMoveBuildingCost(place),
+      } : null;
+    }
     const catalog = getBuildingCatalogEntry(this.buildMode.id);
     const place = this.buildingById?.[this.buildMode.id];
     return catalog ? { ...catalog, assetKey: place?.assetKey || catalog.assetKey } : null;
   }
 
   updateBuildGhost(anchor, footprint, valid) {
-    if (this.buildMode?.kind !== 'building') {
+    if (!['building', 'move'].includes(this.buildMode?.kind)) {
       this.buildPreviewGhost?.setVisible(false);
       return;
     }
@@ -3947,7 +4148,8 @@ export default class TownScene extends Phaser.Scene {
     }
     if (kind === 'road' && !ROAD_TYPES[id]) return;
     if (kind === 'building' && !getBuildingCatalogEntry(id)) return;
-    if (!['road', 'building', 'delete'].includes(kind)) return;
+    if (kind === 'move' && !this.buildingById?.[id]) return;
+    if (!['road', 'building', 'delete', 'move'].includes(kind)) return;
     this.clearSelection();
     this.clearWorldInteractionHover();
     this.clearRoadPlan(); // switching tools always drops any pending plan
@@ -4013,6 +4215,8 @@ export default class TownScene extends Phaser.Scene {
       else this.placeRoad(gridX, gridY, this.buildMode.id, result.cost);
     } else if (this.buildMode.kind === 'delete') {
       this.deleteRoadAt(gridX, gridY);
+    } else if (this.buildMode.kind === 'move') {
+      this.moveBuildingTo(this.buildMode.id, gridX, gridY, result.cost);
     } else {
       this.placeCatalogBuilding(gridX, gridY, this.buildMode.id, result.cost);
     }
@@ -4208,6 +4412,111 @@ export default class TownScene extends Phaser.Scene {
     this.saveGame(false);
   }
 
+  getMoveBuildingCost(place) {
+    const catalog = getBuildingCatalogEntry(place?.baseId || place?.id);
+    return Math.max(25, Math.floor((catalog?.cost || 120) * 0.15));
+  }
+
+  clearBuildingCells(place) {
+    if (!place || !Number.isInteger(place.gridX) || !Number.isInteger(place.gridY)) return;
+    const footprint = place.footprint || getBuildingCatalogEntry(place.baseId || place.id)?.footprint || { w: 1, h: 1 };
+    for (const cellPos of getFootprintCells(place.gridX, place.gridY, footprint)) {
+      const cell = this.gridCells.get(gridKey(cellPos.x, cellPos.y));
+      if (cell?.occupiedBy === place.id) cell.occupiedBy = null;
+    }
+  }
+
+  removeBuildingVisuals(id) {
+    for (const obj of this.buildingObjectsById?.[id] || []) obj.destroy?.();
+    delete this.buildingObjectsById?.[id];
+    delete this.placeSpriteById?.[id];
+    delete this.placeLabelsById?.[id];
+    this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== id);
+    this.doorSpots = (this.doorSpots || []).filter((spot) => spot.id !== id);
+    this.doorById = Object.fromEntries((this.doorSpots || []).map((spot) => [spot.id, spot]));
+  }
+
+  startMoveBuildingFromUi(id) {
+    const place = this.buildingById?.[id];
+    if (!place?.isPlaced || !getBuildingCatalogEntry(place.baseId || place.id)) return;
+    this.tooltipTarget = null;
+    this.enterBuildMode('move', id);
+  }
+
+  moveBuildingTo(id, gridX, gridY, cost = 0) {
+    const place = this.buildingById?.[id];
+    const catalog = getBuildingCatalogEntry(place?.baseId || place?.id);
+    if (!place?.isPlaced || !catalog) return;
+    if (cost > 0) this.applyDeltas({ gold: -cost });
+    this.clearBuildingCells(place);
+    const placement = this.cityState.placedBuildings.find((entry) => entry.id === id);
+    if (placement) {
+      placement.gridX = gridX;
+      placement.gridY = gridY;
+    }
+    occupyBuildingCells(this.gridCells, { id, gridX, gridY }, catalog.footprint);
+    const position = this.gridToVisual(gridX, gridY, catalog.footprint);
+    Object.assign(place, position, {
+      gridX,
+      gridY,
+      footprint: catalog.footprint,
+      isPlaced: true,
+    });
+    this.removeBuildingVisuals(id);
+    this.clearStaticPropsInsideFootprint(gridX, gridY, catalog.footprint);
+    this.renderBuilding(place);
+    this.redrawTerrainDetails();
+    this.redrawTerrainVariety();
+    this.redrawWildernessDressing();
+    this.refreshWorldVisibility();
+    this.cancelBuildMode();
+    const text = `${place.name} moved for ${cost}g. The city planner briefly looked powerful.`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.floatText(place.x, place.y - (place.h || 58) - 12, 'MOVED', '#7fdc93');
+    this.saveGame(false);
+    this.time.delayedCall(90, () => this.showPlaceInspector(place));
+  }
+
+  deleteBuildingFromUi(id) {
+    const place = this.buildingById?.[id];
+    const baseId = place?.baseId || getBaseBuildingId(id);
+    const catalog = getBuildingCatalogEntry(baseId);
+    if (!place?.isPlaced || !catalog) return;
+    if (['guildhall', 'whale', 'dungeon'].includes(baseId)) {
+      this.game.events.emit('gwg-event', `${place.name} is structurally too important to delete. The clerk hugged the blueprint.`);
+      return;
+    }
+    if (id === baseId && this.getPlacedBuildingCount(baseId) > 1) {
+      this.game.events.emit('gwg-event', `Delete extra ${catalog.name} copies before deleting the original. Bureaucracy insists on a queue.`);
+      return;
+    }
+    const refund = Math.floor((catalog.cost || 0) * 0.45);
+    this.clearBuildingCells(place);
+    this.cityState.placedBuildings = this.cityState.placedBuildings.filter((entry) => entry.id !== id);
+    this.removeBuildingVisuals(id);
+    if (id === baseId) {
+      place.isPlaced = false;
+    } else {
+      this.buildings = this.buildings.filter((entry) => entry.id !== id);
+      delete this.buildingById[id];
+      delete this.placeById[id];
+    }
+    delete this.cityState.buildingRuntime[id];
+    delete this.upgradeLevels[id];
+    if (refund > 0) this.applyDeltas({ gold: refund });
+    this.redrawTerrainDetails();
+    this.redrawTerrainVariety();
+    this.redrawWildernessDressing();
+    this.refreshWorldVisibility();
+    const text = `${place.name} demolished for ${refund}g refund. The foundation denied emotional attachment.`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'economy');
+    this.game.events.emit('gwg-inspector-close');
+    this.clearSelection(false);
+    this.saveGame(false);
+  }
+
   placeRoad(gridX, gridY, typeId, cost) {
     const road = ROAD_TYPES[typeId];
     this.applyDeltas({
@@ -4280,10 +4589,25 @@ export default class TownScene extends Phaser.Scene {
 
   placeCatalogBuilding(gridX, gridY, id, cost) {
     const catalog = getBuildingCatalogEntry(id);
-    const building = this.buildingById[id];
-    if (!catalog || !building) return;
+    const baseBuilding = this.buildingById[id] || this.buildings.find((entry) => (entry.baseId || entry.id) === id);
+    if (!catalog || !baseBuilding) return;
+    const existingCount = this.getPlacedBuildingCount(id);
+    const instanceId = this.getNextBuildingInstanceId(id);
+    const building = instanceId === id
+      ? baseBuilding
+      : {
+        ...baseBuilding,
+        id: instanceId,
+        baseId: id,
+        name: `${baseBuilding.name} ${existingCount + 1}`,
+        isPlaced: false,
+      };
+    if (instanceId !== id) {
+      this.buildings.push(building);
+      this.buildingById[instanceId] = building;
+    }
     this.applyDeltas({ gold: -cost });
-    const placement = { id, gridX, gridY };
+    const placement = { id: instanceId, baseId: id, copyIndex: existingCount + 1, gridX, gridY };
     this.cityState.placedBuildings.push(placement);
     occupyBuildingCells(this.gridCells, placement, catalog.footprint);
     this.revealArea(
@@ -4299,6 +4623,7 @@ export default class TownScene extends Phaser.Scene {
       gridY,
       footprint: catalog.footprint,
       isPlaced: true,
+      baseId: id,
     });
     this.clearStaticPropsInsideFootprint(gridX, gridY, catalog.footprint);
     this.renderBuilding(building);
@@ -4307,7 +4632,7 @@ export default class TownScene extends Phaser.Scene {
     this.redrawWildernessDressing();
     this.doorById[building.id] = this.getDoorSpotForPlace(building);
     this.placeById[building.id] = building;
-    this.getBuildingRuntime(id);
+    this.getBuildingRuntime(building.id);
     this.refreshUpgradeVisual(building);
     if (id === 'whale') this.buildWhaleStationDressing();
     const text = `${building.name} built. ${catalog.kind === 'shady' ? 'The permits arrived pre-corrupted.' : 'Infrastructure briefly resembles hope.'}`;
@@ -4443,19 +4768,24 @@ export default class TownScene extends Phaser.Scene {
       .map((catalog) => {
       const place = this.buildingById?.[catalog.id];
       const role = getBuildingRole(catalog.id);
-      const built = Boolean(place?.isPlaced);
+      const builtCount = this.getPlacedBuildingCount(catalog.id);
+      const uniqueBuilt = this.isCatalogAtBuildLimit(catalog);
       const lockReason = this.getCatalogLockReason(catalog);
       const locked = Boolean(lockReason);
       const affordable = this.resources.gold >= catalog.cost;
-      const state = built ? 'built' : locked ? 'locked' : affordable ? 'affordable' : 'unaffordable';
-      const demand = this.getBuildingDemandHint(catalog.id, built);
+      const state = uniqueBuilt ? 'built' : locked ? 'locked' : affordable ? 'affordable' : 'unaffordable';
+      const demand = this.getBuildingDemandHint(catalog.id, builtCount > 0);
+      const maxCount = Number(catalog.maxCount ?? 99);
+      const countLabel = Number.isFinite(maxCount) && maxCount < 99
+        ? `${builtCount}/${maxCount}`
+        : `${builtCount} built`;
       return {
         id: catalog.id,
         itemType: 'building',
         title: catalog.name || place?.name || catalog.id,
         cost: catalog.cost,
         costLabel: `${catalog.cost}g`,
-        stateLabel: built ? 'BUILT' : locked ? 'LOCKED' : affordable ? 'READY' : 'SHORT',
+        stateLabel: uniqueBuilt ? 'BUILT' : locked ? 'LOCKED' : affordable ? 'READY' : 'SHORT',
         kind: catalog.kind === 'shady' ? 'shady' : 'fair',
         preview: this.getAssetPreviewUrl(place?.assetKey || catalog.assetKey),
         description: catalog.description,
@@ -4467,8 +4797,11 @@ export default class TownScene extends Phaser.Scene {
         flavor: role?.repeatValue || catalog.flavor || place?.upgradeFlavor || '',
         status: [
           demand,
-          built
-            ? 'Already built. Unique municipal duplication denied.'
+          builtCount > 0
+            ? `Current count: ${countLabel}. ${role?.repeatValue || 'More local coverage can still matter.'}`
+            : '',
+          uniqueBuilt
+            ? 'Unique landmark already built.'
             : locked
               ? lockReason
               : affordable
@@ -4477,10 +4810,10 @@ export default class TownScene extends Phaser.Scene {
         ].filter(Boolean).join(' '),
         state,
         actions: [{
-          label: built ? 'BUILT' : (locked ? 'Locked' : (affordable ? 'Select Building' : `Need ${catalog.cost}g`)),
+          label: uniqueBuilt ? 'BUILT' : (locked ? 'Locked' : (affordable ? 'Select Building' : `Need ${catalog.cost}g`)),
           event: 'gwg-select-build',
           id: catalog.id,
-          disabled: built || locked || !affordable,
+          disabled: uniqueBuilt || locked || !affordable,
         }],
       };
     });
@@ -4709,15 +5042,17 @@ export default class TownScene extends Phaser.Scene {
 
   createPlaceHitZone(place, img, onSelect) {
     const isBuilding = Boolean(this.buildingById?.[place.id]);
+    const visualWidth = img?.displayWidth || place.w || 64;
+    const visualHeight = img?.displayHeight || place.h || 52;
     const width = place.interactionW || Math.max(
-      isBuilding ? 64 : 40,
-      (place.w || 64) * (isBuilding ? 0.88 : 0.82),
+      isBuilding ? 48 : 34,
+      Math.min(place.w || visualWidth, visualWidth) * (isBuilding ? 0.68 : 0.78),
     );
     const height = place.interactionH || Math.max(
-      isBuilding ? 58 : 36,
-      (place.h || 52) * (isBuilding ? 0.86 : 0.8),
+      isBuilding ? 42 : 30,
+      Math.min(place.h || visualHeight, visualHeight) * (isBuilding ? 0.58 : 0.74),
     );
-    const centerY = place.y - (place.h || 52) * 0.47 + (place.interactionOffsetY || 0);
+    const centerY = place.y - (place.h || visualHeight || 52) * (isBuilding ? 0.36 : 0.44) + (place.interactionOffsetY || 0);
     const hit = this.add.rectangle(place.x, centerY, width, height, 0xffffff, 0.001)
       .setOrigin(0.5)
       .setDepth((place.y || 0) + 8)
@@ -5661,23 +5996,24 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getBuildingNextAction(place, metrics = null, problems = []) {
-    const demand = this.getBuildingDemandHint(place.id, true);
+    const baseId = getBaseBuildingId(place.baseId || place.id);
+    const demand = this.getBuildingDemandHint(baseId, true);
     if (demand) return demand.replace(/^DEMAND:\s*/u, '');
     const firstProblem = problems.find(Boolean);
     if (firstProblem) {
       const text = typeof firstProblem === 'string' ? firstProblem : firstProblem.text;
       if (text) return `Fix: ${text}`;
     }
-    if (place.id === 'guildhall' || place.id === 'notice_board') {
+    if (baseId === 'guildhall' || baseId === 'notice_board') {
       if (this.postedQuests.some((quest) => !quest.assignedHeroId)) return 'Assign a hero to the posted quest.';
       return 'Post quests so heroes have dangerous, billable work.';
     }
-    if (place.id === 'market' && (this.townInventory?.loot || 0) > 0) return 'Let the Market convert stored loot into gold.';
-    if (place.id === 'blacksmith' && (this.townInventory?.iron || 0) > 0) return 'Use iron here to improve town gear supply.';
-    if (place.id === 'potion_shop' && (this.townInventory?.herbs || 0) > 0) return 'Turn herbs into potions for injured heroes.';
-    if (REST_BUILDINGS[place.id]) return 'Add or upgrade lodging when heroes outgrow the beds.';
-    if (['watchtower', 'guard_post'].includes(place.id)) return 'Keep this near roads and wilderness to reduce monster pressure.';
-    if (place.id === 'whale') return 'Upgrade for fast gold, corruption, envy, and plausible deniability loss.';
+    if (baseId === 'market' && (this.townInventory?.loot || 0) > 0) return 'Let the Market convert stored loot into gold.';
+    if (baseId === 'blacksmith' && (this.townInventory?.iron || 0) > 0) return 'Use iron here to improve town gear supply.';
+    if (baseId === 'potion_shop' && (this.townInventory?.herbs || 0) > 0) return 'Turn herbs into potions for injured heroes.';
+    if (REST_BUILDINGS[baseId]) return 'Add or upgrade lodging when heroes outgrow the beds.';
+    if (['watchtower', 'guard_post'].includes(baseId)) return 'Keep this near roads and wilderness to reduce monster pressure.';
+    if (baseId === 'whale') return 'Upgrade for fast gold, corruption, envy, and plausible deniability loss.';
     const info = this.getUpgradeInfo(place);
     if (info.cost && !info.maxed) return `Use this building until its next upgrade is worth ${info.cost}g.`;
     if (metrics?.districtBonuses?.length) return 'Keep nearby district partners active to preserve the bonus.';
@@ -5685,8 +6021,9 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getBuildingClarityLines(place, role, metrics, problems) {
-    const demand = this.getBuildingDemandHint(place.id, true);
-    const lodging = REST_BUILDINGS[place.id] ? this.getLodgingReport() : null;
+    const baseId = getBaseBuildingId(place.baseId || place.id);
+    const demand = this.getBuildingDemandHint(baseId, true);
+    const lodging = REST_BUILDINGS[baseId] ? this.getLodgingReport() : null;
     const solves = {
       tavern: 'Solves early beds, rest, morale recovery, and seated complaints.',
       inn: 'Solves higher-quality lodging for heroes who have discovered expectations.',
@@ -5700,7 +6037,7 @@ export default class TownScene extends Phaser.Scene {
       watchtower: 'Solves local threat pressure and gives monster attacks worse odds.',
       guard_post: 'Solves patrol coverage near roads and exposed districts.',
       whale: 'Solves gold shortages quickly and creates several richer problems.',
-    }[place.id] || role?.role || 'Solves a local town need, assuming the road cooperates.';
+    }[baseId] || role?.role || 'Solves a local town need, assuming the road cooperates.';
     const currentDemand = demand
       || (lodging ? `Current demand: ${lodging.used}/${lodging.beds} beds used.` : 'Current demand: no urgent shortage detected.');
     return [
@@ -5759,6 +6096,7 @@ export default class TownScene extends Phaser.Scene {
       };
     }
     const info = this.getUpgradeInfo(place);
+    const baseId = getBaseBuildingId(place.baseId || place.id);
     const catalog = getBuildingCatalogEntry(place.id);
     const metrics = catalog && place.isPlaced ? this.getBuildingMetrics(place) : null;
     const runtime = metrics?.runtime || null;
@@ -5783,10 +6121,22 @@ export default class TownScene extends Phaser.Scene {
         event: 'gwg-upgrade-place',
         id: place.id,
         disabled: !canAfford || !requirement.met,
-        className: place.id === 'whale' ? 'gwg-whale' : '',
+        className: baseId === 'whale' ? 'gwg-whale' : '',
       });
     }
     if (catalog && place.isPlaced) {
+      actions.push({
+        label: `Move ${this.getMoveBuildingCost(place)}g`,
+        event: 'gwg-move-building',
+        id: place.id,
+      });
+      actions.push({
+        label: 'Delete',
+        event: 'gwg-delete-building',
+        id: place.id,
+        className: 'gwg-danger-action',
+        disabled: ['guildhall', 'whale', 'dungeon'].includes(baseId),
+      });
       actions.push({
         label: runtime?.closed ? 'Reopen Building' : 'Close Building',
         event: 'gwg-toggle-building-open',
@@ -5800,11 +6150,11 @@ export default class TownScene extends Phaser.Scene {
           label: `Specialize: ${spec.name}`,
           event: 'gwg-choose-specialization',
           id: `${place.id}:${spec.id}`,
-          className: place.id === 'whale' || spec.id.includes('premium') || spec.id.includes('sponsored') ? 'gwg-whale' : '',
+          className: baseId === 'whale' || spec.id.includes('premium') || spec.id.includes('sponsored') ? 'gwg-whale' : '',
         });
       }
     }
-    if (['notice_board', 'guildhall', 'sponsored_quest_board'].includes(place.id)) {
+    if (['notice_board', 'guildhall', 'sponsored_quest_board'].includes(baseId)) {
       actions.push({ label: 'View Quests', event: 'gwg-open-quests', id: place.id });
     }
     for (const shopAction of catalog?.actions || []) {
@@ -5817,15 +6167,17 @@ export default class TownScene extends Phaser.Scene {
         event: 'gwg-building-action',
         id: `${place.id}:${shopAction.id}`,
         disabled: usedToday || !canPay,
-        className: place.id.includes('premium') || ['vip_lounge', 'lootbox_kiosk', 'gem_exchange'].includes(place.id)
+        className: baseId.includes('premium') || ['vip_lounge', 'lootbox_kiosk', 'gem_exchange'].includes(baseId)
           ? 'gwg-whale'
           : '',
       });
     }
 
     return {
+      panelType: catalog ? 'building-inspector' : 'location-inspector',
       title: place.name,
-      subtitle: lockReason || `Level ${info.level}${info.maxed ? ' / MAX' : ''}${specialization ? ` - ${specialization.name}` : ''}`,
+      subtitle: lockReason || `Level ${info.level}${info.maxed ? ' / MAX' : ''}${catalog?.category ? ` - ${catalog.category}` : ''}${specialization ? ` - ${specialization.name}` : ''}`,
+      primaryActions: actions,
       sections: [
         {
           title: 'What This Solves',
@@ -5855,13 +6207,13 @@ export default class TownScene extends Phaser.Scene {
               `Upkeep: ${metrics.upkeep}g/day`,
               ...(runtime.servicesProvided ? [`Services delivered: ${runtime.servicesProvided}`] : []),
             ] : []),
-            ...(REST_BUILDINGS[place.id] ? [this.getBedsInspectorLine()] : []),
-            ...(this.getStockInspectorLine(place.id) ? [this.getStockInspectorLine(place.id)] : []),
+            ...(REST_BUILDINGS[baseId] ? [this.getBedsInspectorLine()] : []),
+            ...(this.getStockInspectorLine(baseId) ? [this.getStockInspectorLine(baseId)] : []),
             ...(roadAccess ? [{
               text: `Road access: ${roadAccess.connected ? 'Connected - service active' : 'NO ROAD - service inactive'}`,
               className: roadAccess.connected ? 'gwg-good' : 'gwg-bad',
             }] : []),
-            { text: this.getConsequenceLine(place), className: place.id === 'whale' ? 'gwg-whale' : 'gwg-muted' },
+            { text: this.getConsequenceLine(place), className: baseId === 'whale' ? 'gwg-whale' : 'gwg-muted' },
           ],
         },
         ...(role ? [{
@@ -5885,7 +6237,7 @@ export default class TownScene extends Phaser.Scene {
           title: 'Specialization',
           lines: specialization
             ? [
-              { text: `${specialization.name}: ${specialization.summary}`, className: place.id === 'whale' ? 'gwg-whale' : 'gwg-good' },
+              { text: `${specialization.name}: ${specialization.summary}`, className: baseId === 'whale' ? 'gwg-whale' : 'gwg-good' },
               specialization.flavor,
             ]
             : info.level >= Math.min(...specializations.map((spec) => spec.minLevel || 2))
@@ -6946,6 +7298,58 @@ export default class TownScene extends Phaser.Scene {
     this.tooltipTimer = this.time.delayedCall(7000, () => this.hideTooltip());
   }
 
+  getHeroRosterStatus(hero) {
+    if (hero?.stats?.deathDay) return 'Dead';
+    if (hero?.stats?.active === false) return 'Left';
+    if (this.isHeroInjured(hero)) return hero.stats.injuryState === 'missing' ? 'Missing' : 'Injured';
+    if (hero?.state === 'away' || hero?.awayUntil > this.day) return 'Away';
+    const action = `${hero?.currentAction || hero?.intent?.action || ''}`.toLowerCase();
+    if (action.includes('quest') || action.includes('preparing')) return 'On Quest';
+    if (action.includes('explor') || action.includes('harvest') || action.includes('investigat') || action.includes('clear')) return 'Exploring';
+    if (action.includes('intercept') || action.includes('attack')) return 'Fighting';
+    if (action.includes('tavern') || action.includes('rest')) return 'Resting';
+    return 'Idle';
+  }
+
+  getHeroRosterPayload() {
+    const heroes = (this.heroes || []).map((hero) => {
+      const icon = this.getAssetPreviewUrl(hero.def.assetKey);
+      return {
+        id: hero.def.id,
+        name: hero.def.name,
+        status: this.getHeroRosterStatus(hero),
+        tier: hero.stats.status || hero.def.personality,
+        power: hero.stats.power || 0,
+        morale: hero.stats.morale || 0,
+        injury: hero.stats.injuryState || 'healthy',
+        action: hero.intent?.action || hero.currentAction || 'Idle',
+        destination: hero.intent?.destinationName || this.getPlaceName(hero.destination || hero.at),
+        dead: Boolean(hero.stats.deathDay),
+        icon,
+      };
+    });
+    return { heroes };
+  }
+
+  publishHeroRoster() {
+    this.registry.set('heroRoster', this.getHeroRosterPayload());
+  }
+
+  focusHeroFromRoster(id) {
+    const hero = (this.heroes || []).find((item) => item.def.id === id);
+    if (!hero) return;
+    const deathLocation = hero.stats?.deathLocation;
+    const x = deathLocation?.x || hero.container?.x || this.cameras.main.worldView.centerX;
+    const y = deathLocation?.y || hero.container?.y || this.cameras.main.worldView.centerY;
+    this.cameras.main.pan(x, y, 320, 'Sine.easeInOut');
+    this.time.delayedCall(340, () => this.clampCameraToWorld());
+    if (hero.container?.visible !== false || hero.stats?.deathDay) {
+      this.showHeroInspector(hero);
+    } else {
+      this.game.events.emit('gwg-inspector-open', this.getHeroInspectorPayload(hero));
+    }
+  }
+
   tryUpgradeTooltipTarget() {
     const place = this.tooltipTarget;
     if (!place) return;
@@ -7236,8 +7640,9 @@ export default class TownScene extends Phaser.Scene {
           admiredId: null,
           resentmentTargetId: null,
           injuredUntilDay: 0,
-          injuryState: 'healthy',
-          deathDay: 0,
+        injuryState: 'healthy',
+        deathDay: 0,
+        deathLocation: null,
           premiumExposure: 0,
           animationState: 'idle',
           ...def.stats,
@@ -7256,6 +7661,7 @@ export default class TownScene extends Phaser.Scene {
           injuredUntilDay: Number(savedStats.injuredUntilDay) || 0,
           injuryState: savedStats.injuryState || (Number(savedStats.injuredUntilDay) > this.day ? 'injured' : 'healthy'),
           deathDay: Number(savedStats.deathDay) || 0,
+          deathLocation: savedStats.deathLocation || null,
           premiumExposure: Number(savedStats.premiumExposure) || 0,
           animationState: savedStats.animationState || 'idle',
         },
@@ -8985,6 +9391,12 @@ export default class TownScene extends Phaser.Scene {
       if (bundle?.container?.active) bundle.container.setDepth(bundle.container.y + 64);
     }
 
+    this.heroRosterElapsedMs = (this.heroRosterElapsedMs || 0) + delta;
+    if (this.heroRosterElapsedMs >= 1000) {
+      this.heroRosterElapsedMs = 0;
+      this.publishHeroRoster();
+    }
+
     if (!this.cycleRunning && this.simulationSpeed > 0 && !this.buildMode) {
       this.simulationElapsedMs += delta * this.simulationSpeed;
       this.cityState.simulation.elapsedMs = this.simulationElapsedMs;
@@ -9462,6 +9874,10 @@ export default class TownScene extends Phaser.Scene {
     hero.stats.status = 'Lost Hero';
     hero.stats.currentPersonality = 'Lost Hero';
     hero.stats.injuryState = 'dead';
+    hero.stats.deathLocation = {
+      x: Math.round(hero.container?.x || this.cameras.main.worldView.centerX || 0),
+      y: Math.round(hero.container?.y || this.cameras.main.worldView.centerY || 0),
+    };
     hero.state = 'away';
     hero.currentAction = 'Lost in the wilds';
     hero.intent = {
@@ -9485,15 +9901,27 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getLodgingReport() {
-    const placedRest = Object.keys(REST_BUILDINGS).filter((id) => this.isBuildingPlaced(id));
-    const levels = Object.fromEntries(placedRest.map((id) => [id, this.getPlaceLevel(this.buildingById[id])]));
-    const capacity = getBedCapacity(placedRest, levels);
-    const specializedBeds = placedRest.reduce((sum, id) => (
-      sum + Math.max(0, this.getBuildingCapacity(this.buildingById[id]) - (REST_BUILDINGS[id].beds + (this.getPlaceLevel(this.buildingById[id]) - 1) * REST_BUILDINGS[id].bedsPerLevel))
-    ), 0);
+    const placedRest = Object.values(this.buildingById || {})
+      .filter((place) => place?.isPlaced && REST_BUILDINGS[getBaseBuildingId(place.baseId || place.id)]);
+    let beds = 2;
+    let qualitySum = 0;
+    let qualityCount = 0;
+    for (const place of placedRest) {
+      const baseId = getBaseBuildingId(place.baseId || place.id);
+      const config = REST_BUILDINGS[baseId];
+      const level = this.getPlaceLevel(place);
+      const baseBeds = config.beds + (level - 1) * config.bedsPerLevel;
+      beds += Math.max(baseBeds, this.getBuildingCapacity(place));
+      qualitySum += config.quality;
+      qualityCount += 1;
+    }
     const used = this.getActiveHeroes().length;
-    const beds = capacity.beds + specializedBeds;
-    return { ...capacity, beds, used, homeless: Math.max(0, used - beds) };
+    return {
+      beds,
+      restQuality: qualityCount ? Math.round((qualitySum / qualityCount) * 10) / 10 : 0.5,
+      used,
+      homeless: Math.max(0, used - beds),
+    };
   }
 
   getBedsInspectorLine() {
@@ -9759,14 +10187,18 @@ export default class TownScene extends Phaser.Scene {
     if (this.serviceWalkers.length >= maxWalkers) return;
 
     // round-robin through placed, road-connected service buildings
-    const sources = Object.keys(SERVICE_WALKERS).filter((id) => (
-      this.isBuildingPlaced(id) && this.getBuildingRoadAccess(this.buildingById[id]).connected
-      && !this.getBuildingRuntime(id).closed
-    ));
+    const sources = Object.values(this.buildingById || {}).filter((place) => {
+      const baseId = place?.baseId || getBaseBuildingId(place?.id);
+      return place?.isPlaced
+        && SERVICE_WALKERS[baseId]
+        && this.getBuildingRoadAccess(place).connected
+        && !this.getBuildingRuntime(place.id).closed;
+    });
     if (!sources.length) return;
-    const buildingId = sources[this.walkerRotation % sources.length];
+    const sourcePlace = sources[this.walkerRotation % sources.length];
     this.walkerRotation += 1;
-    const config = SERVICE_WALKERS[buildingId];
+    const buildingId = sourcePlace.id;
+    const config = SERVICE_WALKERS[sourcePlace.baseId || getBaseBuildingId(sourcePlace.id)];
     const door = this.doorById[buildingId];
     if (!door) return;
 
@@ -9795,7 +10227,7 @@ export default class TownScene extends Phaser.Scene {
       color: '#d4dae2',
       stroke: '#0c1118',
       strokeThickness: 2,
-    }).setOrigin(0.5, 0).setAlpha(0.75);
+    }).setOrigin(0.5, 0).setAlpha(0);
     const container = this.add.container(door.x, door.y, [sprite, label]).setDepth(door.y);
 
     const walker = {
@@ -9807,10 +10239,33 @@ export default class TownScene extends Phaser.Scene {
       stats: {},
       walker: true,
       spriteHeight: 26,
+      originId: buildingId,
+      originName: sourcePlace.name,
+      destinationName: target.name || this.getPlaceName(target.id),
       currentAction: config.flavor,
     };
     this.prepareHeroAnimation(walker);
     this.serviceWalkers.push(walker);
+    walker.targetEntry = this.registerWorldInteractionTarget({
+      id: `service-${config.id}-${buildingId}-${this.time.now}`,
+      type: 'service',
+      hit: container,
+      img: container,
+      walker,
+      width: 42,
+      height: 54,
+      getCenter: () => ({ x: container.x, y: container.y - 24 }),
+      onHoverIn: () => {
+        sprite.setTint(0xfff3c0);
+        label.setAlpha(1);
+      },
+      onHoverOut: () => {
+        if (!this.textures.exists(config.assetKey) && config.tint) sprite.setTint(config.tint);
+        else sprite.clearTint?.();
+        if (this.activeInspector?.id !== walker.def.id) label.setAlpha(0);
+      },
+      onSelect: () => this.showServiceWalkerInspector(walker, config),
+    });
     this.walkTo(walker, target, () => {
       this.applyWalkerService(buildingId, config, target);
       this.tweens.add({
@@ -9818,9 +10273,53 @@ export default class TownScene extends Phaser.Scene {
         alpha: 0,
         duration: 700,
         delay: 500,
-        onComplete: () => container.destroy(),
+        onComplete: () => {
+          this.worldInteractionTargets = this.worldInteractionTargets.filter((entry) => entry !== walker.targetEntry);
+          container.destroy();
+        },
       });
     });
+  }
+
+  showServiceWalkerInspector(walker, config = null) {
+    if (!walker?.container?.active) return;
+    const walkerConfig = config || Object.values(SERVICE_WALKERS).find((entry) => entry.name === walker.def?.name);
+    this.activeInspector = { type: 'service', id: walker.def.id };
+    this.game.events.emit('gwg-inspector-open', {
+      panelType: 'service-inspector',
+      title: walker.def.name,
+      subtitle: 'Service Walker',
+      sections: [
+        {
+          title: 'Current Route',
+          lines: [
+            `Origin: ${walker.originName || 'Unknown building'}`,
+            `Destination: ${walker.destinationName || 'nearby town service point'}`,
+            `Current work: ${walker.currentAction || walkerConfig?.flavor || 'walking with purpose'}`,
+          ],
+        },
+        {
+          title: 'Service Effect',
+          lines: [
+            walkerConfig?.flavor || 'Provides a small local service while walking roads.',
+            this.getWalkerEffectLine(walkerConfig?.id),
+          ].filter(Boolean),
+        },
+      ],
+    });
+  }
+
+  getWalkerEffectLine(id) {
+    const effects = {
+      tavern_keeper: 'Nearby heroes gain morale and rest coverage.',
+      quest_clerk: 'Nearby heroes gain loyalty and quest awareness.',
+      gear_runner: 'Nearby heroes can receive gear support.',
+      trader: 'Nearby loot flow improves.',
+      guard_patrol: 'Local threat pressure drops when patrols connect.',
+      potion_seller: 'Injured heroes recover more reliably.',
+      premium_evangelist: 'Gold rises, and so does premium exposure.',
+    };
+    return effects[id] || 'Service coverage improves while the route is active.';
   }
 
   applyWalkerService(buildingId, config, spot) {
