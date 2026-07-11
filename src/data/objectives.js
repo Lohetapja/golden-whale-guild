@@ -7,25 +7,86 @@ const fairBuildingIds = ['tavern', 'blacksmith', 'guildhall', 'training'];
 
 export const OBJECTIVES = [
   {
+    id: 'inspect-guildhall',
+    text: 'Inspect the Guild Hall',
+    reward: { morale: 1 },
+    complete: (state) => state.stats.guildHallInspected >= 1,
+    event: 'Objective complete: the Guild Hall admitted it is mostly paperwork. +Morale.',
+  },
+  {
     id: 'post-first-quest',
     text: 'Post your first quest',
     reward: { gold: 100, morale: 1 },
-    complete: (state) => state.stats.questsPosted >= 1,
+    complete: (state) => has(state, 'inspect-guildhall') && state.stats.questsPosted >= 1,
     event: 'Objective complete: the guild discovered outsourcing danger. +100g.',
+  },
+  {
+    id: 'assign-first-hero',
+    text: 'Assign a hero to a quest',
+    reward: { trust: 1, morale: 1 },
+    complete: (state) => has(state, 'post-first-quest') && state.stats.questsAssigned >= 1,
+    event: 'Objective complete: a hero volunteered before reading the footnote. +Trust.',
   },
   {
     id: 'open-gates-once',
     text: 'Complete one town cycle',
     reward: { morale: 3, trust: 1 },
-    complete: (state) => has(state, 'post-first-quest') && state.stats.cyclesOpened >= 1,
+    complete: (state) => has(state, 'assign-first-hero') && state.stats.cyclesOpened >= 1,
     event: 'Objective complete: the town survived its first business cycle. +Morale.',
+  },
+  {
+    id: 'confirm-tavern-beds',
+    text: 'Check Tavern beds',
+    reward: { gold: 60, morale: 1 },
+    complete: (state) => (
+      has(state, 'open-gates-once')
+      && (
+        state.stats.lodgingChecked >= 1
+        || (state.beds && state.beds.beds >= state.beds.used)
+      )
+    ),
+    event: 'Objective complete: the town confirmed indoor sleeping exists, mostly. +60g.',
+  },
+  {
+    id: 'explore-first-poi',
+    text: 'Send a hero to a nearby POI',
+    reward: { trust: 1, morale: 1 },
+    complete: (state) => has(state, 'confirm-tavern-beds') && state.stats.poiActions >= 1,
+    event: 'Objective complete: exploration began. The fog looked legally nervous.',
+  },
+  {
+    id: 'collect-first-loot',
+    text: 'Collect first loot or resource',
+    reward: { gold: 80 },
+    complete: (state) => (
+      has(state, 'explore-first-poi')
+      && ((state.stats.lootCollected || 0) + (state.stats.resourcesCollected || 0)) >= 1
+    ),
+    event: 'Objective complete: loot entered storage and immediately requested accounting. +80g.',
+  },
+  {
+    id: 'upgrade-road-or-building',
+    text: 'Upgrade a road or building',
+    reward: { trust: 2, morale: 1 },
+    complete: (state) => (
+      has(state, 'collect-first-loot')
+      && ((state.stats.roadUpgrades || 0) + (state.stats.fairUpgrades || 0) + (state.stats.shadyUpgrades || 0)) >= 1
+    ),
+    event: 'Objective complete: infrastructure improved. Citizens briefly stopped squinting. +Trust.',
+  },
+  {
+    id: 'read-week-report',
+    text: 'Read your first Week Report',
+    reward: { gold: 120, morale: 1 },
+    complete: (state) => has(state, 'upgrade-road-or-building') && state.stats.weekReportsRead >= 1,
+    event: 'Objective complete: you read the report. Accountability survived contact with satire. +120g.',
   },
   {
     id: 'upgrade-fair-building',
     text: 'Upgrade a fair building',
     reward: { trust: 4, morale: 1 },
     complete: (state) => (
-      has(state, 'open-gates-once')
+      has(state, 'read-week-report')
       && fairBuildingIds.some((id) => (state.levels[id] || 1) >= 2)
     ),
     event: 'Objective complete: a citizen briefly believed in infrastructure. +Trust.',

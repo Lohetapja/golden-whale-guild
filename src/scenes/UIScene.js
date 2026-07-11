@@ -234,21 +234,23 @@ export default class UIScene extends Phaser.Scene {
   buildObjectives() {
     this.objectiveText = this.add.text(WIDTH - 16, 152, '', {
       fontFamily: FONT,
-      fontSize: '12px',
+      fontSize: '13px',
       fontStyle: 'bold',
       color: '#fff6dc',
       stroke: '#0c1118',
       strokeThickness: 3,
       align: 'right',
-      wordWrap: { width: 340 },
-      lineSpacing: 2,
+      wordWrap: { width: 360 },
+      lineSpacing: 3,
     }).setOrigin(1, 0).setDepth(6000);
   }
 
   updateObjectives(data) {
     if (!data) return;
-    const lines = [`Objectives ${data.completed}/${data.total}`];
-    for (const item of data.active || []) lines.push(`- ${item}`);
+    const active = data.active || [];
+    const lines = [`Goal ${data.completed}/${data.total}`];
+    if (active[0]) lines.push(`Now: ${active[0]}`);
+    if (active[1]) lines.push(`Next: ${active[1]}`);
     this.objectiveText.setText(lines.join('\n'));
   }
 

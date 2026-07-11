@@ -80,6 +80,7 @@ import {
   normalizeInventory,
   POI_RESOURCE_YIELDS,
   PRODUCTION_RULES,
+  RESOURCE_TYPES,
   REST_BUILDINGS,
   SERVICE_WALKERS,
   WALKER_DAILY_CAPS,
@@ -618,6 +619,14 @@ export default class TownScene extends Phaser.Scene {
       policiesChosen: 0,
       stageUps: 0,
       cyclesOpened: 0,
+      guildHallInspected: 0,
+      questsAssigned: 0,
+      lodgingChecked: 0,
+      poiActions: 0,
+      lootCollected: 0,
+      resourcesCollected: 0,
+      roadUpgrades: 0,
+      weekReportsRead: 0,
       heroesInspected: 0,
       fairUpgrades: 0,
       shadyUpgrades: 0,
@@ -1723,6 +1732,10 @@ export default class TownScene extends Phaser.Scene {
           ],
         },
         {
+          title: 'Town Inventory',
+          lines: this.getInventoryClarityLines(),
+        },
+        {
           title: 'Quests',
           lines: ['Post bounties at the Notice Board, then let time run or Skip Day. Fair quests stabilize. Sponsored quests glitter suspiciously.'],
         },
@@ -2060,6 +2073,7 @@ export default class TownScene extends Phaser.Scene {
         title: 'Town Stores',
         lines: [
           formatInventoryLine(this.townInventory),
+          ...this.getInventoryClarityLines().slice(0, 6),
           `Beds: ${lodging.used}/${lodging.beds} used - rest quality ${lodging.restQuality}`,
         ],
       },
@@ -2088,7 +2102,11 @@ export default class TownScene extends Phaser.Scene {
     this.clearSelection(false);
     this.game.events.emit('gwg-inspector-open', this.getCycleReportPayload());
     this.weekReportUnread = false;
+    this.stats.weekReportsRead = (this.stats.weekReportsRead || 0) + 1;
+    this.checkObjectives();
     this.updateTownNotice();
+    this.publishObjectives();
+    this.saveGame(false);
   }
 
   getPolicyPayload() {
@@ -2490,6 +2508,8 @@ export default class TownScene extends Phaser.Scene {
       completed: this.completedObjectives,
       unlocked: this.unlockedLocations,
       identity: this.getTownIdentity(),
+      beds: this.getLodgingReport(),
+      inventory: this.townInventory || {},
       fairBuildingLevelTotal: ['tavern', 'blacksmith', 'guildhall', 'training']
         .reduce((sum, id) => sum + (levels[id] || 1), 0),
     };
@@ -2498,7 +2518,7 @@ export default class TownScene extends Phaser.Scene {
   publishObjectives() {
     const active = OBJECTIVES
       .filter((objective) => !this.completedObjectives.has(objective.id))
-      .slice(0, 3)
+      .slice(0, 2)
       .map((objective) => objective.text);
     this.registry.set('objectives', {
       active,
@@ -2511,12 +2531,23 @@ export default class TownScene extends Phaser.Scene {
   getTownHint() {
     const R = this.resources;
     if (this.cycleRunning) return 'Town Problem: gates are open. Watch the consequences.';
+    if (this.weekReportUnread) return 'Week Report ready: read what changed before making the next mistake.';
     if (this.pendingPolicy) return 'Policy pending: choose when ready, or let the town keep making it worse.';
+    if ((this.stats.guildHallInspected || 0) < 1) return 'Start here: inspect the Guild Hall to see quests and town work.';
+    if (this.postedQuests.some((quest) => !quest.assignedHeroId)) return 'You have a posted quest. Assign a hero from the Notice Board.';
+    if ((this.stats.questsPosted || 0) < 1) return 'Goal: post a first quest at the Notice Board.';
+    if (this.postedQuests.length > 0) return 'Quest ready. Skip Day or let time run to see the result.';
+    if ((this.townInventory?.loot || 0) > 0 && this.isBuildingPlaced('market')) return 'You have loot in storage. Use the Market to convert it into gold.';
+    const lodging = this.getLodgingReport();
+    if (lodging.homeless > 0) return `Heroes exceed bed capacity by ${lodging.homeless}. Upgrade or build lodging.`;
     if (R.threat >= RESOURCE_THRESHOLDS.threatWarning) return 'Warning: Threat is rising. Post safer quests.';
     if (R.trust < RESOURCE_THRESHOLDS.trustWarning) return 'Warning: Trust is low. Honest heroes may leave.';
     if (R.morale < RESOURCE_THRESHOLDS.moraleWarning) return 'Town Problem: heroes are losing morale.';
     if (R.corruption >= RESOURCE_THRESHOLDS.corruptionWarning) return 'Warning: Corruption is profitable and very awake.';
-    if (this.postedQuests.length === 0) return 'Goal: Post a quest near the Guild Hall.';
+    const readyPoi = Object.values(this.explorationPointById || {}).find((place) => (
+      this.isRevealed(place.gridX, place.gridY) && this.getPoiCooldownDay(place.id) <= this.day
+    ));
+    if (readyPoi) return `A POI is revealed: ${readyPoi.name}. Click it to explore.`;
 
     const whale = this.buildingById?.whale;
     const whaleInfo = whale ? this.getUpgradeInfo(whale) : null;
@@ -2530,6 +2561,7 @@ export default class TownScene extends Phaser.Scene {
       return info.cost && !info.maxed && R.gold >= info.cost;
     });
     if (canUpgrade) return 'Goal: Upgrade a building before opening gates.';
+    if (this.postedQuests.length === 0) return 'Goal: post another quest, explore a POI, or upgrade one road/building.';
     return `Goal: Grow toward ${TOWN_STAGES[Math.min(this.getStageIndex() + 1, TOWN_STAGES.length - 1)].name}.`;
   }
 
@@ -4229,6 +4261,9 @@ export default class TownScene extends Phaser.Scene {
     const text = `${previousName} upgraded to ${upgrade.target.name} for ${upgrade.cost}g.${upgrade.target.id === 'premium' ? ' The commute got faster and ethics got shinier.' : ''}`;
     this.game.events.emit('gwg-event', text);
     this.addTownLog(text, 'economy');
+    this.stats.roadUpgrades = (this.stats.roadUpgrades || 0) + 1;
+    this.checkObjectives();
+    this.publishTownHint();
     this.saveGame(false);
     if (this.activeInspector?.type === 'road') this.showRoadInspector(gridX, gridY);
     else this.refreshActivePanel();
@@ -5520,6 +5555,71 @@ export default class TownScene extends Phaser.Scene {
     return { id: 'investigate', label: 'Send hero to investigate', verb: 'investigating', risk: 'medium' };
   }
 
+  getPoiRewardPreview(place, actionConfig = this.getPoiActionConfig(place)) {
+    const yieldConfig = POI_RESOURCE_YIELDS[place.id];
+    if (actionConfig.id === 'harvest' && yieldConfig) {
+      return `Expected reward: ${yieldConfig.min + 1}-${yieldConfig.max + 2} ${yieldConfig.resource}.`;
+    }
+    if (actionConfig.id === 'clear') {
+      const monster = place.monsterSource
+        ? (MONSTERS.find((entry) => entry.id === place.monsterSource) || null)
+        : null;
+      const threat = monster?.threat || 2;
+      return `Expected reward: about ${26 + threat * 14}g, safer local threat, and hero fame.`;
+    }
+    return 'Expected reward: gold, loot, morale, or a very educational disappointment.';
+  }
+
+  getPoiDangerLabel(place, actionConfig = this.getPoiActionConfig(place)) {
+    const areaRisk = this.areaReputation?.[place.id]?.danger || 0;
+    if (actionConfig.id === 'harvest') {
+      if (actionConfig.risk === 'corruption') return 'Premium residue';
+      return areaRisk >= 50 ? 'Moderate' : 'Low';
+    }
+    if (actionConfig.id === 'clear') {
+      const monster = place.monsterSource
+        ? (MONSTERS.find((entry) => entry.id === place.monsterSource) || null)
+        : null;
+      const power = (monster?.threat || 2) * 20 + areaRisk;
+      if (power >= 95) return 'Severe';
+      if (power >= 65) return 'High';
+      return 'Moderate';
+    }
+    if (areaRisk >= 70 || this.resources.threat >= 80) return 'High';
+    if (areaRisk >= 35 || this.resources.threat >= 50) return 'Moderate';
+    return 'Low';
+  }
+
+  getPoiHeroSuccessChance(hero, place, actionConfig = this.getPoiActionConfig(place)) {
+    const power = hero?.stats?.power || 1;
+    const morale = hero?.stats?.morale || 50;
+    const gear = this.townInventory?.gear || 0;
+    const areaRisk = this.areaReputation?.[place.id]?.danger || 0;
+    const threatPenalty = Math.round((this.resources.threat || 0) * 0.25);
+    let base = 68 + power * 2 + Math.floor((morale - 50) / 8) + Math.min(8, gear);
+    if (actionConfig.id === 'harvest') base += actionConfig.risk === 'corruption' ? -5 : 10;
+    if (actionConfig.id === 'clear') {
+      const monster = place.monsterSource
+        ? (MONSTERS.find((entry) => entry.id === place.monsterSource) || null)
+        : null;
+      base -= (monster?.threat || 2) * 11;
+    }
+    if (actionConfig.id === 'investigate') base -= 7;
+    base -= Math.floor(areaRisk / 5) + threatPenalty;
+    if (this.isHeroInjured(hero)) base -= 35;
+    return Phaser.Math.Clamp(Math.round(base), 8, 96);
+  }
+
+  getPoiBestHero(place, actionConfig = this.getPoiActionConfig(place)) {
+    return this.getActiveHeroes()
+      .filter((hero) => hero.state !== 'away' && !this.isHeroInjured(hero))
+      .map((hero) => ({
+        hero,
+        chance: this.getPoiHeroSuccessChance(hero, place, actionConfig),
+      }))
+      .sort((a, b) => b.chance - a.chance)[0] || null;
+  }
+
   getPoiCooldownDay(poiId) {
     return this.poiCooldowns?.[poiId] || 0;
   }
@@ -5554,11 +5654,68 @@ export default class TownScene extends Phaser.Scene {
     return '';
   }
 
+  getInventoryClarityLines() {
+    return RESOURCE_TYPES.map((resource) => (
+      `${resource.label}: ${this.townInventory?.[resource.id] || 0} - ${resource.blurb}`
+    ));
+  }
+
+  getBuildingNextAction(place, metrics = null, problems = []) {
+    const demand = this.getBuildingDemandHint(place.id, true);
+    if (demand) return demand.replace(/^DEMAND:\s*/u, '');
+    const firstProblem = problems.find(Boolean);
+    if (firstProblem) {
+      const text = typeof firstProblem === 'string' ? firstProblem : firstProblem.text;
+      if (text) return `Fix: ${text}`;
+    }
+    if (place.id === 'guildhall' || place.id === 'notice_board') {
+      if (this.postedQuests.some((quest) => !quest.assignedHeroId)) return 'Assign a hero to the posted quest.';
+      return 'Post quests so heroes have dangerous, billable work.';
+    }
+    if (place.id === 'market' && (this.townInventory?.loot || 0) > 0) return 'Let the Market convert stored loot into gold.';
+    if (place.id === 'blacksmith' && (this.townInventory?.iron || 0) > 0) return 'Use iron here to improve town gear supply.';
+    if (place.id === 'potion_shop' && (this.townInventory?.herbs || 0) > 0) return 'Turn herbs into potions for injured heroes.';
+    if (REST_BUILDINGS[place.id]) return 'Add or upgrade lodging when heroes outgrow the beds.';
+    if (['watchtower', 'guard_post'].includes(place.id)) return 'Keep this near roads and wilderness to reduce monster pressure.';
+    if (place.id === 'whale') return 'Upgrade for fast gold, corruption, envy, and plausible deniability loss.';
+    const info = this.getUpgradeInfo(place);
+    if (info.cost && !info.maxed) return `Use this building until its next upgrade is worth ${info.cost}g.`;
+    if (metrics?.districtBonuses?.length) return 'Keep nearby district partners active to preserve the bonus.';
+    return 'Keep it connected to roads and watch for demand hints.';
+  }
+
+  getBuildingClarityLines(place, role, metrics, problems) {
+    const demand = this.getBuildingDemandHint(place.id, true);
+    const lodging = REST_BUILDINGS[place.id] ? this.getLodgingReport() : null;
+    const solves = {
+      tavern: 'Solves early beds, rest, morale recovery, and seated complaints.',
+      inn: 'Solves higher-quality lodging for heroes who have discovered expectations.',
+      hero_hostel: 'Solves cheap bed capacity when the town attracts too many hopefuls.',
+      premium_lodge: 'Solves premium comfort while quietly manufacturing envy.',
+      blacksmith: 'Solves gear shortages and helps non-whale heroes survive unfair math.',
+      market: 'Solves loot conversion. Loot in storage is just clutter with confidence.',
+      potion_shop: 'Solves injury recovery when heroes return in tutorial-warning condition.',
+      guildhall: 'Solves quest access, clerk coverage, and the illusion of governance.',
+      notice_board: 'Solves quest choice clarity. Dangerous paperwork starts here.',
+      watchtower: 'Solves local threat pressure and gives monster attacks worse odds.',
+      guard_post: 'Solves patrol coverage near roads and exposed districts.',
+      whale: 'Solves gold shortages quickly and creates several richer problems.',
+    }[place.id] || role?.role || 'Solves a local town need, assuming the road cooperates.';
+    const currentDemand = demand
+      || (lodging ? `Current demand: ${lodging.used}/${lodging.beds} beds used.` : 'Current demand: no urgent shortage detected.');
+    return [
+      solves,
+      currentDemand,
+      `Useful next action: ${this.getBuildingNextAction(place, metrics, problems)}`,
+    ];
+  }
+
   getPlaceInspectorPayload(place) {
     if (place.mapPoint) {
       const actionConfig = this.getPoiActionConfig(place);
       const cooldownDay = this.getPoiCooldownDay(place.id);
       const onCooldown = cooldownDay > this.day;
+      const bestHero = this.getPoiBestHero(place, actionConfig);
       const riskLine = {
         low: 'Risk: low. The wilderness is merely judgmental here.',
         medium: 'Risk: medium. Something may object to the visit.',
@@ -5576,7 +5733,13 @@ export default class TownScene extends Phaser.Scene {
           {
             title: 'Field Assessment',
             lines: [
+              `Action: ${actionConfig.id === 'clear' ? 'Clear threat' : actionConfig.id === 'harvest' ? 'Harvest' : 'Investigate'}.`,
               place.effect || 'A point of interest with opinions.',
+              this.getPoiRewardPreview(place, actionConfig),
+              `Danger: ${this.getPoiDangerLabel(place, actionConfig)}.`,
+              bestHero
+                ? `Best hero: ${bestHero.hero.def.name} (${bestHero.chance}% estimated success).`
+                : { text: 'Best hero: nobody free and healthy. Let someone recover first.', className: 'gwg-bad' },
               riskLine,
               onCooldown
                 ? { text: `Recently visited. Worth returning after Day ${cooldownDay}.`, className: 'gwg-muted' }
@@ -5664,6 +5827,10 @@ export default class TownScene extends Phaser.Scene {
       title: place.name,
       subtitle: lockReason || `Level ${info.level}${info.maxed ? ' / MAX' : ''}${specialization ? ` - ${specialization.name}` : ''}`,
       sections: [
+        {
+          title: 'What This Solves',
+          lines: this.getBuildingClarityLines(place, role, metrics, problems),
+        },
         {
           title: 'Role',
           lines: [
@@ -5773,7 +5940,20 @@ export default class TownScene extends Phaser.Scene {
     this.heroTooltipTarget = null;
     this.activeInspector = { type: 'place', id: place.id };
     this.selectPlace(place);
+    let trackedObjectiveProgress = false;
+    if (place.id === 'guildhall') {
+      this.stats.guildHallInspected = (this.stats.guildHallInspected || 0) + 1;
+      this.checkObjectives();
+      trackedObjectiveProgress = true;
+    }
+    if (REST_BUILDINGS[place.id]) {
+      this.stats.lodgingChecked = (this.stats.lodgingChecked || 0) + 1;
+      this.checkObjectives();
+      trackedObjectiveProgress = true;
+    }
     this.game.events.emit('gwg-inspector-open', this.getPlaceInspectorPayload(place));
+    this.publishTownHint();
+    if (trackedObjectiveProgress) this.saveGame(false);
   }
 
   getRoadInspectorPayload(gridX, gridY) {
@@ -5848,6 +6028,8 @@ export default class TownScene extends Phaser.Scene {
       const trustText = quest.trust > 0 ? `+${quest.trust}` : `${quest.trust || 0}`;
       const corruptionText = quest.corruption > 0 ? `+${quest.corruption}` : `${quest.corruption || 0}`;
       const failThreat = quest.difficulty * 3;
+      const candidates = this.getQuestCandidates(quest);
+      const best = candidates[0];
       return {
         title: quest.name,
         meta: typeLabel,
@@ -5855,6 +6037,10 @@ export default class TownScene extends Phaser.Scene {
         lines: [
           `Post: ${quest.cost}g -> Reward: ${quest.reward}g`,
           `Difficulty ${quest.difficulty} / Risk ${quest.risk} / Threat -${quest.threatReduction}`,
+          best
+            ? { text: `Best hero: ${best.hero.def.name} (${best.chance}% success).`, className: best.chance >= 65 ? 'gwg-good' : 'gwg-muted' }
+            : { text: 'Best hero: nobody free and healthy right now.', className: 'gwg-bad' },
+          ...this.getQuestAvailabilityLines(quest),
           `Trust ${trustText} / Corruption ${corruptionText} / Fail Threat +${failThreat}`,
           `Best for: ${(quest.preferred || []).slice(0, 2).join(', ') || 'whoever still answers mail'}`,
           quest.description,
@@ -5867,7 +6053,7 @@ export default class TownScene extends Phaser.Scene {
         ],
         actions: [
           ...(posted && !quest.assignedHeroId
-            ? this.getQuestCandidates(quest).map((candidate) => ({
+            ? candidates.map((candidate) => ({
               label: `Send ${candidate.hero.def.name} (${candidate.chance}%)`,
               event: 'gwg-assign-quest',
               id: `${quest.noticeId}:${candidate.hero.def.id}`,
@@ -8152,6 +8338,9 @@ export default class TownScene extends Phaser.Scene {
     this.addReportLine('monsters', `${drop.name} collected for ${gold}g.`);
     this.game.events.emit('gwg-event', Phaser.Utils.Array.GetRandom(LOOT_PICKUP_LINES));
     this.floatText(drop.x, drop.y - 48, `+${gold}g`, '#ffe08a');
+    this.stats.lootCollected = (this.stats.lootCollected || 0) + 1;
+    this.checkObjectives();
+    this.publishTownHint();
     const bundle = this.aftermathDropObjectsById?.[drop.id];
     if (bundle?.container) bundle.container.destroy(true);
     this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== drop.id);
@@ -8872,6 +9061,20 @@ export default class TownScene extends Phaser.Scene {
       .slice(0, limit);
   }
 
+  getQuestAvailabilityLines(quest) {
+    const active = this.getActiveHeroes();
+    const injured = active.filter((hero) => this.isHeroInjured(hero)).length;
+    const away = active.filter((hero) => hero.state === 'away').length;
+    const assignedElsewhere = active.filter((hero) => this.postedQuests.some((posted) => (
+      posted.assignedHeroId === hero.def.id && posted.noticeId !== quest.noticeId
+    ))).length;
+    const lines = [];
+    if (injured > 0) lines.push({ text: `${injured} hero${injured === 1 ? '' : 'es'} injured and unavailable.`, className: 'gwg-muted' });
+    if (away > 0) lines.push({ text: `${away} hero${away === 1 ? ' is' : 'es are'} away from town.`, className: 'gwg-muted' });
+    if (assignedElsewhere > 0) lines.push({ text: `${assignedElsewhere} hero${assignedElsewhere === 1 ? '' : 'es'} already assigned elsewhere.`, className: 'gwg-muted' });
+    return lines.slice(0, 2);
+  }
+
   // player assignment: 'noticeId:heroId' from the quest board panel
   assignQuestHeroFromUi(token) {
     const [noticeId, heroId] = String(token || '').split(':');
@@ -8904,6 +9107,9 @@ export default class TownScene extends Phaser.Scene {
     const text = `${hero.def.name} volunteered for ${quest.name} (${Math.round(this.getQuestSuccessChance(hero, quest))}% odds).`;
     this.game.events.emit('gwg-event', text);
     this.addTownLog(text, 'quest');
+    this.stats.questsAssigned = (this.stats.questsAssigned || 0) + 1;
+    this.checkObjectives();
+    this.publishTownHint();
     this.saveGame(false);
     if (this.activeInspector?.type === 'quests') this.showQuestInspector();
   }
@@ -9706,12 +9912,22 @@ export default class TownScene extends Phaser.Scene {
     this.poiCooldowns = this.poiCooldowns || {};
     this.poiCooldowns[poiId] = this.day + 2;
     hero.currentAction = `${actionConfig.verb} ${place.name}`;
+    hero.intent = {
+      action: hero.currentAction,
+      destinationId: place.id,
+      destinationName: place.name,
+      reason: this.getPoiRewardPreview(place, actionConfig),
+      risk: this.getPoiDangerLabel(place, actionConfig),
+    };
     const spot = { id: place.id, name: place.name, x: place.x, y: place.y, h: place.h || 40 };
     this.game.events.emit('gwg-event', `${hero.def.name} set out for the ${place.name}.`);
     this.walkTo(hero, spot, () => {
       this.resolvePoiVisit(hero, place, actionConfig);
       this.scheduleAmbient(hero, Phaser.Math.Between(2600, 5200));
     });
+    this.stats.poiActions = (this.stats.poiActions || 0) + 1;
+    this.checkObjectives();
+    this.publishTownHint();
     this.saveGame(false);
     if (this.activeInspector?.type === 'place') this.showPlaceInspector(place);
   }
@@ -9729,6 +9945,9 @@ export default class TownScene extends Phaser.Scene {
       const text = `${hero.def.name} harvested ${gained} ${yieldConfig.resource} at the ${place.name}.`;
       this.game.events.emit('gwg-event', text);
       this.addReportLine('quests', text);
+      this.stats.resourcesCollected = (this.stats.resourcesCollected || 0) + Math.max(1, gained);
+      this.checkObjectives();
+      this.publishTownHint();
       return;
     }
     if (actionConfig.id === 'clear') {
@@ -9771,11 +9990,21 @@ export default class TownScene extends Phaser.Scene {
       const gold = Phaser.Math.Between(20, 60);
       this.applyDeltas({ gold });
       this.floatText(place.x, place.y - 44, `+${gold}g`, '#ffe08a');
-      this.game.events.emit('gwg-event', `${hero.def.name} investigated the ${place.name} and found ${gold}g in suspiciously labeled pouches.`);
+      const text = `${hero.def.name} investigated the ${place.name} and found ${gold}g in suspiciously labeled pouches.`;
+      this.game.events.emit('gwg-event', text);
+      this.addTownLog(text, 'exploration');
+      this.stats.lootCollected = (this.stats.lootCollected || 0) + 1;
+      this.checkObjectives();
+      this.publishTownHint();
     } else if (roll < 0.7) {
       const gained = this.addTownResource('loot', Phaser.Math.Between(1, 2), `${hero.def.name}'s find`);
       this.floatText(place.x, place.y - 44, `+${gained} loot`, '#d7f3d0');
-      this.game.events.emit('gwg-event', `${hero.def.name} pulled ${gained} loot out of the ${place.name}.`);
+      const text = `${hero.def.name} pulled ${gained} loot out of the ${place.name}.`;
+      this.game.events.emit('gwg-event', text);
+      this.addTownLog(text, 'exploration');
+      this.stats.resourcesCollected = (this.stats.resourcesCollected || 0) + Math.max(1, gained);
+      this.checkObjectives();
+      this.publishTownHint();
     } else {
       this.applyDeltas({ morale: 1 });
       this.say(hero, 'Just vibes here.', true);
@@ -9812,6 +10041,9 @@ export default class TownScene extends Phaser.Scene {
     const amount = Phaser.Math.Between(yieldConfig.min, yieldConfig.max);
     const gained = this.addTownResource(yieldConfig.resource, amount);
     if (gained <= 0) return '';
+    this.stats.resourcesCollected = (this.stats.resourcesCollected || 0) + Math.max(1, gained);
+    this.checkObjectives();
+    this.publishTownHint();
     if (yieldConfig.premium && Math.random() < 0.4) {
       this.applyDeltas({ corruption: 1 });
       this.addTownLog(`${hero.def.name} salvaged the ${point.name}. Some of it was still monetized.`, 'golden_whale');
