@@ -174,4 +174,9 @@ export const POI_RESOURCE_YIELDS = {
   poi_skeleton_ruins: { resource: 'iron', min: 1, max: 1 },
   old_balance_ruin: { resource: 'loot', min: 1, max: 1 },
   poi_premium_ruin: { resource: 'loot', min: 1, max: 2, premium: true },
+  resource_wood_grove_east: { resource: 'wood', min: 2, max: 4 },
+  resource_iron_outcrop_south: { resource: 'iron', min: 2, max: 3 },
+  resource_herb_patch_far: { resource: 'herbs', min: 2, max: 4 },
+  resource_old_ruins_far: { resource: 'loot', min: 2, max: 3 },
+  resource_premium_wreckage_far: { resource: 'loot', min: 2, max: 4, premium: true },
 };

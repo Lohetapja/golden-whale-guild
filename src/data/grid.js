@@ -2,8 +2,10 @@ export const GRID_CONFIG = {
   tileSize: 48,
   originX: 48,
   originY: 48,
-  columns: 96,
-  rows: 60,
+  // 144x80 is exactly twice the previous 96x60 cell area. It gives the fog
+  // system real frontier room without multiplying every terrain pass by 9.
+  columns: 144,
+  rows: 80,
   zones: {
     // west/east keep their original rectangles so existing saves stay valid.
     west: { minX: 0, maxX: 19, minY: 0, maxY: 14 },
@@ -13,6 +15,8 @@ export const GRID_CONFIG = {
     southeast: { minX: 28, maxX: 55, minY: 15, maxY: 31 },
     central: { minX: 32, maxX: 63, minY: 18, maxY: 41 },
     wilds: { minX: 64, maxX: 95, minY: 0, maxY: 59 },
+    farlands: { minX: 96, maxX: 143, minY: 0, maxY: 79 },
+    deepSouth: { minX: 0, maxX: 95, minY: 60, maxY: 79 },
   },
 };
 
@@ -169,6 +173,7 @@ export const ROAD_TYPES = {
 };
 
 export const DEFAULT_NEW_CITY = {
+  mapVersion: 2,
   mode: 'builder',
   unlockedZones: ['west'],
   // empty array = fog-era save: the starting clearing is derived from the
@@ -207,12 +212,12 @@ export const DEFAULT_NEW_CITY = {
 // buildable space around the settlement. Old saves are untouched — anchors
 // only apply when a brand-new city state is created.
 export const START_ANCHORS = [
-  { dx: 38, dy: 24 },
-  { dx: 32, dy: 20 },
-  { dx: 46, dy: 21 },
-  { dx: 34, dy: 32 },
-  { dx: 50, dy: 31 },
-  { dx: 42, dy: 36 },
+  { dx: 62, dy: 31 },
+  { dx: 68, dy: 25 },
+  { dx: 74, dy: 32 },
+  { dx: 58, dy: 39 },
+  { dx: 72, dy: 42 },
+  { dx: 64, dy: 46 },
 ];
 
 export function createNewCityState(random = Math.random) {
@@ -316,6 +321,7 @@ export function makeLegacyCityState(buildings, layout) {
   });
 
   return {
+    mapVersion: 1,
     mode: 'legacy',
     unlockedZones: ['west', 'east'],
     roads: [],
@@ -331,6 +337,7 @@ export function normalizeCityState(raw, legacyFactory) {
 
   const incoming = raw.cityBuilder;
   return {
+    mapVersion: Number(incoming.mapVersion) || 1,
     mode: incoming.mode === 'legacy' ? 'legacy' : 'builder',
     unlockedZones: Array.isArray(incoming.unlockedZones) && incoming.unlockedZones.length
       ? [...incoming.unlockedZones]

@@ -165,6 +165,18 @@
         font-family: "Courier New", monospace;
         pointer-events: auto;
         overflow: hidden;
+        transition: opacity 150ms ease, transform 150ms ease, width 150ms ease;
+      }
+      .gwg-hero-roster.gwg-roster-shelved {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(calc(-100% - 18px));
+      }
+      .gwg-hero-roster.collapsed {
+        width: 132px;
+      }
+      .gwg-hero-roster.collapsed .gwg-hero-roster-body {
+        display: none;
       }
       .gwg-hero-roster-head {
         display: flex;
@@ -180,28 +192,73 @@
         color: #d4dae2;
         font-size: 11px;
       }
+      .gwg-roster-toggle {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: #f6c945;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .gwg-roster-toggle::before { content: "- "; }
+      .gwg-hero-roster.collapsed .gwg-roster-toggle::before { content: "+ "; }
       .gwg-hero-roster-body {
         max-height: calc(100dvh - 244px);
         overflow-y: auto;
         padding: 6px;
         touch-action: pan-y;
       }
-      .gwg-hero-row {
-        display: grid;
-        grid-template-columns: 30px minmax(0, 1fr) auto;
+      .gwg-roster-group { margin-bottom: 5px; }
+      .gwg-roster-group-head {
+        display: flex;
         align-items: center;
-        gap: 7px;
+        gap: 4px;
+      }
+      .gwg-roster-group-head > button {
+        flex: 1;
+        min-width: 0;
+        padding: 5px 6px;
+        border: 1px solid rgba(212, 218, 226, 0.16);
+        border-radius: 4px;
+        background: rgba(255, 246, 220, 0.045);
+        color: #d4dae2;
+        font: 700 10px/1.2 "Courier New", monospace;
+        text-align: left;
+        cursor: pointer;
+      }
+      .gwg-roster-group-head > button b {
+        float: right;
+        color: #ffe08a;
+      }
+      .gwg-idle-cycle {
+        display: flex;
+        gap: 2px;
+      }
+      .gwg-idle-cycle button {
+        width: 25px;
+        height: 26px;
+        padding: 0;
+        border: 1px solid rgba(246, 201, 69, 0.4);
+        border-radius: 4px;
+        background: #273244;
+        color: #ffe08a;
+        font: 700 13px/1 "Courier New", monospace;
+        cursor: pointer;
+      }
+      .gwg-roster-group-list { padding-top: 4px; }
+      .gwg-hero-row {
+        position: relative;
+        display: block;
         width: 100%;
         min-height: 42px;
         margin: 0 0 5px;
-        padding: 5px 6px;
+        padding: 0;
         border: 1px solid rgba(212, 218, 226, 0.16);
         border-radius: 5px;
         background: rgba(255, 246, 220, 0.055);
         color: #fff6dc;
         font-family: "Courier New", monospace;
-        text-align: left;
-        cursor: pointer;
       }
       .gwg-hero-row:hover {
         border-color: rgba(246, 201, 69, 0.65);
@@ -215,6 +272,36 @@
       .gwg-hero-row.left {
         opacity: 0.68;
         filter: grayscale(0.65);
+      }
+      .gwg-hero-row.favorite { border-color: rgba(246, 201, 69, 0.48); }
+      .gwg-hero-focus {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 7px;
+        width: 100%;
+        min-height: 40px;
+        padding: 5px 26px 5px 6px;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font-family: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .gwg-hero-favorite {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: #f6c945;
+        font-size: 17px;
+        line-height: 24px;
+        cursor: pointer;
       }
       .gwg-hero-roster-icon {
         width: 28px;
@@ -243,6 +330,12 @@
       .gwg-hero-row-copy strong {
         font-size: 12px;
         line-height: 1.2;
+      }
+      .gwg-hero-row-copy strong em {
+        color: #9facbd;
+        font-size: 8px;
+        font-style: normal;
+        font-weight: 400;
       }
       .gwg-hero-row-copy small {
         color: #d4dae2;
@@ -988,10 +1081,12 @@
           max-height: 30dvh;
           opacity: 0.94;
         }
+        .gwg-hero-roster.collapsed { width: 132px; }
+        .gwg-hero-roster.gwg-roster-shelved { opacity: 0; }
         .gwg-hero-roster-body {
           max-height: calc(30dvh - 38px);
         }
-        .gwg-hero-row {
+        .gwg-hero-focus {
           grid-template-columns: 26px minmax(0, 1fr);
           min-height: 38px;
         }

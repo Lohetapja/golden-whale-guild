@@ -722,6 +722,7 @@ export default class UIScene extends Phaser.Scene {
       this.game.events.emit(eventName, id);
       if (['gwg-select-build', 'gwg-cancel-build'].includes(eventName)) {
         this.panelEl.classList.add('gwg-hidden');
+        this.heroRosterEl?.classList.remove('gwg-roster-shelved');
         this.setWorldInputBlocked(false);
       }
     });
@@ -729,12 +730,29 @@ export default class UIScene extends Phaser.Scene {
 
   buildHeroRoster() {
     document.getElementById('gwg-hero-roster')?.remove();
+    let savedPrefs = {};
+    try {
+      savedPrefs = JSON.parse(window.localStorage.getItem('gwg-hero-roster-ui-v1') || '{}');
+    } catch {
+      savedPrefs = {};
+    }
+    this.heroRosterCollapsed = savedPrefs.collapsed ?? window.matchMedia('(max-width: 760px)').matches;
+    this.heroRosterGroups = {
+      Favorites: true,
+      Assigned: true,
+      Injured: true,
+      Idle: false,
+      Dead: false,
+      Reserve: false,
+      ...(savedPrefs.groups || {}),
+    };
+    this.idleHeroCycleIndex = 0;
     this.heroRosterEl = document.createElement('aside');
     this.heroRosterEl.id = 'gwg-hero-roster';
-    this.heroRosterEl.className = 'gwg-hero-roster';
+    this.heroRosterEl.className = `gwg-hero-roster${this.heroRosterCollapsed ? ' collapsed' : ''}`;
     this.heroRosterEl.innerHTML = `
       <div class="gwg-hero-roster-head">
-        <strong>Heroes</strong>
+        <button class="gwg-roster-toggle" type="button" data-roster-toggle aria-expanded="${this.heroRosterCollapsed ? 'false' : 'true'}">Heroes</button>
         <span></span>
       </div>
       <div class="gwg-hero-roster-body"></div>
@@ -757,6 +775,35 @@ export default class UIScene extends Phaser.Scene {
     this.heroRosterEl.addEventListener('pointercancel', releaseUiPointer);
     this.heroRosterEl.addEventListener('click', (event) => {
       event.stopPropagation();
+      if (event.target.closest('[data-roster-toggle]')) {
+        this.heroRosterCollapsed = !this.heroRosterCollapsed;
+        this.heroRosterEl.classList.toggle('collapsed', this.heroRosterCollapsed);
+        this.heroRosterEl.querySelector('[data-roster-toggle]')?.setAttribute('aria-expanded', String(!this.heroRosterCollapsed));
+        this.saveHeroRosterPreferences();
+        return;
+      }
+      const favorite = event.target.closest('[data-hero-favorite]');
+      if (favorite) {
+        this.game.events.emit('gwg-toggle-hero-favorite', favorite.dataset.heroFavorite);
+        return;
+      }
+      const cycle = event.target.closest('[data-idle-cycle]');
+      if (cycle) {
+        const idleHeroes = (this.lastHeroRosterPayload?.heroes || []).filter((hero) => hero.status === 'Idle');
+        if (!idleHeroes.length) return;
+        const direction = Number(cycle.dataset.idleCycle) || 1;
+        this.idleHeroCycleIndex = (this.idleHeroCycleIndex + direction + idleHeroes.length) % idleHeroes.length;
+        this.game.events.emit('gwg-focus-hero', idleHeroes[this.idleHeroCycleIndex].id);
+        return;
+      }
+      const group = event.target.closest('[data-roster-group]');
+      if (group) {
+        const id = group.dataset.rosterGroup;
+        this.heroRosterGroups[id] = !this.heroRosterGroups[id];
+        this.saveHeroRosterPreferences();
+        this.updateHeroRoster(this.lastHeroRosterPayload);
+        return;
+      }
       const row = event.target.closest('[data-hero-id]');
       if (!row) return;
       this.game.events.emit('gwg-focus-hero', row.dataset.heroId);
@@ -767,28 +814,78 @@ export default class UIScene extends Phaser.Scene {
     });
   }
 
-  updateHeroRoster(payload = {}) {
-    if (!this.heroRosterEl || !this.heroRosterBodyEl) return;
-    const heroes = Array.isArray(payload?.heroes) ? payload.heroes : [];
-    const activeCount = heroes.filter((hero) => hero.status !== 'Dead' && hero.status !== 'Left').length;
-    if (this.heroRosterCountEl) this.heroRosterCountEl.textContent = `${activeCount}/${heroes.length || 0}`;
-    this.heroRosterBodyEl.innerHTML = heroes.slice(0, 28).map((hero) => {
-      const statusClass = this.escapeHtml(String(hero.status || '').toLowerCase().replace(/\s+/g, '-'));
-      const intent = hero.destination ? `${hero.action || 'Going'} -> ${hero.destination}` : (hero.action || 'Idle');
-      const icon = hero.icon
-        ? `<img class="gwg-hero-roster-icon" src="${this.escapeHtml(hero.icon)}" alt="" />`
-        : `<span class="gwg-hero-roster-icon fallback">${this.escapeHtml((hero.name || '?').charAt(0))}</span>`;
-      return `
-        <button class="gwg-hero-row ${statusClass}" type="button" data-hero-id="${this.escapeHtml(hero.id)}" title="${this.escapeHtml(intent)}">
+  saveHeroRosterPreferences() {
+    try {
+      window.localStorage.setItem('gwg-hero-roster-ui-v1', JSON.stringify({
+        collapsed: this.heroRosterCollapsed,
+        groups: this.heroRosterGroups,
+      }));
+    } catch {
+      // UI preferences are optional; gameplay save remains authoritative.
+    }
+  }
+
+  renderHeroRosterRow(hero) {
+    const statusClass = this.escapeHtml(String(hero.status || '').toLowerCase().replace(/\s+/g, '-'));
+    const intent = hero.destination && hero.status !== 'Idle'
+      ? `${hero.action || 'Going'} -> ${hero.destination}`
+      : (hero.action || 'Idle');
+    const icon = hero.icon
+      ? `<img class="gwg-hero-roster-icon" src="${this.escapeHtml(hero.icon)}" alt="" />`
+      : `<span class="gwg-hero-roster-icon fallback">${this.escapeHtml((hero.name || '?').charAt(0))}</span>`;
+    return `
+      <div class="gwg-hero-row ${statusClass}${hero.favorite ? ' favorite' : ''}">
+        <button class="gwg-hero-focus" type="button" data-hero-id="${this.escapeHtml(hero.id)}" title="${this.escapeHtml(intent)}">
           ${icon}
           <span class="gwg-hero-row-copy">
-            <strong>${this.escapeHtml(hero.name)}</strong>
+            <strong>${this.escapeHtml(hero.name)} <em>${this.escapeHtml(hero.tier || '')}</em></strong>
             <small>${this.escapeHtml(intent)}</small>
           </span>
           <span class="gwg-hero-status">${this.escapeHtml(hero.status || 'Idle')}</span>
         </button>
-      `;
-    }).join('') || '<p class="gwg-hero-roster-empty">No heroes available. Even the volunteers read the terms.</p>';
+        <button class="gwg-hero-favorite" type="button" data-hero-favorite="${this.escapeHtml(hero.id)}" aria-label="${hero.favorite ? 'Remove favorite' : 'Favorite hero'}" title="${hero.favorite ? 'Remove favorite' : 'Favorite hero'}">${hero.favorite ? '&#9733;' : '&#9734;'}</button>
+      </div>
+    `;
+  }
+
+  renderHeroRosterGroup(name, heroes) {
+    if (!heroes.length) return '';
+    const expanded = Boolean(this.heroRosterGroups[name]);
+    const idleControls = name === 'Idle'
+      ? `<span class="gwg-idle-cycle"><button type="button" data-idle-cycle="-1" aria-label="Previous idle hero">&lt;</button><button type="button" data-idle-cycle="1" aria-label="Next idle hero">&gt;</button></span>`
+      : '';
+    return `
+      <section class="gwg-roster-group${expanded ? ' expanded' : ''}">
+        <div class="gwg-roster-group-head">
+          <button type="button" data-roster-group="${this.escapeHtml(name)}" aria-expanded="${expanded}">
+            <span>${expanded ? '-' : '+'}</span>${this.escapeHtml(name)} <b>${heroes.length}</b>
+          </button>
+          ${idleControls}
+        </div>
+        ${expanded ? `<div class="gwg-roster-group-list">${heroes.map((hero) => this.renderHeroRosterRow(hero)).join('')}</div>` : ''}
+      </section>
+    `;
+  }
+
+  updateHeroRoster(payload = {}) {
+    if (!this.heroRosterEl || !this.heroRosterBodyEl) return;
+    this.lastHeroRosterPayload = payload || {};
+    const heroes = Array.isArray(payload?.heroes) ? payload.heroes : [];
+    const activeCount = heroes.filter((hero) => !['Dead', 'Left', 'Reserve'].includes(hero.status)).length;
+    if (this.heroRosterCountEl) this.heroRosterCountEl.textContent = `${activeCount}/${heroes.length || 0}`;
+    const favoriteIds = new Set(heroes.filter((hero) => hero.favorite).map((hero) => hero.id));
+    const remaining = heroes.filter((hero) => !favoriteIds.has(hero.id));
+    const assignedStatuses = new Set(['Walking', 'Exploring', 'On Quest', 'Returning', 'Looting', 'Fighting', 'Resting', 'Away']);
+    const groups = [
+      ['Favorites', heroes.filter((hero) => hero.favorite)],
+      ['Assigned', remaining.filter((hero) => assignedStatuses.has(hero.status))],
+      ['Injured', remaining.filter((hero) => ['Injured', 'Missing'].includes(hero.status))],
+      ['Idle', remaining.filter((hero) => hero.status === 'Idle')],
+      ['Dead', remaining.filter((hero) => ['Dead', 'Left'].includes(hero.status))],
+      ['Reserve', remaining.filter((hero) => hero.status === 'Reserve')],
+    ];
+    this.heroRosterBodyEl.innerHTML = groups.map(([name, items]) => this.renderHeroRosterGroup(name, items.slice(0, 28))).join('')
+      || '<p class="gwg-hero-roster-empty">No heroes available. Even the volunteers read the terms.</p>';
   }
 
   setWorldInputBlocked(blocked) {
@@ -931,6 +1028,7 @@ export default class UIScene extends Phaser.Scene {
 
   showHtmlPanel(payload = {}, ledger = false) {
     if (!this.panelEl) return;
+    this.heroRosterEl?.classList.add('gwg-roster-shelved');
     const isBuildCatalog = payload.panelType === 'build-catalog';
     const isTownLedger = payload.panelType === 'town-ledger';
     const isDayReport = payload.panelType === 'day-report' || payload.panelType === 'week-report';
@@ -960,6 +1058,7 @@ export default class UIScene extends Phaser.Scene {
       this.townLedgerScrollTop = this.panelBodyEl.scrollTop;
     }
     this.panelEl.classList.add('gwg-hidden');
+    this.heroRosterEl?.classList.remove('gwg-roster-shelved');
     this.setWorldInputBlocked(false);
     this.game.events.emit('gwg-selection-clear');
   }

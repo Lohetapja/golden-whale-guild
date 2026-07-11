@@ -136,7 +136,7 @@ const IMPORTANT_BUBBLE_DURATION_MS = 5600;
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
 const SAVE_KEY = 'golden-whale-guild-save-v2';
-const SAVE_VERSION = 8;
+const SAVE_VERSION = 9;
 const TAP_MOVE_THRESHOLD = 14;
 const SIMULATION_DAY_MS = 45000;
 const HERO_LABEL_DEFAULT_ALPHA = 0;
@@ -692,6 +692,7 @@ export default class TownScene extends Phaser.Scene {
     this.walkerDailyTally = { threatReduction: 0, evangelistGold: 0 };
     this.activeMonsterActors = [];
     this.aftermathDrops = this.normalizeAftermathDrops(this.monsterState.aftermathDrops);
+    this.autonomousExplorerLimit = 2;
     this.tutorial = {
       step: Number(saved?.tutorial?.step) || 0,
       completed: Boolean(saved?.tutorial?.completed),
@@ -817,6 +818,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-poi-action', this.runPoiAction, this);
     this.game.events.on('gwg-confirm-build', this.confirmRoadPlan, this);
     this.game.events.on('gwg-focus-hero', this.focusHeroFromRoster, this);
+    this.game.events.on('gwg-toggle-hero-favorite', this.toggleHeroFavoriteFromUi, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       window.removeEventListener('resize', refreshResponsiveState);
       window.removeEventListener('orientationchange', refreshResponsiveState);
@@ -859,6 +861,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-poi-action', this.runPoiAction, this);
       this.game.events.off('gwg-confirm-build', this.confirmRoadPlan, this);
       this.game.events.off('gwg-focus-hero', this.focusHeroFromRoster, this);
+      this.game.events.off('gwg-toggle-hero-favorite', this.toggleHeroFavoriteFromUi, this);
     });
 
     this.game.events.emit(
@@ -1560,16 +1563,22 @@ export default class TownScene extends Phaser.Scene {
 
   zoomCamera(direction, pointer = null) {
     const cam = this.cameras.main;
-    const factor = direction > 0 ? 1.2 : 1 / 1.2;
+    const factor = direction > 0 ? 1.12 : 1 / 1.12;
     const next = Phaser.Math.Clamp(cam.zoom * factor, this.minZoom, CAMERA_MAX_ZOOM);
     if (Math.abs(next - cam.zoom) < 0.0001) return;
     const focusX = pointer ? pointer.x : cam.width / 2;
     const focusY = pointer ? pointer.y : cam.height / 2;
-    const worldFocus = cam.getWorldPoint(focusX, focusY);
+    const originX = cam.width * cam.originX;
+    const originY = cam.height * cam.originY;
+    const localX = focusX - cam.x;
+    const localY = focusY - cam.y;
+    const worldX = cam.scrollX + originX + (localX - originX) / cam.zoom;
+    const worldY = cam.scrollY + originY + (localY - originY) / cam.zoom;
     cam.setZoom(next);
-    // keep the world point under the cursor stationary while zooming
-    cam.scrollX = worldFocus.x - focusX / next;
-    cam.scrollY = worldFocus.y - focusY / next;
+    // Phaser refreshes its inverse camera matrix on the next render, so use
+    // the explicit origin-aware transform here to anchor within this frame.
+    cam.scrollX = worldX - originX - (localX - originX) / next;
+    cam.scrollY = worldY - originY - (localY - originY) / next;
     this.clampCameraToWorld();
     if (this.buildMode && this.buildPreviewCell) {
       const world = this.gridTileVisualCenter(this.buildPreviewCell.x, this.buildPreviewCell.y);
@@ -1600,10 +1609,15 @@ export default class TownScene extends Phaser.Scene {
     if (this.pinchState) {
       const scale = distance / Math.max(1, this.pinchState.distance);
       const next = Phaser.Math.Clamp(this.pinchState.zoom * scale, this.minZoom, CAMERA_MAX_ZOOM);
-      const worldFocus = cam.getWorldPoint(focusX, focusY);
+      const originX = cam.width * cam.originX;
+      const originY = cam.height * cam.originY;
+      const localX = focusX - cam.x;
+      const localY = focusY - cam.y;
+      const worldX = cam.scrollX + originX + (localX - originX) / cam.zoom;
+      const worldY = cam.scrollY + originY + (localY - originY) / cam.zoom;
       cam.setZoom(next);
-      cam.scrollX = worldFocus.x - focusX / next;
-      cam.scrollY = worldFocus.y - focusY / next;
+      cam.scrollX = worldX - originX - (localX - originX) / next;
+      cam.scrollY = worldY - originY - (localY - originY) / next;
       this.clampCameraToWorld();
     } else {
       this.pinchState = { distance, zoom: cam.zoom };
@@ -1707,6 +1721,7 @@ export default class TownScene extends Phaser.Scene {
       },
       tutorial: { ...this.tutorial },
       cityBuilder: {
+        mapVersion: this.cityState.mapVersion || 2,
         mode: this.cityState.mode,
         unlockedZones: [...this.cityState.unlockedZones],
         revealed: [...(this.revealedTiles || [])],
@@ -1749,6 +1764,7 @@ export default class TownScene extends Phaser.Scene {
         injuryState: hero.stats.injuryState || 'healthy',
         deathDay: hero.stats.deathDay || 0,
         deathLocation: hero.stats.deathLocation || null,
+        favorite: Boolean(hero.stats.favorite),
         intent: hero.intent ? { ...hero.intent } : null,
         animationState: hero.animationState || hero.stats.animationState || 'idle',
         premiumExposure: hero.stats.premiumExposure || 0,
@@ -3375,19 +3391,39 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
-  // locked zones read as wilderness: deterministic prop scatter under the
-  // fog shading, cleared per-zone when the land is purchased
+  getForestClusters() {
+    const c = GRID_CONFIG.columns;
+    const r = GRID_CONFIG.rows;
+    return [
+      { x: c * 0.1, y: r * 0.18, rx: 11, ry: 8, type: 'pine' },
+      { x: c * 0.18, y: r * 0.72, rx: 14, ry: 9, type: 'old' },
+      { x: c * 0.38, y: r * 0.12, rx: 12, ry: 7, type: 'autumn' },
+      { x: c * 0.58, y: r * 0.82, rx: 16, ry: 8, type: 'old' },
+      { x: c * 0.75, y: r * 0.2, rx: 15, ry: 10, type: 'pine' },
+      { x: c * 0.86, y: r * 0.62, rx: 17, ry: 11, type: 'mixed' },
+      { x: c * 0.96, y: r * 0.34, rx: 9, ry: 13, type: 'cursed' },
+    ];
+  }
+
+  getForestTextureKeys(type) {
+    const variants = {
+      pine: ['object_tree_pine', 'object_tree_03', 'prop_tree'],
+      old: ['object_tree_03', 'object_tree_pine', 'prop_tree'],
+      autumn: ['object_tree_autumn', 'object_tree_03', 'prop_tree'],
+      cursed: ['object_tree_pine', 'object_tree_autumn', 'object_tree_03'],
+      mixed: ['object_tree_03', 'object_tree_pine', 'object_tree_autumn', 'prop_tree'],
+    };
+    return (variants[type] || variants.mixed).filter((key) => this.textures.exists(key));
+  }
+
+  // Deterministic clustered forests. The center of each grove is dense enough
+  // to block structures; roads can still be cut through as deliberate access.
   redrawWildernessDressing() {
     if (!this.isBuilderCity) return;
     if (!this.wildernessContainer) this.wildernessContainer = this.add.container(0, 0).setDepth(55);
     this.wildernessContainer.removeAll(true);
-    const propKeys = [
-      'object_tree_03', 'object_tree_pine', 'object_tree_autumn', 'object_tree_03',
-      'object_rock_02', 'object_rock_mossy', 'object_bush', 'object_tree_pine',
-    ].filter((key) => this.textures.exists(key));
-    const fallbackKeys = ['prop_tree', 'prop_rock'].filter((key) => this.textures.exists(key));
-    const keys = propKeys.length ? propKeys : fallbackKeys;
-    if (!keys.length) return;
+    this.forestBlockedCells = new Set();
+    const clusters = this.getForestClusters();
     const core = this.getTownCoreCenter();
     const blocked = this.getDecorBlockedCells();
     const activeSet = this.getActiveVisibilitySet();
@@ -3398,20 +3434,33 @@ export default class TownScene extends Phaser.Scene {
         const revealed = this.isRevealed(x, y);
         if (!revealed) continue;
         const hash = Math.abs((x * 73856093) ^ (y * 19349663)) % 100000;
-        // revealed wild zone: sparse trees/bushes well away from the town
-        // core and roads, so cleared land still reads as frontier meadow
         const coreDistance = Math.hypot(x - core.x, y - core.y);
-        if (coreDistance < 11 || this.isRoadOrRoadShoulder(x, y, 1)) continue;
-        if (hash % 100 >= 5) continue;
+        if (coreDistance < 13 || this.isRoadOrRoadShoulder(x, y, 1)) continue;
+        let best = null;
+        for (const cluster of clusters) {
+          const distance = Math.sqrt(
+            ((x - cluster.x) / cluster.rx) ** 2
+            + ((y - cluster.y) / cluster.ry) ** 2,
+          );
+          if (distance <= 1 && (!best || distance < best.distance)) best = { ...cluster, distance };
+        }
+        const fringe = !best && coreDistance > 20 && hash % 1000 < 8;
+        if (!best && !fringe) continue;
+        const density = best ? 0.18 + (1 - best.distance) * 0.62 : 0.18;
+        if ((hash % 100) / 100 > density) continue;
+        const keys = this.getForestTextureKeys(best?.type || 'mixed');
+        if (!keys.length) continue;
         const world = this.gridTileVisualCenter(x, y);
         const key = keys[hash % keys.length];
         const image = this.add.image(
           world.x + ((hash % 27) - 13),
           world.y + (((hash >> 4) % 15) - 7),
           key,
-        ).setScale(0.55 + ((hash >> 6) % 9) * 0.05)
+        ).setScale(0.46 + ((hash >> 6) % 8) * 0.035)
           .setAlpha(activeSet.has(gridKey(x, y)) ? 1 : 0.56);
+        if (best?.type === 'cursed') image.setTint(hash % 2 ? 0x9b8cab : 0x7d8b72);
         this.wildernessContainer.add(image);
+        if (best && density >= 0.48 && hash % 100 < 58) this.forestBlockedCells.add(gridKey(x, y));
       }
     }
   }
@@ -3972,6 +4021,9 @@ export default class TownScene extends Phaser.Scene {
     const movingPlace = this.buildMode.kind === 'move' ? this.buildingById?.[this.buildMode.id] : null;
     const catalog = getBuildingCatalogEntry(movingPlace?.baseId || this.buildMode.id);
     if (!catalog) return { valid: false, reason: 'The catalog misplaced that building.' };
+    if (cells.some((cell) => this.forestBlockedCells?.has(gridKey(cell.x, cell.y)))) {
+      return { valid: false, reason: 'Dense forest blocks this footprint. Run a road through the grove to establish access first.' };
+    }
     const lockReason = movingPlace ? null : this.getCatalogLockReason(catalog);
     if (lockReason) return { valid: false, reason: lockReason };
     if (!movingPlace && this.isCatalogAtBuildLimit(catalog)) {
@@ -5375,7 +5427,16 @@ export default class TownScene extends Phaser.Scene {
 
       const depth = this.getVisualDepth(place.gridX, place.gridY) + 26;
       const base = this.add.graphics().setDepth(depth - 3);
-      this.drawPolygon(base, this.insetPoints(this.getVisualTilePoints(place.gridX, place.gridY), 0.62), 0x243241, 0.36, 0xfff6dc, 0.12, 1);
+      const resourceYield = POI_RESOURCE_YIELDS[place.id];
+      this.drawPolygon(
+        base,
+        this.insetPoints(this.getVisualTilePoints(place.gridX, place.gridY), 0.62),
+        resourceYield ? 0x274f3a : 0x243241,
+        resourceYield ? 0.5 : 0.36,
+        resourceYield ? 0x9ee6aa : 0xfff6dc,
+        resourceYield ? 0.42 : 0.12,
+        1,
+      );
       this.explorationPointObjectsById[place.id].push(base);
 
       const key = resolveTexture(this, place.assetKey, place.fallbackKey || 'rock');
@@ -5397,6 +5458,19 @@ export default class TownScene extends Phaser.Scene {
       const label = this.addPlaceLabel(place, SMALL_LABEL_FONT_SIZE);
       this.placeLabelsById[place.id] = label;
       this.explorationPointObjectsById[place.id].push(label);
+      if (resourceYield) {
+        const badge = this.add.text(place.x, place.y - (place.h || 44) - 14, resourceYield.resource.toUpperCase(), {
+          fontFamily: '"Courier New", monospace',
+          fontSize: '9px',
+          fontStyle: 'bold',
+          color: '#d7f3d0',
+          stroke: '#0c1118',
+          strokeThickness: 2,
+          backgroundColor: '#173324dd',
+          padding: { x: 4, y: 2 },
+        }).setOrigin(0.5, 1).setDepth(depth + 3);
+        this.explorationPointObjectsById[place.id].push(badge);
+      }
     }
     this.updateExplorationPointVisibility();
   }
@@ -6802,12 +6876,9 @@ export default class TownScene extends Phaser.Scene {
   selectHero(hero) {
     this.clearSelection(false);
     this.selectedHeroId = hero.def.id;
-    const marker = this.add.graphics();
-    marker.lineStyle(3, 0xf6c945, 0.95);
-    marker.strokeCircle(0, -31, 34);
-    marker.fillStyle(0xf6c945, 0.12);
-    marker.fillCircle(0, -31, 34);
-    hero.container.add(marker);
+    const marker = this.add.ellipse(0, -2, 38, 15, 0xf6c945, 0.12)
+      .setStrokeStyle(2, 0xf6c945, 0.96);
+    hero.container.addAt(marker, 0);
     this.selectionMarker = marker;
     this.setHeroLabelFocus(hero, true);
     this.drawSelectedHeroIntentLine(hero);
@@ -6836,19 +6907,36 @@ export default class TownScene extends Phaser.Scene {
 
   drawSelectedHeroIntentLine(hero) {
     if (!hero?.intent) return;
-    const destination = hero.intent.destinationId
-      ? (this.doorById?.[hero.intent.destinationId] || this.placeById?.[hero.intent.destinationId])
-      : null;
-    if (!destination || Phaser.Math.Distance.Between(hero.container.x, hero.container.y, destination.x, destination.y) < 28) return;
-    const g = this.add.graphics().setDepth(4690);
-    g.lineStyle(2, 0xffe08a, 0.5);
-    g.beginPath();
-    g.moveTo(hero.container.x, hero.container.y - 28);
-    g.lineTo(destination.x, destination.y - 22);
-    g.strokePath();
-    g.fillStyle(0xffe08a, 0.72);
-    g.fillCircle(destination.x, destination.y - 22, 4);
-    this.heroIntentLine = g;
+    this.heroIntentLine = this.add.graphics().setDepth(4690);
+    this.updateSelectedHeroIntentLine();
+  }
+
+  getHeroIntentDestination(hero) {
+    if (!hero?.destination && hero?.state !== 'walking') return null;
+    if (Number.isFinite(hero.intent?.destinationX) && Number.isFinite(hero.intent?.destinationY)) {
+      return { x: hero.intent.destinationX, y: hero.intent.destinationY };
+    }
+    const id = hero.intent?.destinationId || hero.destination;
+    return this.doorById?.[id]
+      || this.placeById?.[id]
+      || this.aftermathDrops?.find((drop) => drop.id === id)
+      || null;
+  }
+
+  updateSelectedHeroIntentLine() {
+    if (!this.heroIntentLine || !this.selectedHeroId) return;
+    const hero = this.heroes?.find((item) => item.def.id === this.selectedHeroId);
+    const destination = this.getHeroIntentDestination(hero);
+    this.heroIntentLine.clear();
+    if (!hero?.container || !destination) return;
+    if (Phaser.Math.Distance.Between(hero.container.x, hero.container.y, destination.x, destination.y) < 28) return;
+    this.heroIntentLine.lineStyle(2, 0xffe08a, 0.46);
+    this.heroIntentLine.beginPath();
+    this.heroIntentLine.moveTo(hero.container.x, hero.container.y - 3);
+    this.heroIntentLine.lineTo(destination.x, destination.y - 4);
+    this.heroIntentLine.strokePath();
+    this.heroIntentLine.fillStyle(0xffe08a, 0.72);
+    this.heroIntentLine.fillCircle(destination.x, destination.y - 4, 4);
   }
 
   refreshActivePanel() {
@@ -7167,6 +7255,12 @@ export default class TownScene extends Phaser.Scene {
     return {
       title: hero.def.name,
       subtitle: `Status: ${hero.stats.status || hero.def.personality}`,
+      primaryActions: [{
+        label: hero.stats.favorite ? 'Unfavorite Hero' : 'Favorite Hero',
+        event: 'gwg-toggle-hero-favorite',
+        id: hero.def.id,
+        className: hero.stats.favorite ? 'gwg-favorite-action active' : 'gwg-favorite-action',
+      }],
       sections: [
         {
           title: 'Identity',
@@ -7300,30 +7394,73 @@ export default class TownScene extends Phaser.Scene {
 
   getHeroRosterStatus(hero) {
     if (hero?.stats?.deathDay) return 'Dead';
-    if (hero?.stats?.active === false) return 'Left';
+    if (hero?.stats?.active === false) {
+      return /Left Town|Balance Refugee|Burned Out/.test(hero.stats.status || '') ? 'Left' : 'Reserve';
+    }
     if (this.isHeroInjured(hero)) return hero.stats.injuryState === 'missing' ? 'Missing' : 'Injured';
-    if (hero?.state === 'away' || hero?.awayUntil > this.day) return 'Away';
+    if (hero?.state === 'away' || hero?.awayUntil > this.day) return 'Returning';
     const action = `${hero?.currentAction || hero?.intent?.action || ''}`.toLowerCase();
-    if (action.includes('quest') || action.includes('preparing')) return 'On Quest';
     if (action.includes('explor') || action.includes('harvest') || action.includes('investigat') || action.includes('clear')) return 'Exploring';
-    if (action.includes('intercept') || action.includes('attack')) return 'Fighting';
-    if (action.includes('tavern') || action.includes('rest')) return 'Resting';
+    if (action.includes('intercept') || action.includes('attack') || action.includes('fight')) return 'Fighting';
+    if (action.includes('loot') || action.includes('remains')) return 'Looting';
+    if (action.includes('quest') || action.includes('preparing')) return 'On Quest';
+    if (this.postedQuests?.some((quest) => quest.assignedHeroId === hero?.def?.id)) return 'On Quest';
+    if (hero?.state === 'walking' || hero?.moveTween || hero?.destination) return 'Walking';
+    if (action.includes('tavern') || action.includes('rest') || action.includes('visiting')) return 'Resting';
+    if (hero?.state === 'inside') return 'Resting';
     return 'Idle';
+  }
+
+  refreshHeroIntentRing(hero) {
+    if (!hero?.intentRing) return;
+    const status = this.getHeroRosterStatus(hero);
+    const farZoom = this.cameras.main.zoom < 0.48;
+    const visibleStatuses = new Set(['Walking', 'Exploring', 'On Quest', 'Returning', 'Looting', 'Fighting', 'Injured', 'Missing']);
+    const visible = visibleStatuses.has(status)
+      && hero.stats.active !== false
+      && !hero.stats.deathDay
+      && (!farZoom || ['Fighting', 'Injured', 'Missing'].includes(status));
+    const colors = {
+      Walking: 0x8fb7c9,
+      Exploring: 0x7fdc93,
+      'On Quest': 0x8db8ff,
+      Returning: 0xb8c4d8,
+      Looting: 0xf6c945,
+      Fighting: 0xf0938f,
+      Injured: 0xd75b5b,
+      Missing: 0xc99aec,
+    };
+    const color = colors[status] || 0x8fb7c9;
+    hero.intentRing
+      .setFillStyle(color, status === 'Fighting' ? 0.16 : 0.08)
+      .setStrokeStyle(status === 'Fighting' ? 2 : 1.5, color, 0.68)
+      .setVisible(visible);
   }
 
   getHeroRosterPayload() {
     const heroes = (this.heroes || []).map((hero) => {
       const icon = this.getAssetPreviewUrl(hero.def.assetKey);
+      const status = this.getHeroRosterStatus(hero);
+      const assignedQuest = this.postedQuests?.find((quest) => quest.assignedHeroId === hero.def.id);
+      const action = assignedQuest && status === 'On Quest'
+        ? `Assigned to ${assignedQuest.name}`
+        : (hero.intent?.action || hero.currentAction || 'Idle');
+      const destination = assignedQuest && status === 'On Quest'
+        ? assignedQuest.name
+        : (hero.intent?.destinationName || this.getPlaceName(hero.destination || hero.at));
       return {
         id: hero.def.id,
         name: hero.def.name,
-        status: this.getHeroRosterStatus(hero),
+        status,
         tier: hero.stats.status || hero.def.personality,
         power: hero.stats.power || 0,
         morale: hero.stats.morale || 0,
         injury: hero.stats.injuryState || 'healthy',
-        action: hero.intent?.action || hero.currentAction || 'Idle',
-        destination: hero.intent?.destinationName || this.getPlaceName(hero.destination || hero.at),
+        favorite: Boolean(hero.stats.favorite),
+        action,
+        destination,
+        reason: hero.intent?.reason || '',
+        risk: hero.intent?.risk || 'Low',
         dead: Boolean(hero.stats.deathDay),
         icon,
       };
@@ -7346,6 +7483,17 @@ export default class TownScene extends Phaser.Scene {
     if (hero.container?.visible !== false || hero.stats?.deathDay) {
       this.showHeroInspector(hero);
     } else {
+      this.game.events.emit('gwg-inspector-open', this.getHeroInspectorPayload(hero));
+    }
+  }
+
+  toggleHeroFavoriteFromUi(id) {
+    const hero = (this.heroes || []).find((item) => item.def.id === id);
+    if (!hero) return;
+    hero.stats.favorite = !hero.stats.favorite;
+    this.publishHeroRoster();
+    this.saveGame(false);
+    if (this.activeInspector?.type === 'hero' && this.activeInspector.id === id) {
       this.game.events.emit('gwg-inspector-open', this.getHeroInspectorPayload(hero));
     }
   }
@@ -7601,6 +7749,9 @@ export default class TownScene extends Phaser.Scene {
       const sprite = this.add.image(0, 0, textureKey).setScale(spriteScale).setOrigin(0.5, 1);
       sprite.setData('baseScaleX', spriteScale);
       sprite.setData('baseScaleY', spriteScale);
+      const intentRing = this.add.ellipse(0, -2, 30, 11, 0x8fb7c9, 0.08)
+        .setStrokeStyle(1.5, 0x8fb7c9, 0.52)
+        .setVisible(false);
       const label = this.add.text(0, -40, def.name, {
         fontFamily: '"Courier New", monospace',
         fontSize: `${SMALL_LABEL_FONT_SIZE}px`,
@@ -7612,11 +7763,11 @@ export default class TownScene extends Phaser.Scene {
         padding: { x: 4, y: 2 },
       }).setOrigin(0.5, 1).setAlpha(HERO_LABEL_DEFAULT_ALPHA);
 
-      const container = this.add.container(x, y, [sprite, label]).setDepth(y);
+      const container = this.add.container(x, y, [intentRing, sprite, label]).setDepth(y);
       const savedStats = this.savedHeroStats?.[def.id] || {};
       const defaultActive = !this.isBuilderCity || i < 3;
       const hero = {
-        def, container, sprite, label,
+        def, container, sprite, label, intentRing,
         stats: {
           morale: 60,
           debt: Math.max(0, -(def.stats?.gold || 0)),
@@ -7643,6 +7794,7 @@ export default class TownScene extends Phaser.Scene {
         injuryState: 'healthy',
         deathDay: 0,
         deathLocation: null,
+          favorite: false,
           premiumExposure: 0,
           animationState: 'idle',
           ...def.stats,
@@ -7662,6 +7814,7 @@ export default class TownScene extends Phaser.Scene {
           injuryState: savedStats.injuryState || (Number(savedStats.injuredUntilDay) > this.day ? 'injured' : 'healthy'),
           deathDay: Number(savedStats.deathDay) || 0,
           deathLocation: savedStats.deathLocation || null,
+          favorite: Boolean(savedStats.favorite),
           premiumExposure: Number(savedStats.premiumExposure) || 0,
           animationState: savedStats.animationState || 'idle',
         },
@@ -7739,6 +7892,7 @@ export default class TownScene extends Phaser.Scene {
       }
 
       this.refreshHeroStatusMarker(hero);
+      this.refreshHeroIntentRing(hero);
       if (hero.stats.active) this.scheduleAmbient(hero, Phaser.Math.Between(300, 2500));
       return hero;
     });
@@ -8022,6 +8176,7 @@ export default class TownScene extends Phaser.Scene {
     hero.sprite.setAngle(0);
     hero.container.setAlpha(1);
     hero.destination = null;
+    hero.autonomousExploring = false;
     hero.state = 'idle';
     hero.currentAction = `Idle near ${this.getPlaceName(hero.at)}`;
     hero.intent = {
@@ -8036,7 +8191,93 @@ export default class TownScene extends Phaser.Scene {
 
   scheduleAmbient(hero, delay) {
     if (hero.state === 'away') return;
-    hero.timer = this.time.delayedCall(delay, () => this.ambientMove(hero));
+    hero.timer = this.time.delayedCall(delay, () => {
+      if (!this.tryAutonomousHeroAction(hero)) this.ambientMove(hero);
+    });
+  }
+
+  getAutonomousExploreSpot(hero) {
+    const frontier = Phaser.Utils.Array.Shuffle(this.getFogFrontierCells(true))
+      .filter((cell) => {
+        const world = this.gridTileVisualCenter(cell.x, cell.y);
+        const distance = Phaser.Math.Distance.Between(hero.container.x, hero.container.y, world.x, world.y);
+        return distance > GRID_CONFIG.tileSize * 3 && distance < GRID_CONFIG.tileSize * 20;
+      });
+    const cell = frontier[0];
+    if (!cell) return null;
+    const world = this.gridTileVisualCenter(cell.x, cell.y);
+    return {
+      id: `frontier-${cell.x}-${cell.y}`,
+      areaId: `frontier-${Math.floor(cell.x / 8)}-${Math.floor(cell.y / 8)}`,
+      name: 'Safe Fog Edge',
+      x: world.x,
+      y: world.y,
+      h: 34,
+      explore: true,
+      autoExplore: true,
+      intentAction: 'Exploring fog edge',
+      reason: 'Scouting a nearby revealed frontier without a formal quest.',
+      risk: this.resources.threat >= 55 ? 'Moderate' : 'Low',
+    };
+  }
+
+  tryAutonomousHeroAction(hero) {
+    if (!hero?.stats?.active || hero.stats.deathDay || hero.state !== 'idle') return false;
+    if (this.postedQuests?.some((quest) => quest.assignedHeroId === hero.def.id)) return false;
+
+    const loot = (this.aftermathDrops || [])
+      .filter((drop) => !drop.collected && drop.kind !== 'corpse')
+      .sort((a, b) => (
+        Phaser.Math.Distance.Between(hero.container.x, hero.container.y, a.x, a.y)
+        - Phaser.Math.Distance.Between(hero.container.x, hero.container.y, b.x, b.y)
+      ))[0];
+    if (loot && Math.random() < 0.32) {
+      this.sendHeroToLoot(loot, hero);
+      return true;
+    }
+
+    const restSpot = this.doorById?.tavern || this.doorById?.inn || this.doorById?.hero_hostel;
+    if ((this.isHeroInjured(hero) || hero.stats.morale < 34) && restSpot) {
+      this.walkTo(hero, {
+        ...restSpot,
+        intentAction: `Walking to ${restSpot.name || 'lodging'}`,
+        reason: this.isHeroInjured(hero) ? 'Needs rest before becoming a memorial.' : 'Low morale needs a chair and soup.',
+        risk: 'Low',
+      }, () => this.enterBuilding(hero));
+      return true;
+    }
+
+    const blacksmith = this.doorById?.blacksmith;
+    if (blacksmith && (hero.stats.power || 0) < 6 && Math.random() < 0.18) {
+      this.walkTo(hero, {
+        ...blacksmith,
+        intentAction: 'Walking to Blacksmith',
+        reason: 'Gear is currently more theoretical than equipped.',
+        risk: 'Low',
+      }, () => this.onAmbientArrive(hero, blacksmith));
+      return true;
+    }
+
+    const exploringNow = (this.heroes || []).filter((item) => item.autonomousExploring).length;
+    const brave = this.isVeteranHero(hero.def) || this.isHonestHero(hero.def) || (hero.stats.power || 0) >= 9;
+    const exploreChance = brave ? 0.18 : 0.055;
+    if (exploringNow < this.autonomousExplorerLimit && this.resources.threat < (brave ? 78 : 52) && Math.random() < exploreChance) {
+      const spot = this.getAutonomousExploreSpot(hero);
+      if (spot) {
+        this.walkTo(hero, spot, () => {
+          hero.autonomousExploring = false;
+          const added = this.revealArea(spot.gridX ?? this.worldToBuildGrid(spot.x, spot.y).x,
+            spot.gridY ?? this.worldToBuildGrid(spot.x, spot.y).y,
+            2,
+            `${hero.def.name}'s casual scouting`);
+          const haul = this.rollExplorationHaul(hero);
+          this.say(hero, haul || (added ? 'Mapped it.' : 'Fog still suspicious.'), true);
+          this.scheduleAmbient(hero, Phaser.Math.Between(2800, 5600));
+        });
+        return true;
+      }
+    }
+    return false;
   }
 
   getHeroDistrictPreferences(hero) {
@@ -8213,10 +8454,11 @@ export default class TownScene extends Phaser.Scene {
       return;
     }
     this.interruptHero(hero);
+    hero.autonomousExploring = Boolean(spot.autoExplore);
     hero.state = 'walking';
     hero.destination = spot.id;
     const spotName = spot.name || this.getPlaceName(spot.id);
-    hero.currentAction = `Walking to ${spotName}`;
+    hero.currentAction = spot.intentAction || `Walking to ${spotName}`;
     hero.intent = {
       action: hero.currentAction,
       destinationId: spot.id,
@@ -8227,6 +8469,8 @@ export default class TownScene extends Phaser.Scene {
 
     const tx = spot.x + Phaser.Math.Between(-38, 38);
     const ty = spot.y + Phaser.Math.Between(-4, 18);
+    hero.intent.destinationX = tx;
+    hero.intent.destinationY = ty;
     const route = this.buildWalkRoute(hero, spot, tx, ty);
 
     // Movement markers are useful while tuning pathing, but too debug-like
@@ -8855,6 +9099,9 @@ export default class TownScene extends Phaser.Scene {
         x: drop.x,
         y: drop.y,
         h: 30,
+        intentAction: `Looting ${drop.name}`,
+        reason: 'Greedy opportunity with a finite despawn timer.',
+        risk: 'Low',
       }, () => {
         this.collectLootDrop(drop.id, hero);
         this.scheduleAmbient(hero, Phaser.Math.Between(1800, 3800));
@@ -9247,6 +9494,7 @@ export default class TownScene extends Phaser.Scene {
           reason: `Intercepting ${monster.name}.`,
           risk: monster.threat >= 6 ? 'High' : monster.threat >= 3 ? 'Moderate' : 'Low',
           monster,
+          intentAction: `Intercepting ${monster.name}`,
         }, () => {
           this.say(hero, wonThisRound ? 'Handled it.' : 'That had teeth.', true);
         });
@@ -9384,6 +9632,7 @@ export default class TownScene extends Phaser.Scene {
     for (const hero of this.heroes) {
       hero.container.setDepth(hero.container.y + (hero.bubble ? 800 : 0));
     }
+    this.updateSelectedHeroIntentLine();
     for (const actor of this.activeMonsterActors || []) {
       if (actor?.container?.active) actor.container.setDepth(actor.container.y + 75);
     }
@@ -9394,6 +9643,7 @@ export default class TownScene extends Phaser.Scene {
     this.heroRosterElapsedMs = (this.heroRosterElapsedMs || 0) + delta;
     if (this.heroRosterElapsedMs >= 1000) {
       this.heroRosterElapsedMs = 0;
+      for (const hero of this.heroes || []) this.refreshHeroIntentRing(hero);
       this.publishHeroRoster();
     }
 
@@ -9511,7 +9761,12 @@ export default class TownScene extends Phaser.Scene {
     };
     const board = this.doorById.notice_board || this.doorById.guildhall;
     if (board && hero.state !== 'away') {
-      this.walkTo(hero, board, () => {
+      this.walkTo(hero, {
+        ...board,
+        intentAction: `Assigned to quest: ${quest.name}`,
+        reason: 'Reporting to the quest board before departure.',
+        risk: quest.risk >= 3 ? 'High' : 'Medium',
+      }, () => {
         this.say(hero, 'Signed. Regret pending.', true);
         this.scheduleAmbient(hero, Phaser.Math.Between(2500, 5000));
       });
@@ -10418,7 +10673,17 @@ export default class TownScene extends Phaser.Scene {
       reason: this.getPoiRewardPreview(place, actionConfig),
       risk: this.getPoiDangerLabel(place, actionConfig),
     };
-    const spot = { id: place.id, name: place.name, x: place.x, y: place.y, h: place.h || 40 };
+    const spot = {
+      id: place.id,
+      name: place.name,
+      x: place.x,
+      y: place.y,
+      h: place.h || 40,
+      intentAction: `${actionConfig.verb} ${place.name}`,
+      reason: this.getPoiRewardPreview(place, actionConfig),
+      risk: this.getPoiDangerLabel(place, actionConfig),
+      explore: true,
+    };
     this.game.events.emit('gwg-event', `${hero.def.name} set out for the ${place.name}.`);
     this.walkTo(hero, spot, () => {
       this.resolvePoiVisit(hero, place, actionConfig);
@@ -10852,6 +11117,11 @@ export default class TownScene extends Phaser.Scene {
 
         const travelSpot = {
           ...spot,
+          intentAction: ev.explore
+            ? `Exploring ${spot.name || 'the wilderness'}`
+            : ev.whale
+              ? 'Seeking premium advantage'
+              : `Travelling to ${this.getPlaceName(ev.building)}`,
           reason: ev.explore
             ? `Exploring ${spot.name || 'the wilderness'} for loot and map knowledge.`
             : ev.whale
