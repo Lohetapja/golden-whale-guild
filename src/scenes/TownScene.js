@@ -116,6 +116,28 @@ import {
   TOWN_RANKS,
   TRADE_PRICES,
 } from '../systems/production.js';
+import {
+  applyImportedSave,
+  buildExportBundle,
+  createBackup,
+  downloadTextFile,
+  exportFilename,
+  getActiveSaveKey,
+  isTestSaveMode,
+  listBackups,
+  loadActiveSave,
+  maybeCreateDailyBackup,
+  parseImportedSave,
+  pickSaveFile,
+  readBrokenSave,
+  readRawSave,
+  restoreBackup,
+  safeReset,
+  stashBrokenSave,
+  SAVE_VERSION,
+  UI_PREFS_KEY,
+  writeSaveAtomic,
+} from '../systems/saveManager.js';
 import { getResponsiveUi } from '../ui/responsive.js';
 import {
   getIsoDepth,
@@ -165,8 +187,9 @@ const IDLE_BUBBLE_DURATION_MS = 4600;
 const IMPORTANT_BUBBLE_DURATION_MS = 5600;
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
-const SAVE_KEY = 'golden-whale-guild-save-v2';
-const SAVE_VERSION = 10;
+// Save keys, versioning, and persistence now live in ../systems/saveManager.js.
+// SAVE_VERSION is imported; the active key is resolved per-session via
+// getActiveSaveKey() so automated tests never touch the production save.
 const TAP_MOVE_THRESHOLD = 14;
 const SIMULATION_DAY_MS = 45000;
 const HERO_LABEL_DEFAULT_ALPHA = 0;
@@ -621,6 +644,18 @@ export default class TownScene extends Phaser.Scene {
   }
 
   create() {
+    // Last-resort safety net: if anything in scene construction throws while
+    // consuming a save, do NOT leave a black screen. Stash the offending save
+    // and show a DOM recovery panel so the player can restore a backup or start
+    // fresh without losing the broken data.
+    try {
+      this.createTown();
+    } catch (err) {
+      this.handleCreateFailure(err);
+    }
+  }
+
+  createTown() {
     ensureFallbacks(this);
     this.rsp = getResponsiveUi();
     this.input.mouse?.disableContextMenu();
@@ -833,6 +868,17 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-end-day', this.runCycle, this);
     this.game.events.on('gwg-save', this.saveGame, this);
     this.game.events.on('gwg-reset', this.resetGame, this);
+    this.game.events.on('gwg-open-save-manager', this.openSaveManagerPanel, this);
+    this.game.events.on('gwg-open-backups', this.openBackupsPanel, this);
+    this.game.events.on('gwg-save-export', this.exportSaveFromUi, this);
+    this.game.events.on('gwg-save-import', this.importSaveFromUi, this);
+    this.game.events.on('gwg-save-import-confirm', this.confirmImportFromUi, this);
+    this.game.events.on('gwg-create-backup', this.createBackupFromUi, this);
+    this.game.events.on('gwg-restore-backup', this.restoreBackupFromUi, this);
+    this.game.events.on('gwg-recover-restore', this.recoverRestoreLatestBackup, this);
+    this.game.events.on('gwg-recover-export-broken', this.recoverExportBrokenSave, this);
+    this.game.events.on('gwg-recover-new-game', this.recoverStartNewGame, this);
+    this.game.events.on('gwg-recover-retry', this.recoverRetryLoad, this);
     this.game.events.on('gwg-upgrade-place', this.upgradePlaceFromUi, this);
     this.game.events.on('gwg-upgrade-road', this.upgradeRoadFromUi, this);
     this.game.events.on('gwg-post-quest', this.postQuestFromUi, this);
@@ -887,6 +933,17 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-end-day', this.runCycle, this);
       this.game.events.off('gwg-save', this.saveGame, this);
       this.game.events.off('gwg-reset', this.resetGame, this);
+      this.game.events.off('gwg-open-save-manager', this.openSaveManagerPanel, this);
+      this.game.events.off('gwg-open-backups', this.openBackupsPanel, this);
+      this.game.events.off('gwg-save-export', this.exportSaveFromUi, this);
+      this.game.events.off('gwg-save-import', this.importSaveFromUi, this);
+      this.game.events.off('gwg-save-import-confirm', this.confirmImportFromUi, this);
+      this.game.events.off('gwg-create-backup', this.createBackupFromUi, this);
+      this.game.events.off('gwg-restore-backup', this.restoreBackupFromUi, this);
+      this.game.events.off('gwg-recover-restore', this.recoverRestoreLatestBackup, this);
+      this.game.events.off('gwg-recover-export-broken', this.recoverExportBrokenSave, this);
+      this.game.events.off('gwg-recover-new-game', this.recoverStartNewGame, this);
+      this.game.events.off('gwg-recover-retry', this.recoverRetryLoad, this);
       this.game.events.off('gwg-upgrade-place', this.upgradePlaceFromUi, this);
       this.game.events.off('gwg-upgrade-road', this.upgradeRoadFromUi, this);
       this.game.events.off('gwg-post-quest', this.postQuestFromUi, this);
@@ -943,14 +1000,31 @@ export default class TownScene extends Phaser.Scene {
         ? 'The Guild Camp opened on mostly empty land. Build roads, place services, and invoice destiny.'
         : 'Welcome back to the legacy town. Its roads are grandfathered in by suspicious paperwork.',
     );
-    this.time.delayedCall(650, () => this.maybeShowOnboarding());
+    if (this._saveRecovery) {
+      // A save existed but could not be loaded. We booted a fresh town (not a
+      // black screen); surface recovery once the UI is ready.
+      this.time.delayedCall(400, () => this.openRecoveryPanel());
+    } else {
+      this.time.delayedCall(650, () => this.maybeShowOnboarding());
+    }
   }
 
   loadSavedState() {
+    this.saveKey = getActiveSaveKey();
+    const loaded = loadActiveSave(this.saveKey);
+    if (!loaded.ok) {
+      // No save is normal; a corrupt/unusable one triggers recovery instead of
+      // a black screen. The raw bytes are stashed, never wiped, so nothing the
+      // player did is lost.
+      if (loaded.reason && loaded.reason !== 'no-save' && loaded.raw) {
+        stashBrokenSave(loaded.raw, loaded.reason);
+        this._saveRecovery = { reason: loaded.reason, hadSave: true };
+      }
+      return null;
+    }
+    this._saveWarnings = loaded.warnings && loaded.warnings.length ? loaded.warnings : null;
+    const parsed = loaded.data;
     try {
-      const raw = window.localStorage.getItem(SAVE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
       return {
         saveVersion: parsed.saveVersion || 1,
         day: Number(parsed.day) || 1,
@@ -986,7 +1060,12 @@ export default class TownScene extends Phaser.Scene {
         tutorial: parsed.tutorial || {},
         cityBuilder: parsed.cityBuilder || null,
       };
-    } catch {
+    } catch (err) {
+      // A migrated save still threw while being shaped for the scene. Preserve
+      // it for inspection and fall back to a fresh start plus recovery UI rather
+      // than crash create() into a black screen.
+      stashBrokenSave(loaded.raw, `normalize:${err?.message || 'error'}`);
+      this._saveRecovery = { reason: 'normalize', hadSave: true };
       return null;
     }
   }
@@ -1876,25 +1955,373 @@ export default class TownScene extends Phaser.Scene {
   }
 
   saveGame(showEvent = true) {
-    try {
-      window.localStorage.setItem(SAVE_KEY, JSON.stringify(this.getSavePayload()));
+    const key = this.saveKey || getActiveSaveKey();
+    const result = writeSaveAtomic(key, this.getSavePayload());
+    if (result.ok) {
+      this.lastSaveAt = Date.now();
       if (showEvent) {
         this.game.events.emit('gwg-event', 'Guild records saved locally. No cloud. No account. Just paperwork.');
       }
+      this.game.events.emit('gwg-save-status', { state: 'saved', at: this.lastSaveAt });
       return true;
-    } catch {
-      if (showEvent) this.game.events.emit('gwg-event', 'The save clerk dropped the ledger. Local save failed politely.');
-      return false;
     }
+    // The atomic write refused to replace a valid save with a bad one; the old
+    // save is intact. Surface it rather than pretend success.
+    if (showEvent) this.game.events.emit('gwg-event', 'The save clerk refused a bad ledger. Previous save kept intact.');
+    this.game.events.emit('gwg-save-status', { state: 'error', error: result.error });
+    return false;
   }
 
   resetGame() {
-    try {
-      window.localStorage.removeItem(SAVE_KEY);
-    } catch {
-      // Local storage may be blocked; reloading still returns to the default state.
-    }
+    // Safe reset: snapshot the current town into the backup ring, then remove
+    // ONLY the active save key (never localStorage.clear()). The pre-reset
+    // backup and any broken stash survive so the town is recoverable.
+    safeReset(this.saveKey || getActiveSaveKey());
     window.location.reload();
+  }
+
+  // --- Save management UI ----------------------------------------------------
+
+  formatBackupMeta(meta = {}) {
+    if (meta.corrupt) return 'unreadable backup';
+    const when = meta.timestamp ? new Date(meta.timestamp).toLocaleString() : 'unknown time';
+    const reason = meta.reason ? ` (${meta.reason})` : '';
+    return `Day ${meta.day ?? '?'} · ${meta.buildings ?? 0} buildings · ${meta.heroes ?? 0} heroes · ${when}${reason}`;
+  }
+
+  getSaveStatusLines() {
+    const lines = [];
+    if (this.lastSaveAt) {
+      const t = new Date(this.lastSaveAt);
+      lines.push(`Last saved: ${t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`);
+    } else {
+      lines.push('No manual save yet this session (autosave still runs).');
+    }
+    if (isTestSaveMode()) {
+      lines.push('Test-save mode is active. The real save is untouched.');
+    }
+    return lines;
+  }
+
+  openSaveManagerPanel() {
+    this.activeInspector = { type: 'save-manager' };
+    this.clearSelection(false);
+    const backups = listBackups();
+    this.game.events.emit('gwg-inspector-open', {
+      title: 'Save Management',
+      subtitle: 'Export, import, back up, and restore your town.',
+      sections: [
+        { title: 'Status', lines: this.getSaveStatusLines() },
+        {
+          title: 'Backups',
+          lines: backups.length
+            ? [`${backups.length} backup${backups.length === 1 ? '' : 's'} kept. Newest: ${this.formatBackupMeta(backups[0].meta)}.`]
+            : ['No backups yet. One is made automatically before risky actions.'],
+        },
+        {
+          title: 'Notes',
+          lines: [
+            'Save files are plain JSON. Keep exports somewhere safe.',
+            'Import always backs up your current town first.',
+          ],
+        },
+      ],
+      actions: [
+        { label: 'Export Save', event: 'gwg-save-export' },
+        { label: 'Import Save', event: 'gwg-save-import' },
+        { label: 'Create Backup', event: 'gwg-create-backup' },
+        { label: 'Restore Backup...', event: 'gwg-open-backups' },
+        { label: 'Reset Game...', event: 'gwg-open-reset-confirm', className: 'gwg-danger-action' },
+        { label: 'Close', event: 'gwg-inspector-close' },
+      ],
+    });
+  }
+
+  openBackupsPanel() {
+    this.activeInspector = { type: 'backups' };
+    this.clearSelection(false);
+    const backups = listBackups();
+    const rows = backups.map((backup) => ({
+      title: backup.meta.corrupt ? 'Unreadable backup' : `Day ${backup.meta.day ?? '?'} · ${backup.meta.rank || 'camp'}`,
+      meta: backup.meta.reason || '',
+      lines: [this.formatBackupMeta(backup.meta)],
+      actions: backup.meta.corrupt
+        ? []
+        : [{ label: 'Restore This', event: 'gwg-restore-backup', id: String(backup.index), className: 'gwg-danger-action' }],
+    }));
+    this.game.events.emit('gwg-inspector-open', {
+      title: 'Restore Backup',
+      subtitle: 'Roll the town back to a saved snapshot.',
+      sections: rows.length ? [] : [{ title: 'Empty', lines: ['No backups exist yet.'] }],
+      rows,
+      actions: [{ label: 'Back', event: 'gwg-open-save-manager' }],
+    });
+  }
+
+  exportSaveFromUi() {
+    let preferences = null;
+    try {
+      const raw = window.localStorage.getItem(UI_PREFS_KEY);
+      if (raw) preferences = JSON.parse(raw);
+    } catch {
+      preferences = null;
+    }
+    const bundle = buildExportBundle(this.getSavePayload(), preferences);
+    const ok = downloadTextFile(exportFilename(), JSON.stringify(bundle, null, 2));
+    this.game.events.emit('gwg-event', ok
+      ? 'Save exported as JSON. Filed under "things future-you will thank you for."'
+      : 'Export failed. The browser blocked the download politely.');
+  }
+
+  async importSaveFromUi() {
+    const text = await pickSaveFile();
+    if (text === null) return; // cancelled
+    const parsed = parseImportedSave(text);
+    if (!parsed.ok) {
+      // Invalid import must never damage the current save.
+      this._pendingImport = null;
+      this.game.events.emit('gwg-inspector-open', {
+        title: 'Import Rejected',
+        subtitle: 'Your current town was not touched.',
+        sections: [{
+          title: 'Problem',
+          lines: [
+            `That file could not be read as a save (${parsed.reason}).`,
+            'Your existing save remains exactly as it was.',
+          ],
+        }],
+        actions: [{ label: 'Back', event: 'gwg-open-save-manager' }],
+      });
+      return;
+    }
+    this._pendingImport = parsed;
+    const m = parsed.meta;
+    this.activeInspector = { type: 'import-confirm' };
+    this.game.events.emit('gwg-inspector-open', {
+      title: 'Import This Save?',
+      subtitle: 'Review before replacing your current town.',
+      sections: [
+        {
+          title: 'Incoming Save',
+          lines: [
+            `Save version ${m.saveVersion}, Day ${m.day}, rank "${m.rank}".`,
+            `${m.buildings} buildings, ${m.heroes} heroes, ${m.revealed} revealed tiles.`,
+          ],
+        },
+        {
+          title: 'Safety',
+          lines: ['Your current town is automatically backed up before importing.'],
+        },
+      ],
+      actions: [
+        { label: 'Cancel', event: 'gwg-open-save-manager' },
+        { label: 'Import and Reload', event: 'gwg-save-import-confirm', className: 'gwg-danger-action' },
+      ],
+    });
+  }
+
+  confirmImportFromUi() {
+    const pending = this._pendingImport;
+    if (!pending || !pending.ok) {
+      this.game.events.emit('gwg-event', 'Nothing to import. The clerk shrugged.');
+      return;
+    }
+    const result = applyImportedSave(pending.data, this.saveKey || getActiveSaveKey());
+    if (!result.ok) {
+      this.game.events.emit('gwg-event', `Import failed (${result.error}). Current save kept.`);
+      return;
+    }
+    // Restore UI preferences if the bundle carried them.
+    if (pending.preferences) {
+      try {
+        window.localStorage.setItem(UI_PREFS_KEY, JSON.stringify(pending.preferences));
+      } catch {
+        // non-fatal
+      }
+    }
+    this._pendingImport = null;
+    this.game.events.emit('gwg-event', 'Import successful. Reloading the guild...');
+    window.location.reload();
+  }
+
+  createBackupFromUi() {
+    const result = createBackup(this.saveKey || getActiveSaveKey(), 'manual');
+    if (result.ok && result.skipped) {
+      this.game.events.emit('gwg-event', 'Backup skipped: identical to the newest one already kept.');
+    } else if (result.ok) {
+      this.game.events.emit('gwg-event', 'Backup created. Three most recent snapshots are kept.');
+    } else {
+      this.game.events.emit('gwg-event', 'Backup failed: no current save to copy yet.');
+    }
+    if (this.activeInspector?.type === 'save-manager') this.openSaveManagerPanel();
+  }
+
+  restoreBackupFromUi(id) {
+    const index = Number(id);
+    if (!Number.isFinite(index)) return;
+    const result = restoreBackup(index, this.saveKey || getActiveSaveKey());
+    if (!result.ok) {
+      this.game.events.emit('gwg-event', `Restore failed (${result.error}). Current save kept.`);
+      return;
+    }
+    this.game.events.emit('gwg-event', 'Backup restored. Reloading the guild...');
+    window.location.reload();
+  }
+
+  // --- Save recovery (shown when a save could not be loaded) -----------------
+
+  openRecoveryPanel() {
+    this.activeInspector = { type: 'save-recovery' };
+    this.clearSelection(false);
+    const backups = listBackups().filter((backup) => !backup.meta.corrupt);
+    const reason = this._saveRecovery?.reason || 'unknown';
+    const actions = [{ label: 'Retry Load', event: 'gwg-recover-retry' }];
+    if (backups.length) {
+      actions.push({ label: `Restore Latest Backup (${this.formatBackupMeta(backups[0].meta)})`, event: 'gwg-recover-restore' });
+    }
+    actions.push({ label: 'Export Broken Save', event: 'gwg-recover-export-broken' });
+    actions.push({ label: 'Start New Game', event: 'gwg-recover-new-game', className: 'gwg-danger-action' });
+    actions.push({ label: 'Dismiss', event: 'gwg-inspector-close' });
+    this.game.events.emit('gwg-inspector-open', {
+      title: 'Save Recovery',
+      subtitle: 'Your saved town could not be loaded safely.',
+      sections: [
+        {
+          title: 'What happened',
+          lines: [
+            `The save failed to load (${reason}).`,
+            'It has been kept aside — nothing was deleted. You are currently in a fresh town.',
+          ],
+        },
+        {
+          title: 'Options',
+          lines: [
+            backups.length ? 'Restore your most recent backup to get your town back.' : 'No usable backups were found.',
+            'You can also export the broken save to inspect or share it.',
+          ],
+        },
+      ],
+      actions,
+    });
+  }
+
+  recoverRestoreLatestBackup() {
+    const backups = listBackups().filter((backup) => !backup.meta.corrupt);
+    if (!backups.length) {
+      this.game.events.emit('gwg-event', 'No usable backup to restore.');
+      return;
+    }
+    const result = restoreBackup(backups[0].index, this.saveKey || getActiveSaveKey());
+    if (!result.ok) {
+      this.game.events.emit('gwg-event', `Restore failed (${result.error}).`);
+      return;
+    }
+    this.game.events.emit('gwg-event', 'Backup restored. Reloading...');
+    window.location.reload();
+  }
+
+  recoverExportBrokenSave() {
+    const broken = readBrokenSave();
+    if (!broken || !broken.payload) {
+      this.game.events.emit('gwg-event', 'No broken save found to export.');
+      return;
+    }
+    const ok = downloadTextFile(`golden-whale-guild-broken-${new Date().toISOString().slice(0, 10)}.json`, broken.payload);
+    this.game.events.emit('gwg-event', ok ? 'Broken save exported for inspection.' : 'Export failed politely.');
+  }
+
+  recoverStartNewGame() {
+    // The broken save is already stashed; removing the active key just confirms
+    // the fresh start. Nothing recoverable is destroyed.
+    safeReset(this.saveKey || getActiveSaveKey());
+    this.game.events.emit('gwg-event', 'Starting fresh. Your broken save is still kept aside.');
+    window.location.reload();
+  }
+
+  recoverRetryLoad() {
+    window.location.reload();
+  }
+
+  // Scene construction threw while consuming a save. Preserve the save, then
+  // render a self-contained DOM recovery panel (the Phaser scene may be half
+  // built and UIScene may not exist, so we cannot rely on the normal panel).
+  handleCreateFailure(err) {
+    // eslint-disable-next-line no-console
+    console.error('[GWG] Scene creation failed; entering save recovery.', err);
+    const key = this.saveKey || getActiveSaveKey();
+    try {
+      const raw = readRawSave(key);
+      if (raw) stashBrokenSave(raw, `create:${err?.message || 'error'}`);
+    } catch {
+      // best effort
+    }
+
+    const backups = listBackups().filter((backup) => !backup.meta.corrupt);
+    if (typeof document === 'undefined') return;
+    if (document.getElementById('gwg-recovery-overlay')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'gwg-recovery-overlay';
+    overlay.style.cssText = [
+      'position:fixed', 'inset:0', 'z-index:99999',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'background:rgba(4,8,14,0.94)', 'color:#fff6dc',
+      'font-family:system-ui,sans-serif', 'padding:24px',
+    ].join(';');
+
+    const backupLine = backups.length
+      ? `Latest backup: Day ${backups[0].meta.day ?? '?'}, ${backups[0].meta.buildings ?? 0} buildings, ${backups[0].meta.heroes ?? 0} heroes.`
+      : 'No usable backup was found.';
+
+    const card = document.createElement('div');
+    card.style.cssText = 'max-width:460px;background:#16202e;border:1px solid #bf8a38;border-radius:10px;padding:22px 24px;';
+    card.innerHTML = `
+      <h2 style="margin:0 0 8px;font-size:20px;color:#ffd479;">Save Recovery</h2>
+      <p style="margin:0 0 10px;line-height:1.45;">Your saved town could not be loaded safely. It has been kept aside — nothing was deleted.</p>
+      <p style="margin:0 0 16px;line-height:1.45;opacity:0.85;font-size:13px;">${backupLine}</p>
+      <div id="gwg-recovery-actions" style="display:flex;flex-direction:column;gap:8px;"></div>
+    `;
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    const actionsHost = card.querySelector('#gwg-recovery-actions');
+    const addButton = (label, danger, handler) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = label;
+      btn.style.cssText = [
+        'padding:10px 14px', 'border-radius:6px', 'cursor:pointer',
+        'font-weight:bold', 'font-size:14px', 'text-align:left',
+        `border:1px solid ${danger ? '#c0533a' : '#bf8a38'}`,
+        `background:${danger ? '#3a1d18' : '#223047'}`, 'color:#fff6dc',
+      ].join(';');
+      btn.addEventListener('click', handler);
+      actionsHost.appendChild(btn);
+    };
+
+    addButton('Retry Load', false, () => window.location.reload());
+    if (backups.length) {
+      addButton('Restore Latest Backup', false, () => {
+        const result = restoreBackup(backups[0].index, key);
+        if (!result.ok) {
+          window.alert(`Restore failed: ${result.error}`);
+          return;
+        }
+        window.location.reload();
+      });
+    }
+    addButton('Export Broken Save', false, () => {
+      const broken = readBrokenSave();
+      if (broken && broken.payload) {
+        downloadTextFile(`golden-whale-guild-broken-${new Date().toISOString().slice(0, 10)}.json`, broken.payload);
+      }
+    });
+    addButton('Start New Game', true, () => {
+      // Broken save already stashed; removing the active key confirms a fresh
+      // start without destroying anything recoverable.
+      safeReset(key);
+      window.location.reload();
+    });
   }
 
   openMobileMorePanel() {
@@ -1920,6 +2347,7 @@ export default class TownScene extends Phaser.Scene {
         { label: 'Week Report', event: 'gwg-open-report' },
         { label: 'Town Ledger', event: 'gwg-open-ledger' },
         { label: 'Save', event: 'gwg-save' },
+        { label: 'Save Manager', event: 'gwg-open-save-manager' },
         { label: 'Reset...', event: 'gwg-open-reset-confirm', className: 'gwg-danger-action' },
       ],
     });
@@ -1929,20 +2357,23 @@ export default class TownScene extends Phaser.Scene {
     this.activeInspector = { type: 'reset-confirm' };
     this.clearSelection(false);
     this.game.events.emit('gwg-inspector-open', {
-      title: 'Reset Local Save?',
-      subtitle: 'This clears local progress on this browser.',
+      title: 'Reset This Town?',
+      subtitle: 'Replaces the current town with a fresh start.',
       sections: [
         {
           title: 'Careful',
           lines: [
-            'Reset deletes the local ledger and reloads the game.',
-            'The clerk recommends not doing this by accident.',
+            'Reset clears the local town and reloads a new game.',
+            'A backup of your current town is saved first, so this is undoable.',
+            'The clerk still recommends exporting a copy before resetting.',
           ],
         },
       ],
       actions: [
         { label: 'Keep Save', event: 'gwg-inspector-close' },
-        { label: 'Reset Local Save', event: 'gwg-reset', className: 'gwg-danger-action' },
+        { label: 'Export First', event: 'gwg-save-export' },
+        { label: 'Create Backup', event: 'gwg-create-backup' },
+        { label: 'Reset Town', event: 'gwg-reset', className: 'gwg-danger-action' },
       ],
     });
   }
@@ -12317,6 +12748,10 @@ export default class TownScene extends Phaser.Scene {
 
     this.day += 1;
     this.registry.set('day', this.day);
+    // Throttled safety net: at most one automatic backup snapshot per in-game
+    // day, taken from the last valid save so a fresh day never overwrites
+    // yesterday's recoverable town.
+    maybeCreateDailyBackup(this.saveKey || getActiveSaveKey(), this.day);
     this.beginCycleReport();
     this.returnAwayHeroes();
 

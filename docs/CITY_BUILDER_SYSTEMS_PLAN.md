@@ -569,3 +569,27 @@ heroes and larger threats -> expanded production and districts.**
 Planned, not implemented: furniture/remedies as extra goods, per-carrier
 manual route editing, a full worker job market, production graphs, and a
 real-time external commodity simulation.
+
+## Save safety, migration, and recovery (2026-07)
+
+Persistence is now hardened so corruption, migration failures, and accidental
+deletion are recoverable. Details live in [SAVE_SYSTEM.md](SAVE_SYSTEM.md); the
+summary:
+
+- All storage keys are centralized in `src/systems/saveManager.js`; migration
+  and validation live in `src/systems/saveMigrations.js`. `SAVE_VERSION` has a
+  single source of truth.
+- Loads run through a parse -> migrate -> validate pipeline. A save that cannot
+  be loaded is stashed (never wiped) and opens a Save Recovery panel instead of
+  a black screen. `create()` is additionally wrapped so a construction-time
+  throw falls back to a self-contained DOM recovery panel.
+- Writes are atomic (validate -> temp -> read-back -> promote), so a valid save
+  is never replaced by a bad one. A rotating 3-slot backup ring snapshots the
+  town before import/reset/restore and once per in-game day.
+- A Save Manager UI (in the More menu) offers Export, Import, Create Backup,
+  Restore Backup, and a non-destructive Reset flow.
+- Automated tests use an isolated `TEST_SAVE_KEY` (`?testSave=1`) and must never
+  touch the production key. `npm run test:save` runs the headless suite and
+  asserts the production key is byte-for-byte unchanged.
+
+No gameplay systems changed in this pass — it is purely persistence safety.
