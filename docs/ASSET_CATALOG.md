@@ -283,3 +283,12 @@ panel skinning.
 - PixelLab completed additional remains/loot jobs during this pass, but the
   local download step was blocked by the current Codex escalation/usage limit.
   The manifest keeps those slots safe with existing fallback art.
+
+## 2026-07 Character State Frames
+
+196 files under `public/assets/characters/states/<hero_key>/` — 4-direction
+idle rotations + 6-frame walk cycles for hero_default, hero_honest_grinder,
+hero_broke_optimist, hero_debt_goblin, hero_veteran, hero_lucky_idiot,
+hero_noble_whale. Downloaded from the PixelLab character library (not
+regenerated). Manifest entries are loop-generated; static sprites remain the
+fallback for every missing state.

@@ -341,3 +341,37 @@ export const ASSET_MANIFEST = [
   { key: 'decal_berry_bush', path: 'assets/objects/decal_berry_bush.png', type: 'image', fallback: 'terrain detail ellipses' },
   { key: 'decal_fern', path: 'assets/objects/decal_fern.png', type: 'image', fallback: 'terrain detail ellipses' },
 ];
+
+// --- PixelLab character state frames (downloaded 2026-07) -------------------
+// 4-direction idle rotations + 6-frame walk cycles per direction, exported
+// from the PixelLab character library. hero_default covers every hero without
+// personal frames via the state-frame fallback chain; static sprites remain
+// the last fallback when a file is missing.
+const STATE_FRAME_CHARACTERS = [
+  'hero_default',
+  'hero_honest_grinder',
+  'hero_broke_optimist',
+  'hero_debt_goblin',
+  'hero_veteran',
+  'hero_lucky_idiot',
+  'hero_noble_whale',
+];
+const STATE_FRAME_DIRECTIONS = ['south', 'east', 'north', 'west'];
+for (const characterKey of STATE_FRAME_CHARACTERS) {
+  for (const direction of STATE_FRAME_DIRECTIONS) {
+    ASSET_MANIFEST.push({
+      key: `${characterKey}_idle_${direction}`,
+      path: `assets/characters/states/${characterKey}/idle_${direction}.png`,
+      type: 'image',
+      fallback: 'static hero sprite',
+    });
+    for (let frame = 1; frame <= 6; frame += 1) {
+      ASSET_MANIFEST.push({
+        key: `${characterKey}_walk_${direction}_${frame}`,
+        path: `assets/characters/states/${characterKey}/walk_${direction}_${frame}.png`,
+        type: 'image',
+        fallback: 'static hero sprite',
+      });
+    }
+  }
+}

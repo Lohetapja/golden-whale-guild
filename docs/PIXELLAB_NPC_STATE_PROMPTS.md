@@ -60,3 +60,29 @@ Role: small monster raider. Outfit: ragged goblin gear. Prop/tool: little club. 
 
 Skeleton attacker:
 Role: undead attacker. Outfit: cracked bones with rusty bits of armor. Prop/tool: broken sword. Mood: spooky but readable.
+
+## Downloaded characters (2026-07)
+
+Seven PixelLab characters with 4-direction, 6-frame walk cycles + idle
+rotations are integrated under `public/assets/characters/states/<key>/`:
+
+- hero_default (Golden Whale Guild Basic Hero) — fallback for ALL heroes
+- hero_honest_grinder, hero_broke_optimist, hero_debt_goblin,
+  hero_veteran, hero_lucky_idiot, hero_noble_whale
+
+File naming contract (manifest entries are generated in a loop at the bottom
+of `src/data/assetManifest.js`):
+
+- `idle_<south|east|north|west>.png` — rotation used as idle per facing
+- `walk_<dir>_<1..6>.png` — walk cycle per facing
+
+The runtime (`getHeroDirectionalFrames` in TownScene) resolves prefixes in
+order: personal assetKey -> hero id -> hero_default. A direction set is
+all-or-nothing per prefix so characters never mix their own frames with the
+default ones. Actors with real directional frames never use flipX mirroring
+or tilt/bob fake walking. Service walkers keep their worker identity and are
+excluded from the hero_default fallback.
+
+Still missing (generate as characters + template walk animations when
+needed): guild clerk, tavern keeper, trader, guard patrol, gear runner,
+potion seller, premium evangelist, goblin raider, skeleton attacker.

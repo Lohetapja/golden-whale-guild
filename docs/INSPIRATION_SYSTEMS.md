@@ -1,0 +1,82 @@
+# Golden Whale Guild — Inspiration Systems
+
+System-level borrowing only. We never copy assets, UI layouts, names, or exact
+designs from these games — we borrow the *reasons they are fun*. This file is
+the checklist future prompts should follow when adding gameplay.
+
+## The core loop (the sentence every feature must serve)
+
+**Build town → attract heroes → satisfy needs → send heroes to
+quests/exploration → bring back resources/loot → upgrade services → reveal
+more map → face bigger risks → manage trust/corruption/premium temptation.**
+
+If a proposed feature doesn't push one of these arrows, it's decoration.
+
+## From Caesar 3
+
+- Road access matters: buildings without a road connection serve nobody.
+  *(implemented: `roadRequired` + road-access checks + advisor warnings)*
+- Service walkers provide coverage by physically walking routes.
+  *(implemented: seven walker types dispatched from road-connected buildings)*
+- Buildings need services to function and evolve.
+- Overlays/advisors explain problems instead of hiding math.
+  *(implemented: Guild Advisor notes; overlays still to come)*
+- The city can fail from ignored needs — pressure is legitimate.
+
+## From Settlers / Settlers Online
+
+- Workers visibly move between buildings; the economy is watchable.
+- Resources and goods matter: wood/iron/herbs/loot/potions/gear.
+  *(implemented: town stores + conversions)*
+- Map expansion creates new opportunities, not just space.
+- Production chains are visible and understandable at a glance.
+- Exploration targets (camps, ruins, caves) create adventure value.
+  *(implemented: POIs with harvest/clear/investigate actions)*
+
+## From Anno
+
+- Population/hero tiers have different needs (Rookie → Champion → Whale).
+  *(implemented: tiered hero arrivals via town rank)*
+- More advanced buildings require better support around them.
+- Production chains unlock higher prosperity stages.
+- Satisfaction/trust affects growth speed directly.
+- Trade/resource conversion is a core verb, not a menu footnote.
+
+## From Age of Empires 2
+
+- Clear exploration: fog and shroud, revealed land stays readable.
+  *(implemented: layered fog-of-war)*
+- Resources, camps, and ruins live on the map itself.
+- Terrain is readable at a glance — meadow, wilds, danger.
+- Danger lives outside the safe town core and creeps inward.
+
+## From Foundation
+
+- Buildings evolve through usage, not only through purchase.
+  *(implemented: usage/upgrade progress, specializations)*
+- The town grows organically around paths the player draws.
+- Districts and service areas matter. *(implemented: district bonuses)*
+- Visual settlement growth is its own reward.
+
+## From Against the Storm
+
+- Exploration is risky but rewarding — every glade is a gamble.
+  *(implemented: POI risk tiers, injuries on failed clears)*
+- Dangerous points of interest force decisions: clear, harvest, or ignore.
+- Player choices create trade-offs, not free value.
+- Pressure rises over time; comfort is temporary.
+
+## From RimWorld (lite)
+
+- Named heroes matter: histories, moods, evolution stages.
+- Injury and drama create stories the player retells.
+  *(implemented: injuries, potions, hero histories, town log)*
+- Greed, envy, item stealing, and grudges are simulation fuel.
+  *(implemented: envy/resentment/item conflict)*
+
+## The satire layer (uniquely ours)
+
+Everything above runs under a fictional pay-to-win economy: the Golden Whale
+sells power, corruption buys speed, trust pays for it, and the town log
+remembers every "optional" purchase. No real payments, ever — the joke only
+works because it's fake.

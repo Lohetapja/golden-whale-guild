@@ -22,7 +22,7 @@ import {
 } from '../data/buildingSystems.js';
 import { ASSET_MANIFEST } from '../data/assetManifest.js';
 import { getItemByName, getRandomPremiumItem } from '../data/itemCatalog.js';
-import { rollMonster } from '../data/monsters.js';
+import { MONSTERS, rollMonster } from '../data/monsters.js';
 import {
   buildRevealedTiles,
   createGridState,
@@ -650,6 +650,10 @@ export default class TownScene extends Phaser.Scene {
       aftermathDrops: Array.isArray(saved?.monsterState?.aftermathDrops) ? saved.monsterState.aftermathDrops.slice(0, 16) : [],
     };
     this.discoveredPois = new Set(saved?.discoveredPois || []);
+    // POI visit cooldowns: poiId -> day it becomes available again
+    this.poiCooldowns = saved?.poiCooldowns && typeof saved.poiCooldowns === 'object'
+      ? { ...saved.poiCooldowns }
+      : {};
     // town stores + service-walker state (walkers regenerate from buildings)
     this.townInventory = normalizeInventory(saved?.townInventory);
     this.areaReputation = this.normalizeAreaReputation(saved?.areaReputation);
@@ -777,6 +781,8 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-open-report', this.showCycleReport, this);
     this.game.events.on('gwg-collect-loot', this.collectLootDrop, this);
     this.game.events.on('gwg-open-delete', this.openDeleteTool, this);
+    this.game.events.on('gwg-assign-quest', this.assignQuestHeroFromUi, this);
+    this.game.events.on('gwg-poi-action', this.runPoiAction, this);
     this.game.events.on('gwg-confirm-build', this.confirmRoadPlan, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       window.removeEventListener('resize', refreshResponsiveState);
@@ -813,6 +819,8 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-open-report', this.showCycleReport, this);
       this.game.events.off('gwg-collect-loot', this.collectLootDrop, this);
       this.game.events.off('gwg-open-delete', this.openDeleteTool, this);
+      this.game.events.off('gwg-assign-quest', this.assignQuestHeroFromUi, this);
+      this.game.events.off('gwg-poi-action', this.runPoiAction, this);
       this.game.events.off('gwg-confirm-build', this.confirmRoadPlan, this);
     });
 
@@ -848,6 +856,7 @@ export default class TownScene extends Phaser.Scene {
         achievements: Array.isArray(parsed.achievements) ? parsed.achievements : [],
         pendingPolicy: parsed.pendingPolicy || null,
         discoveredPois: Array.isArray(parsed.discoveredPois) ? parsed.discoveredPois : [],
+        poiCooldowns: parsed.poiCooldowns || null,
         townInventory: parsed.townInventory || null,
         areaReputation: parsed.areaReputation || {},
         townReputation: Number.isFinite(parsed.townReputation) ? parsed.townReputation : null,
@@ -1558,6 +1567,7 @@ export default class TownScene extends Phaser.Scene {
       achievements: [...(this.achievements || [])],
       pendingPolicy: this.pendingPolicy,
       discoveredPois: [...(this.discoveredPois || [])],
+      poiCooldowns: { ...(this.poiCooldowns || {}) },
       townInventory: { ...(this.townInventory || {}) },
       areaReputation: { ...(this.areaReputation || {}) },
       townReputation: this.townReputation,
@@ -4403,6 +4413,7 @@ export default class TownScene extends Phaser.Scene {
       const locked = Boolean(lockReason);
       const affordable = this.resources.gold >= catalog.cost;
       const state = built ? 'built' : locked ? 'locked' : affordable ? 'affordable' : 'unaffordable';
+      const demand = this.getBuildingDemandHint(catalog.id, built);
       return {
         id: catalog.id,
         itemType: 'building',
@@ -4419,13 +4430,16 @@ export default class TownScene extends Phaser.Scene {
           ? `${role.type}: ${role.provides.slice(0, 2).join(', ') || catalog.effect}`
           : catalog.effect,
         flavor: role?.repeatValue || catalog.flavor || place?.upgradeFlavor || '',
-        status: built
-          ? 'Already built. Unique municipal duplication denied.'
-          : locked
-            ? lockReason
-            : affordable
-              ? 'Affordable and ready to place.'
-              : `Need ${catalog.cost} gold. The accountant remains unhelpful.`,
+        status: [
+          demand,
+          built
+            ? 'Already built. Unique municipal duplication denied.'
+            : locked
+              ? lockReason
+              : affordable
+                ? 'Affordable and ready to place.'
+                : `Need ${catalog.cost} gold. The accountant remains unhelpful.`,
+        ].filter(Boolean).join(' '),
         state,
         actions: [{
           label: built ? 'BUILT' : (locked ? 'Locked' : (affordable ? 'Select Building' : `Need ${catalog.cost}g`)),
@@ -5489,8 +5503,68 @@ export default class TownScene extends Phaser.Scene {
     return entry ? entry.path : null;
   }
 
+  // what a discovered POI offers the player, by kind
+  getPoiActionConfig(place) {
+    const yieldConfig = POI_RESOURCE_YIELDS[place.id];
+    if (yieldConfig) {
+      return {
+        id: 'harvest',
+        label: `Send hero to harvest (${yieldConfig.resource})`,
+        verb: 'harvesting',
+        risk: yieldConfig.premium ? 'corruption' : 'low',
+      };
+    }
+    if (place.monsterSource || place.kind === 'camp') {
+      return { id: 'clear', label: 'Send hero to clear threat', verb: 'clearing', risk: 'combat' };
+    }
+    return { id: 'investigate', label: 'Send hero to investigate', verb: 'investigating', risk: 'medium' };
+  }
+
+  getPoiCooldownDay(poiId) {
+    return this.poiCooldowns?.[poiId] || 0;
+  }
+
+  // live demand line: ties each build-menu card to a current town problem so
+  // the menu guides decisions instead of listing objects
+  getBuildingDemandHint(id, built = false) {
+    const inventory = this.townInventory || {};
+    if (['tavern', 'inn', 'hero_hostel', 'premium_lodge'].includes(id)) {
+      const lodging = this.getLodgingReport();
+      if (lodging.homeless > 0) {
+        return `DEMAND: town needs ${lodging.used} beds, has ${lodging.beds}. ${built ? 'Upgrade for more beds.' : 'Build to stop outdoor sleeping.'}`;
+      }
+      return '';
+    }
+    if (id === 'potion_shop') {
+      const injured = this.getActiveHeroes().filter((hero) => this.isHeroInjured(hero)).length;
+      if (injured > 0) {
+        return `DEMAND: ${injured} hero${injured === 1 ? '' : 'es'} injured${(inventory.herbs || 0) > 0 ? ` and ${inventory.herbs} herbs in store` : ''}. Potions needed.`;
+      }
+      return '';
+    }
+    if (id === 'market' && (inventory.loot || 0) >= 3) {
+      return `DEMAND: ${inventory.loot} loot stockpiled. ${built ? 'Upgrade to convert faster.' : 'A Market turns it into gold.'}`;
+    }
+    if (id === 'blacksmith' && (inventory.iron || 0) > 0 && (inventory.gear || 0) === 0) {
+      return `DEMAND: ${inventory.iron} iron waiting to become gear.`;
+    }
+    if (['watchtower', 'arena'].includes(id) && this.resources.threat >= 55) {
+      return `DEMAND: threat at ${this.resources.threat}. Defenses cut attack damage and fog danger.`;
+    }
+    return '';
+  }
+
   getPlaceInspectorPayload(place) {
     if (place.mapPoint) {
+      const actionConfig = this.getPoiActionConfig(place);
+      const cooldownDay = this.getPoiCooldownDay(place.id);
+      const onCooldown = cooldownDay > this.day;
+      const riskLine = {
+        low: 'Risk: low. The wilderness is merely judgmental here.',
+        medium: 'Risk: medium. Something may object to the visit.',
+        combat: 'Risk: combat. Injury is a real outcome.',
+        corruption: 'Risk: premium residue. Gold likely, ethics optional.',
+      }[actionConfig.risk] || 'Risk: unclear, which is also information.';
       return {
         title: place.name,
         subtitle: 'Exploration Point',
@@ -5500,14 +5574,23 @@ export default class TownScene extends Phaser.Scene {
             lines: [place.description, ...(place.tooltipLines || [])].filter(Boolean),
           },
           {
-            title: 'Future Hook',
+            title: 'Field Assessment',
             lines: [
-              place.effect || 'A future city-builder hook is quietly waiting here.',
-              'Explored landmarks help the expanded map feel less like empty grass and more like trouble with coordinates.',
+              place.effect || 'A point of interest with opinions.',
+              riskLine,
+              onCooldown
+                ? { text: `Recently visited. Worth returning after Day ${cooldownDay}.`, className: 'gwg-muted' }
+                : 'A hero can be sent from town right now.',
             ],
           },
         ],
         actions: [
+          {
+            label: onCooldown ? `Visited (Day ${cooldownDay})` : actionConfig.label,
+            event: 'gwg-poi-action',
+            id: place.id,
+            disabled: onCooldown,
+          },
           { label: 'Open Town Log', event: 'gwg-open-town-log' },
         ],
       };
@@ -5776,9 +5859,21 @@ export default class TownScene extends Phaser.Scene {
           `Best for: ${(quest.preferred || []).slice(0, 2).join(', ') || 'whoever still answers mail'}`,
           quest.description,
           ...(posted ? [{ text: 'Posted: resolves on the next town cycle.', className: 'gwg-good' }] : []),
+          ...(posted && quest.assignedHeroId ? [{
+            text: `Assigned: ${this.heroes?.find((h) => h.def.id === quest.assignedHeroId)?.def.name || 'a volunteer'} (+8% prepared bonus, hauls loot on success).`,
+            className: 'gwg-good',
+          }] : []),
           ...(!posted && !canPost ? [{ text: 'Not enough gold. The guild recommends suspicious revenue.', className: 'gwg-bad' }] : []),
         ],
-        actions: [{
+        actions: [
+          ...(posted && !quest.assignedHeroId
+            ? this.getQuestCandidates(quest).map((candidate) => ({
+              label: `Send ${candidate.hero.def.name} (${candidate.chance}%)`,
+              event: 'gwg-assign-quest',
+              id: `${quest.noticeId}:${candidate.hero.def.id}`,
+            }))
+            : []),
+          {
           label: posted ? 'Posted' : 'Post Bounty',
           event: 'gwg-post-quest',
           id: quest.noticeId,
@@ -6789,10 +6884,77 @@ export default class TownScene extends Phaser.Scene {
     }));
   }
 
+  // 4-direction PixelLab frames: walk_<dir>_1..6 and idle_<dir> rotations.
+  // A direction set is all-or-nothing from one prefix (personal, id, or
+  // hero_default) so a hero never mixes their own frames with default ones.
+  getHeroDirectionalFrames(def, allowDefaultFallback = true) {
+    const prefixes = [def?.assetKey, def?.id, allowDefaultFallback ? 'hero_default' : null].filter(Boolean);
+    const walk = {};
+    const idle = {};
+    for (const direction of ['south', 'east', 'north', 'west']) {
+      for (const prefix of prefixes) {
+        const frames = [];
+        for (let n = 1; n <= 6; n += 1) {
+          const key = `${prefix}_walk_${direction}_${n}`;
+          if (this.textures.exists(key)) frames.push(key);
+        }
+        if (frames.length >= 2) {
+          walk[direction] = frames;
+          break;
+        }
+      }
+      for (const prefix of prefixes) {
+        const key = `${prefix}_idle_${direction}`;
+        if (this.textures.exists(key)) {
+          idle[direction] = key;
+          break;
+        }
+      }
+    }
+    return {
+      walk: Object.keys(walk).length ? walk : null,
+      idle: Object.keys(idle).length ? idle : null,
+    };
+  }
+
+  // frames for the current state, preferring real directional sets
+  getFramesForState(hero, state) {
+    if (state === 'walk' && hero.directionalWalk) {
+      return hero.directionalWalk[hero.facing]
+        || hero.directionalWalk.east
+        || Object.values(hero.directionalWalk)[0]
+        || [];
+    }
+    if (state === 'idle' && hero.directionalIdle) {
+      const key = hero.directionalIdle[hero.facing] || hero.directionalIdle.south;
+      if (key) return [key];
+    }
+    return hero.stateFrames?.[state] || [];
+  }
+
+  // facing changes swap in the matching directional frames; mirroring is only
+  // for actors without real directional art
+  setHeroFacing(hero, facing) {
+    if (!hero?.sprite || hero.facing === facing) return;
+    hero.facing = facing;
+    if (hero.directionalWalk || hero.directionalIdle) {
+      hero.sprite.setFlipX(false);
+      if (['walk', 'idle'].includes(hero.animationState)) {
+        this.setHeroAnimationState(hero, hero.animationState);
+      }
+    }
+  }
+
   prepareHeroAnimation(hero) {
     if (!hero?.sprite) return;
     hero.stateFrames = this.getHeroStateFrames(hero.def);
-    hero.hasStateFrames = Object.values(hero.stateFrames).some((frames) => frames.length > 0);
+    // walkers keep their worker identity: never borrow hero_default frames
+    const directional = this.getHeroDirectionalFrames(hero.def, !hero.walker);
+    hero.directionalWalk = directional.walk;
+    hero.directionalIdle = directional.idle;
+    hero.facing = hero.facing || 'south';
+    hero.hasStateFrames = Boolean(directional.walk)
+      || Object.values(hero.stateFrames).some((frames) => frames.length > 0);
     this.setHeroAnimationState(hero, this.isHeroInjured(hero) ? 'hurt' : (hero.stats.animationState || 'idle'));
   }
 
@@ -6806,7 +6968,7 @@ export default class TownScene extends Phaser.Scene {
   applyHeroStateTexture(hero, textureKey) {
     if (!hero?.sprite || !textureKey || !this.textures.exists(textureKey)) return;
     hero.sprite.setTexture(textureKey);
-    const scale = this.getTextureScaleForHeight(textureKey, 34, NPC_SCALE);
+    const scale = this.getTextureScaleForHeight(textureKey, hero.spriteHeight || 34, NPC_SCALE);
     hero.sprite.setScale(scale);
     hero.sprite.setData('baseScaleX', scale);
     hero.sprite.setData('baseScaleY', scale);
@@ -6818,8 +6980,8 @@ export default class TownScene extends Phaser.Scene {
     const safeState = HERO_ANIMATION_STATES.includes(state) ? state : 'idle';
     this.stopHeroAnimation(hero);
     hero.animationState = safeState;
-    hero.stats.animationState = safeState;
-    const frames = hero.stateFrames?.[safeState] || [];
+    if (hero.stats) hero.stats.animationState = safeState;
+    const frames = this.getFramesForState(hero, safeState);
     if (!frames.length) {
       this.applyHeroStateTexture(hero, heroTexture(this, hero.def));
       return;
@@ -7485,8 +7647,7 @@ export default class TownScene extends Phaser.Scene {
       });
     }
 
-    hero.sprite.setFlipX(tx < hero.container.x);
-    // waddle while walking — replace with a real walk animation later
+    if (!hero.directionalWalk) hero.sprite.setFlipX(tx < hero.container.x);
     this.setHeroAnimationState(hero, 'walk');
     if (!hero.hasStateFrames) {
       hero.bobTween = this.tweens.add({
@@ -7518,7 +7679,15 @@ export default class TownScene extends Phaser.Scene {
         onArrive?.();
         return;
       }
-      hero.sprite.setFlipX(point.x < hero.container.x);
+      const deltaX = point.x - hero.container.x;
+      const deltaY = point.y - hero.container.y;
+      this.setHeroFacing(
+        hero,
+        Math.abs(deltaX) >= Math.abs(deltaY)
+          ? (deltaX >= 0 ? 'east' : 'west')
+          : (deltaY >= 0 ? 'south' : 'north'),
+      );
+      if (!hero.directionalWalk) hero.sprite.setFlipX(point.x < hero.container.x);
       const dist = Phaser.Math.Distance.Between(hero.container.x, hero.container.y, point.x, point.y);
       const roadSpeed = ROAD_TYPES[point.roadType]?.speed || 1;
       const duration = Math.max(180, (dist / (hero.def.speed * roadSpeed)) * 1000);
@@ -8688,9 +8857,66 @@ export default class TownScene extends Phaser.Scene {
     });
   }
 
+  // heroes the player can send on a posted quest, best odds first
+  getQuestCandidates(quest, limit = 3) {
+    return this.getActiveHeroes()
+      .filter((hero) => hero.state !== 'away' && !this.isHeroInjured(hero))
+      .filter((hero) => !this.postedQuests.some((posted) => (
+        posted.assignedHeroId === hero.def.id && posted.noticeId !== quest.noticeId
+      )))
+      .map((hero) => ({
+        hero,
+        chance: Math.round(this.getQuestSuccessChance(hero, quest)),
+      }))
+      .sort((a, b) => b.chance - a.chance)
+      .slice(0, limit);
+  }
+
+  // player assignment: 'noticeId:heroId' from the quest board panel
+  assignQuestHeroFromUi(token) {
+    const [noticeId, heroId] = String(token || '').split(':');
+    const quest = this.postedQuests.find((posted) => posted.noticeId === noticeId);
+    const hero = this.heroes?.find((item) => item.def.id === heroId && item.stats.active !== false);
+    if (!quest || !hero) return;
+    if (quest.assignedHeroId) {
+      this.game.events.emit('gwg-event', 'That quest already has a volunteer. Heroism is not a queue... usually.');
+      return;
+    }
+    quest.assignedHeroId = hero.def.id;
+    this.availableQuests = this.availableQuests.map((item) => (
+      item.noticeId === quest.noticeId ? quest : item
+    ));
+    hero.currentAction = `Preparing: ${quest.name}`;
+    hero.intent = {
+      action: hero.currentAction,
+      destinationId: 'dungeon',
+      destinationName: quest.name,
+      reason: 'Assigned to a posted quest by the guild.',
+      risk: quest.risk >= 3 ? 'High' : 'Medium',
+    };
+    const board = this.doorById.notice_board || this.doorById.guildhall;
+    if (board && hero.state !== 'away') {
+      this.walkTo(hero, board, () => {
+        this.say(hero, 'Signed. Regret pending.', true);
+        this.scheduleAmbient(hero, Phaser.Math.Between(2500, 5000));
+      });
+    }
+    const text = `${hero.def.name} volunteered for ${quest.name} (${Math.round(this.getQuestSuccessChance(hero, quest))}% odds).`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'quest');
+    this.saveGame(false);
+    if (this.activeInspector?.type === 'quests') this.showQuestInspector();
+  }
+
   pickQuestHero(quest) {
     const active = this.getActiveHeroes();
     if (active.length === 0) return null;
+
+    // player-assigned hero always takes the quest, with prepared-hero bonus
+    if (quest.assignedHeroId) {
+      const assigned = active.find((hero) => hero.def.id === quest.assignedHeroId);
+      if (assigned) return assigned;
+    }
 
     const preferred = active.filter((hero) => quest.preferred.includes(hero.def.personality));
     if (preferred.length > 0) return Phaser.Utils.Array.GetRandom(preferred);
@@ -8722,9 +8948,12 @@ export default class TownScene extends Phaser.Scene {
     const honestBonus = this.isHonestHero(hero.def) ? training * 4 + mentor * 4 : 0;
     const whaleBonus = this.isWhaleHero(hero.def) ? whale * 6 : 0;
     const corruptionBias = quest.type === 'fair' ? -R.corruption * 0.08 : R.corruption * 0.06;
+    // a hero who volunteered ahead of time goes in prepared
+    const assignedBonus = quest.assignedHeroId === hero.def.id ? 8 : 0;
 
     return Phaser.Math.Clamp(
       34
+      + assignedBonus
       + hero.stats.power * 4
       + R.morale * 0.22
       + R.trust * 0.12
@@ -8816,6 +9045,11 @@ export default class TownScene extends Phaser.Scene {
       this.addHeroHistory(hero, `Completed ${quest.name}.`);
       this.stats.questsCompleted += 1;
       if (honest) this.stats.honestQuestSuccesses += 1;
+      // prepared expeditions also haul goods back to the town stores
+      if (quest.assignedHeroId === hero.def.id) {
+        const hauled = this.addTownResource('loot', Phaser.Math.Between(1, 2));
+        if (hauled > 0) text += ` The expedition hauled ${hauled} loot into the town stores.`;
+      }
     } else {
       deltas = {
         gold: Math.floor(quest.reward * 0.2),
@@ -9132,7 +9366,24 @@ export default class TownScene extends Phaser.Scene {
     if ((this.stats.premiumActions || 0) + (this.stats.whaleEvents || 0) >= 12) {
       notes.push({ text: 'Premium dependency rising: a worrying share of income is "optional".', className: 'gwg-whale' });
     }
-    return notes.length ? notes : ['No urgent problems. The advisor is quietly suspicious of that.'];
+    // hero workforce overview: idle / on quest / injured
+    const activeHeroes = this.getActiveHeroes();
+    const injuredCount = activeHeroes.filter((hero) => this.isHeroInjured(hero)).length;
+    const assignedCount = this.postedQuests.filter((quest) => quest.assignedHeroId).length;
+    notes.push(
+      `Heroes: ${activeHeroes.length} active, ${assignedCount} assigned to quests, ${injuredCount} injured.`,
+    );
+    if (injuredCount > 0 && (this.townInventory?.potions || 0) === 0) {
+      notes.push({ text: `${injuredCount} injured hero${injuredCount === 1 ? '' : 'es'} and no potions in store. Herbs and a Potion Shop would help.`, className: 'gwg-bad' });
+    }
+    // town rank: the long-term score behind hero attraction
+    const reputation = this.getTownReputation();
+    const rank = this.getTownRank(reputation);
+    notes.push({
+      text: `Town reputation ${reputation}/100 - Rank: ${rank.name}. Higher rank attracts heroes faster.`,
+      className: reputation >= 50 ? 'gwg-good' : 'gwg-muted',
+    });
+    return notes;
   }
 
   applyBuildingUpkeep() {
@@ -9342,13 +9593,17 @@ export default class TownScene extends Phaser.Scene {
     const container = this.add.container(door.x, door.y, [sprite, label]).setDepth(door.y);
 
     const walker = {
-      def: { id: `walker-${config.id}`, name: config.name, speed: 72 },
+      // assetKey keeps the worker texture through the animation state machine
+      // (without it, heroTexture() would swap walkers to hero_default mid-walk)
+      def: { id: `walker-${config.id}`, name: config.name, speed: 72, assetKey: textureKey },
       sprite,
       container,
       stats: {},
       walker: true,
+      spriteHeight: 26,
       currentAction: config.flavor,
     };
+    this.prepareHeroAnimation(walker);
     this.serviceWalkers.push(walker);
     this.walkTo(walker, target, () => {
       this.applyWalkerService(buildingId, config, target);
@@ -9429,6 +9684,117 @@ export default class TownScene extends Phaser.Scene {
         break;
     }
     if (floatLine) this.floatText(spot.x, spot.y - 40, floatLine, '#d7f3d0');
+  }
+
+  // player-ordered POI visit: pick the best free hero, walk them out, roll
+  // the outcome on arrival, cooldown the POI (persisted)
+  runPoiAction(poiId) {
+    const place = this.explorationPointById?.[poiId];
+    if (!place || !this.isRevealed(place.gridX, place.gridY)) return;
+    if (this.getPoiCooldownDay(poiId) > this.day) {
+      this.game.events.emit('gwg-event', 'That spot was just visited. Even wilderness needs downtime.');
+      return;
+    }
+    const hero = this.getActiveHeroes()
+      .filter((item) => item.state !== 'away' && !this.isHeroInjured(item))
+      .sort((a, b) => (b.stats.power || 0) - (a.stats.power || 0))[0];
+    if (!hero) {
+      this.game.events.emit('gwg-event', 'No able hero is free. The wilderness will keep.');
+      return;
+    }
+    const actionConfig = this.getPoiActionConfig(place);
+    this.poiCooldowns = this.poiCooldowns || {};
+    this.poiCooldowns[poiId] = this.day + 2;
+    hero.currentAction = `${actionConfig.verb} ${place.name}`;
+    const spot = { id: place.id, name: place.name, x: place.x, y: place.y, h: place.h || 40 };
+    this.game.events.emit('gwg-event', `${hero.def.name} set out for the ${place.name}.`);
+    this.walkTo(hero, spot, () => {
+      this.resolvePoiVisit(hero, place, actionConfig);
+      this.scheduleAmbient(hero, Phaser.Math.Between(2600, 5200));
+    });
+    this.saveGame(false);
+    if (this.activeInspector?.type === 'place') this.showPlaceInspector(place);
+  }
+
+  resolvePoiVisit(hero, place, actionConfig) {
+    const yieldConfig = POI_RESOURCE_YIELDS[place.id];
+    if (actionConfig.id === 'harvest' && yieldConfig) {
+      const amount = Phaser.Math.Between(yieldConfig.min + 1, yieldConfig.max + 2);
+      const gained = this.addTownResource(yieldConfig.resource, amount, `${hero.def.name}'s harvest run`);
+      const deltas = { morale: 1 };
+      if (yieldConfig.premium && Math.random() < 0.5) deltas.corruption = 1;
+      this.applyDeltas(deltas);
+      this.floatText(place.x, place.y - 44, `+${gained} ${yieldConfig.resource}`, '#d7f3d0');
+      this.say(hero, 'Honest cargo.', true);
+      const text = `${hero.def.name} harvested ${gained} ${yieldConfig.resource} at the ${place.name}.`;
+      this.game.events.emit('gwg-event', text);
+      this.addReportLine('quests', text);
+      return;
+    }
+    if (actionConfig.id === 'clear') {
+      const monster = place.monsterSource
+        ? (MONSTERS.find((entry) => entry.id === place.monsterSource) || rollMonster())
+        : rollMonster();
+      const support = this.getPlaceLevel(this.buildingById.watchtower)
+        + ((this.townInventory?.gear || 0) > 0 ? 1 : 0);
+      const success = (hero.stats.power || 0) + support + Phaser.Math.Between(0, 7) >= monster.threat * 3 + 3;
+      this.showMonsterEncounter(monster, place.x, place.y);
+      if (success) {
+        const deltas = { gold: 26 + monster.threat * 14, threat: -(4 + monster.threat * 2), morale: 2 };
+        this.applyDeltas(deltas);
+        this.floatDeltas(place.x, place.y - 48, deltas);
+        hero.stats.power += 1;
+        hero.stats.fame = Phaser.Math.Clamp((hero.stats.fame || 0) + monster.threat * 2, 0, 100);
+        this.addHeroHistory(hero, `Cleared ${place.name}.`);
+        const text = `${hero.def.name} cleared the ${place.name}. ${monster.flavour} The area feels safer.`;
+        this.game.events.emit('gwg-event', text);
+        this.addTownLog(text, 'monster');
+        this.addReportLine('quests', text);
+      } else {
+        hero.stats.injuredUntilDay = this.day + 2;
+        hero.stats.morale = Phaser.Math.Clamp(hero.stats.morale - 6, 0, 100);
+        this.setHeroAnimationState(hero, 'hurt');
+        const deltas = { threat: monster.threat, morale: -2 };
+        this.applyDeltas(deltas);
+        this.floatDeltas(place.x, place.y - 48, deltas);
+        this.addHeroHistory(hero, `Was driven off from ${place.name}.`);
+        const text = `${hero.def.name} was driven off from the ${place.name} and limped home. ${monster.flavour}`;
+        this.game.events.emit('gwg-event', text);
+        this.addTownLog(text, 'monster');
+        this.addReportLine('warnings', text);
+      }
+      return;
+    }
+    // investigate: a small grab-bag outcome
+    const roll = Math.random();
+    if (roll < 0.4) {
+      const gold = Phaser.Math.Between(20, 60);
+      this.applyDeltas({ gold });
+      this.floatText(place.x, place.y - 44, `+${gold}g`, '#ffe08a');
+      this.game.events.emit('gwg-event', `${hero.def.name} investigated the ${place.name} and found ${gold}g in suspiciously labeled pouches.`);
+    } else if (roll < 0.7) {
+      const gained = this.addTownResource('loot', Phaser.Math.Between(1, 2), `${hero.def.name}'s find`);
+      this.floatText(place.x, place.y - 44, `+${gained} loot`, '#d7f3d0');
+      this.game.events.emit('gwg-event', `${hero.def.name} pulled ${gained} loot out of the ${place.name}.`);
+    } else {
+      this.applyDeltas({ morale: 1 });
+      this.say(hero, 'Just vibes here.', true);
+      this.game.events.emit('gwg-event', `${hero.def.name} investigated the ${place.name}. Findings: atmosphere, mild dread, no revenue.`);
+    }
+  }
+
+  // reads the maintained reputation score (calculateTownReputation owns the
+  // formula; this is just the accessor the rank/advisor systems use)
+  getTownReputation() {
+    return Math.round(Phaser.Math.Clamp(Number(this.townReputation) || 0, 0, 100));
+  }
+
+  getTownRank(reputation = this.getTownReputation()) {
+    if (reputation >= 80) return { tier: 4, name: 'Renowned Guild City' };
+    if (reputation >= 60) return { tier: 3, name: 'Respected Guild Town' };
+    if (reputation >= 40) return { tier: 2, name: 'Working Guild Village' };
+    if (reputation >= 20) return { tier: 1, name: 'Struggling Guild Camp' };
+    return { tier: 0, name: 'Cautionary Tale' };
   }
 
   // successful expeditions can carry resources home from discovered POIs
