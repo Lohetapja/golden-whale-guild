@@ -9,7 +9,29 @@ Generations are only counted as consumed when verified against `get_balance`.
 | --- | --- | --- | --- |
 | Pass start | 1277 | 722 | 0 |
 | After mandatory + core buildings | 1103 | 896 | 174 |
-| Session checkpoint (end) | 1099 | 900 | **178** |
+| Session checkpoint (end) | 1099 | 900 | 178 |
+
+## Continuation pass (target: generations_used >= 1372)
+
+Continuation start: used 900 / remaining 1099. Hard target: **used >= 1372**.
+(Billing lags job completion by a few minutes; track by later `get_balance`.)
+
+### Buildings generated + downloaded to canonical `building_*.png` (this continuation)
+inn `0f56108d`, training_yard `b84ccbfe`, sawmill `08c2630b`, lumber_camp
+`da2ef499`, mining_camp `9bfc370f`, herbalist_hut `17e4f6b5`, salvage_camp
+`9e5ef727`, guard_post `e7adc639`, premium_temple `977a49c6`, premium_lodge
+`5c8652f4`, vip_lounge `b5bd10da`, golden_whale `3ec9681e`.
+Catalog repointed: lumber/mining/herbalist/salvage camps + sawmill now use their
+own `building_*` art instead of reused resource-node art.
+
+### Building animations queued (v3; download frames from `objects` endpoint)
+training_yard `b84ccbfe`, blacksmith `f4611c29`, golden_whale `3ec9681e`,
+tavern `6034dd72`, potion_shop `0036963f`.
+
+### Next categories in queue
+scout_post + lootbox/dungeon buildings; road tiles (dirt/stone/premium); more
+building animations; hero/worker/carrier + monster animations; resources/cargo/
+POIs; decor; UI icons.
 
 Cost note: at 160–176px, `create_map_object` and `create_object_state` average
 ~6–7 generations each (the pilot's 32px-equivalent estimate of 1/job did not
@@ -83,3 +105,36 @@ category 7 decor/props, category 8 UI, category 9 retries.
 Blocker note: not a hard failure — PixelLab remains available — but queue
 throughput (~450s/job) plus single-session context limits mean the full 650 is a
 multi-session effort. This report is the durable continuation point.
+
+### Progress log (continuation, rolling)
+- Buildings integrated (canonical + catalog repoint): inn, training_yard, sawmill,
+  lumber/mining/herbalist/salvage camps, guard_post, premium_temple, premium_lodge,
+  vip_lounge, golden_whale — all verified loading in test-key browser, no errors.
+- Building animation frames downloaded to public/assets/animations/buildings/:
+  blacksmith_active (5), golden_whale_idle (5), tavern_active (9). More queued:
+  storehouse (fd1e7502), premium_fabricator (f4180b4b), potion_shop, training_yard.
+- Road iso tiles staged (public/assets/roads/{dirt,stone,premium}/*_iso.png). NOTE:
+  world road renderer crops SQUARE textures (tile_road_*); iso diamond tiles don't
+  drop in, so roads are generated+staged, not swapped into the autotiler (deferred).
+- Cargo: cargo_loot_chest.png downloaded (public/assets/objects/cargo/). ore crate +
+  log bundle in flight.
+- Balance at ~933 used (billing lags completion by minutes; target 1372).
+
+### Rolling tally (continuation, updated)
+- Balance: 948 used / 1051 remaining (billing lags; target 1372).
+- Buildings integrated: 12 (camps repointed + landmarks) + earlier mandatory/core.
+- Building animations downloaded (frames in public/assets/animations/buildings/):
+  blacksmith(5), golden_whale(5), tavern(9), potion_shop(9), training_yard(5),
+  storehouse(9), fabricator(9) = 7 buildings. warehouse + herbalist in flight.
+- Resource nodes regenerated (overwrote placeholders): resource_wood_grove,
+  resource_iron_outcrop, resource_herb_patch.
+- Cargo: cargo_loot_chest, cargo_ore_crate, cargo_log_bundle (public/assets/objects/cargo/).
+- POIs: poi_goblin_camp, poi_skeleton_ruins, poi_loot_cave (public/assets/objects/).
+- Decor: decor_market_stall.
+- Road iso tiles staged (dirt/stone/premium) — not swapped into square-crop autotiler.
+- Characters (v3, 8-dir) in flight: wood_carrier faac613c, ore_carrier 303833ee,
+  quest_clerk 2232cbd1, guard_patrol d95984e5 — animate on completion.
+- ~101 asset PNGs added/modified this pass. Build passing; prod save untouched.
+- CONTINUATION STRATEGY: loop fire→long-wait→bulk-download across categories;
+  expensive char/monster animations to drive budget toward 1372. Trackers in
+  scratchpad gwg_inflight.tsv. Not stopping — throughput is slow, not blocked.

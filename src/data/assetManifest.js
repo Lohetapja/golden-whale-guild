@@ -53,6 +53,16 @@ export const ASSET_MANIFEST = [
   { key: 'building_tavern_l2', path: 'assets/buildings/upgrades/tavern_l2.png', type: 'image', fallback: 'building_tavern' },
   { key: 'building_market_l2', path: 'assets/buildings/upgrades/market_l2.png', type: 'image', fallback: 'building_market' },
   { key: 'building_blacksmith_l2', path: 'assets/buildings/upgrades/blacksmith_l2.png', type: 'image', fallback: 'building_blacksmith' },
+  // dedicated isometric art for extraction camps / production / posts (was
+  // reusing resource-node art); 2026-07 asset pass
+  { key: 'building_sawmill', path: 'assets/buildings/building_sawmill.png', type: 'image', fallback: 'generated ph-sawmill' },
+  { key: 'building_lumber_camp', path: 'assets/buildings/building_lumber_camp.png', type: 'image', fallback: 'generated ph-lumber_camp' },
+  { key: 'building_mining_camp', path: 'assets/buildings/building_mining_camp.png', type: 'image', fallback: 'generated ph-mining_camp' },
+  { key: 'building_herbalist_hut', path: 'assets/buildings/building_herbalist_hut.png', type: 'image', fallback: 'generated ph-herbalist_hut' },
+  { key: 'building_salvage_camp', path: 'assets/buildings/building_salvage_camp.png', type: 'image', fallback: 'generated ph-salvage_camp' },
+  { key: 'building_guard_post', path: 'assets/buildings/building_guard_post.png', type: 'image', fallback: 'generated ph-guard_post' },
+  { key: 'building_scout_post', path: 'assets/buildings/building_scout_post.png', type: 'image', fallback: 'generated ph-scout_post' },
+  { key: 'building_premium_temple', path: 'assets/buildings/building_premium_temple.png', type: 'image', fallback: 'generated ph-premium_temple' },
   // future satire buildings (art ready, catalog wiring pending)
   { key: 'building_rngesus_shrine', path: 'assets/buildings/building_rngesus_shrine.png', type: 'image', fallback: 'not yet buildable' },
   { key: 'building_pity_chapel', path: 'assets/buildings/building_pity_chapel.png', type: 'image', fallback: 'not yet buildable' },
