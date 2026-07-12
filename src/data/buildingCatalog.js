@@ -196,6 +196,13 @@ export const BUILDING_CATALOG = [
       action('urgent', 'Stamp Urgent Paperwork', '+Gold, +Threat.', 0, { gold: 210, threat: 3 }, null, 'item_refund_denial_stamp'),
     ],
   }),
+  core('roadside_ad_board', 'Roadside Ad Board', 'Decorations', 46, { w: 1, h: 1 }, 'A small premium advertisement that stays beside the road instead of becoming the road.', {
+    assetKey: 'object_notice_board_gold',
+    roadRequired: true,
+    kind: 'shady',
+    effect: '+Tiny Prestige, +tiny Corruption. Advertises optional inevitability.',
+    flavor: 'This space available for an urgent offer that has been urgent since Tuesday.',
+  }),
   core('vip_lounge', 'VIP Lounge', 'Premium', 700, { w: 2, h: 2 }, 'Shiny chairs behind a rope that has never met equality.', {
     kind: 'shady',
     unlockKey: 'whale2',
@@ -249,12 +256,12 @@ export const BUILDING_CATALOG = [
     flavor: 'One hero\'s tragedy is another town\'s inventory.',
   }),
   core('storehouse', 'Storehouse', 'Frontier / Supply', 260, { w: 2, h: 2 }, 'Raises storage capacity and receives carrier deliveries.', {
-    assetKey: 'object_market_stall',
+    assetKey: 'building_storehouse',
     effect: 'Adds +30 storage per level for wood/iron/herbs/loot. Full storage pauses extraction.',
     flavor: 'A building whose entire personality is "more shelves".',
   }),
   core('frontier_outpost', 'Frontier Outpost', 'Frontier / Supply', 300, { w: 2, h: 2 }, 'Projects safe territory into the wilds and reveals nearby fog.', {
-    assetKey: 'building_watchtower',
+    assetKey: 'building_frontier_outpost',
     roadRequired: false,
     effect: 'Establishes remote territory: cheaper/safer frontier construction and a small reveal radius.',
     flavor: 'A flag, a fence, and the confident assumption that this counts as civilisation.',
@@ -282,14 +289,14 @@ export const BUILDING_CATALOG = [
     flavor: 'Nothing is junk after the inventory screen opens.',
   }),
   core('warehouse', 'Warehouse', 'Production', 560, { w: 3, h: 2 }, 'Stores processed goods and anchors commercial supply routes.', {
-    assetKey: 'building_loot_warehouse',
+    assetKey: 'building_warehouse',
     unlockKey: 'rank2',
     lockReason: 'Reach Recognized Settlement rank.',
     effect: '+35 processed-goods storage per level and better carrier routing.',
     flavor: 'A cathedral dedicated to shelves, manifests, and finding neither quickly.',
   }),
   core('premium_fabricator', 'Premium Fabricator', 'Premium', 980, { w: 3, h: 2 }, 'Turns premium salvage into questionable components.', {
-    assetKey: 'decor_premium_temple',
+    assetKey: 'building_premium_fabricator',
     unlockKey: 'premiumProduction',
     lockReason: 'Reach Renowned Guild Town and acquire Premium Salvage.',
     kind: 'shady',
@@ -374,7 +381,7 @@ export const BUILD_MENU_CATEGORIES = [
     id: 'decorations',
     label: 'Decor',
     description: 'Benches, trees, lamps, and other municipal confidence.',
-    buildingIds: [],
+    buildingIds: ['roadside_ad_board'],
     informational: true,
   },
 ];

@@ -35,6 +35,10 @@ export const ASSET_MANIFEST = [
   { key: 'building_lootbox_kiosk', path: 'assets/buildings/building_lootbox_kiosk.png', type: 'image', fallback: 'generated ph-lootbox_kiosk' },
   { key: 'building_gem_exchange', path: 'assets/buildings/building_gem_exchange.png', type: 'image', fallback: 'generated ph-gem_exchange' },
   { key: 'building_convenience_office', path: 'assets/buildings/building_convenience_office.png', type: 'image', fallback: 'generated ph-convenience_office' },
+  { key: 'building_warehouse', path: 'assets/buildings/building_warehouse.png', type: 'image', fallback: 'generated storage building with crate attachments' },
+  { key: 'building_storehouse', path: 'assets/buildings/building_storehouse.png', type: 'image', fallback: 'generated frontier store with raw-material attachments' },
+  { key: 'building_premium_fabricator', path: 'assets/buildings/building_premium_fabricator.png', type: 'image', fallback: 'generated premium workshop with machinery attachments' },
+  { key: 'building_frontier_outpost', path: 'assets/buildings/building_frontier_outpost.png', type: 'image', fallback: 'generated frontier post with supply attachments' },
   // future satire buildings (art ready, catalog wiring pending)
   { key: 'building_rngesus_shrine', path: 'assets/buildings/building_rngesus_shrine.png', type: 'image', fallback: 'not yet buildable' },
   { key: 'building_pity_chapel', path: 'assets/buildings/building_pity_chapel.png', type: 'image', fallback: 'not yet buildable' },

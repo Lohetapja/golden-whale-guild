@@ -607,3 +607,31 @@ summary:
   asserts the production key is byte-for-byte unchanged.
 
 No gameplay systems changed in this pass — it is purely persistence safety.
+
+---
+
+## Visual Ownership And Asset Mapping (implemented 2026-07)
+
+This pass did not add an economy system. It stabilized the visual contract
+around existing buildings and placement:
+
+- Warehouse, Storehouse, Premium Fabricator, and Frontier Outpost now use
+  dedicated manifest keys rather than unrelated or missing art. Reviewed
+  PixelLab candidates exist, while descriptive generated fallbacks keep the
+  game safe until those files can be downloaded locally.
+- Premium Temple keeps its dedicated existing location art. The Golden Whale
+  owns its soft aura, particles, and attached VIP Queue, so moving or deleting
+  it removes the entire landmark stack.
+- Roadside Ad Board uses existing gold-board art as a repeatable placed decor
+  item. It is explicitly not a Notice Board or quest interaction.
+- `cleanupBuildingVisuals` is the single move/delete teardown path for the
+  foundation, connector, sprite, label, hit target, upgrade accents, cargo,
+  attachments, and Whale dressing. Re-rendering then derives visuals from the
+  saved building state.
+- World roads remain logical grid roads, but their isometric surfaces now add
+  connected ruts, cobbles, gold inlays, endpoints, intersections, and plaza
+  treatment. Square PNGs continue to serve Build Menu previews.
+
+Remaining visual debt: dedicated checked-in art for the four pending manifest
+slots, dedicated Lumber/Salvage production variants, and a browser screenshot
+pass once local browser access is available.

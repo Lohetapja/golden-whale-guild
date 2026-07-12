@@ -126,7 +126,7 @@ export const DECORATION_LAYOUT = {
   },
   vip_rope_entrance: {
     district: 'premium', x: 1062, y: 386, w: 100, h: 38, visualScale: 0.88,
-    shortLabel: 'VIP Rope', pathNode: 'premium-gate', interactionW: 138, interactionH: 68,
+    shortLabel: 'VIP Rope', pathNode: 'premium-gate', interactionW: 74, interactionH: 38,
   },
   complaint_barrel: {
     district: 'training', x: 830, y: 535, w: 38, h: 44, visualScale: 0.94,
@@ -138,7 +138,7 @@ export const DECORATION_LAYOUT = {
   },
   notice_board: {
     district: 'guild', x: 550, y: 360, w: 58, h: 58, visualScale: 0.92,
-    shortLabel: 'Notice Board', pathNode: 'guild-square', interactionW: 120, interactionH: 90,
+    shortLabel: 'Notice Board', pathNode: 'guild-square', interactionW: 86, interactionH: 62,
   },
   poor_hero_queue: {
     district: 'premium', x: 958, y: 448, w: 96, h: 44, visualScale: 0.84,
@@ -146,7 +146,7 @@ export const DECORATION_LAYOUT = {
   },
   sponsored_quest_board: {
     district: 'guild', x: 400, y: 370, w: 66, h: 60, visualScale: 0.9,
-    shortLabel: 'Sponsored Board', pathNode: 'guild-west', interactionW: 124, interactionH: 90,
+    shortLabel: 'Sponsored Board', pathNode: 'guild-west', interactionW: 90, interactionH: 64,
   },
   balance_memorial: {
     district: 'training', x: 895, y: 515, w: 54, h: 42, visualScale: 0.92,
@@ -162,7 +162,7 @@ export const DECORATION_LAYOUT = {
   },
   premium_temple: {
     district: 'premium', x: 1178, y: 250, w: 86, h: 70, visualScale: 0.9,
-    shortLabel: 'Premium Temple', pathNode: 'premium-north', interactionW: 124, interactionH: 96,
+    shortLabel: 'Premium Temple', pathNode: 'premium-north', interactionW: 88, interactionH: 74,
   },
   patch_notes_shrine: {
     district: 'guild', x: 485, y: 398, w: 56, h: 56, visualScale: 0.9,

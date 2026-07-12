@@ -64,3 +64,41 @@ The Golden Whale Milking Station should remain the strongest visual identity in
 the town: gold, glow, whale signage, coin particles, VIP ropes, and suspicious
 premium polish. Other buildings can be charming, but the Whale should look like
 the town's most profitable bad idea.
+
+Its presentation is a layered landmark rather than one baked glow: foundation,
+building, optional statue, soft aura, restrained coins, then the separately
+owned VIP Queue. The aura must stay below actors and labels, reduce visual
+weight at distance, and never cover nearby roads.
+
+## Building Ownership And Cleanup
+
+Every rendered building feature must belong to either a building ID or an
+independent saved world-object ID. Building-owned visuals include foundations,
+road connectors, sprites, labels, hit targets, upgrade accents, cargo anchors,
+auras, particles, and attached props. Move and Delete use the same cleanup path
+before rebuilding the stack at its new position.
+
+Attached props need an owner ID, base-point depth, compact hitbox, explicit
+hover/selection behavior, and a cleanup rule. Manually placed decor uses its
+own persistent ID. Temporary effects are never saved as independent objects.
+
+## Building Source Strategy
+
+- A larger source image is useful only when its final nearest-neighbor export
+  is prepared for the exact in-game footprint. Arbitrary browser downscaling
+  softens pixel clusters and is not a substitute for a game-ready sprite.
+- Every building asset needs a known footprint, visible entrance, grounded
+  foundation, compact hover hitbox, selected highlight, and optional upgrade
+  accents.
+- Warehouse, Storehouse, Premium Temple, Premium Fabricator, and extraction
+  camps must remain readable by silhouette and role props, not permanent text.
+- Premium assets may use controlled gold and purple accents, but must not bake
+  a giant aura into the sprite.
+
+## Road Rendering Strategy
+
+The square road PNGs are catalog previews and orthogonal fallbacks. The active
+isometric world renders connected diamond shoulders, cores, edge connectors,
+and type-specific surface details so straight pieces, corners, junctions, and
+plazas share edges without stretching square art into the wrong perspective.
+All road layers remain below actors and world objects.

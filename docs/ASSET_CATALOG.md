@@ -27,6 +27,36 @@ Generated assets are optional and must stay routed through
 | `building_lootbox_kiosk` | `public/assets/buildings/building_lootbox_kiosk.png` | Buildable Lootbox Kiosk | PixelLab asset, integrated (2026-07 pass) |
 | `building_gem_exchange` | `public/assets/buildings/building_gem_exchange.png` | Buildable Gem Exchange | PixelLab asset, integrated (2026-07 pass) |
 | `building_convenience_office` | `public/assets/buildings/building_convenience_office.png` | Buildable Convenience Office | PixelLab asset, integrated (2026-07 pass) |
+| `building_warehouse` | `public/assets/buildings/building_warehouse.png` | Warehouse | Dedicated manifest slot; role-specific fallback is active until the reviewed PixelLab file can be downloaded |
+| `building_storehouse` | `public/assets/buildings/building_storehouse.png` | Storehouse | Dedicated manifest slot; role-specific fallback is active until the reviewed PixelLab file can be downloaded |
+| `building_premium_fabricator` | `public/assets/buildings/building_premium_fabricator.png` | Premium Fabricator | Dedicated manifest slot; premium workshop fallback is active until the reviewed PixelLab file can be downloaded |
+| `building_frontier_outpost` | `public/assets/buildings/building_frontier_outpost.png` | Frontier Outpost | Dedicated manifest slot; frontier fallback is active until the reviewed PixelLab file can be downloaded |
+
+### Building Mapping Audit (2026-07 Visual Pass)
+
+| Building ID | Asset key | Resolved file | Duplicate before pass | Current status |
+| --- | --- | --- | --- | --- |
+| `warehouse` | `building_warehouse` | `assets/buildings/building_warehouse.png` | `building_loot_warehouse` was missing | Correct dedicated slot; generated candidate pending local download |
+| `storehouse` | `building_storehouse` | `assets/buildings/building_storehouse.png` | Reused Market stall | Correct dedicated slot; generated candidate pending local download |
+| `premium_temple` | `decor_premium_temple` | `assets/objects/location_premium_temple.png` | Also reused by Premium Fabricator | Correct existing PixelLab asset; no longer shared with Fabricator |
+| `premium_fabricator` | `building_premium_fabricator` | `assets/buildings/building_premium_fabricator.png` | Reused Premium Temple | Correct dedicated slot; generated candidate pending local download |
+| `whale` | `building_golden_whale` | `assets/buildings/building_golden_whale.png` | None | Correct unique landmark; owned aura/queue rebuilt |
+| `vip_lounge` | `building_vip_lounge` | `assets/buildings/building_vip_lounge.png` | None | Correct PixelLab asset |
+| `frontier_outpost` | `building_frontier_outpost` | `assets/buildings/building_frontier_outpost.png` | Reused Watchtower | Correct dedicated slot; generated candidate pending local download |
+| `lumber_camp` | `resource_wood_grove` | `assets/objects/resource_wood_grove.png` | Shared with Sawmill | Deliberate fallback, now identified by camp props; dedicated art remains visual debt |
+| `mining_camp` | `resource_iron_outcrop` | `assets/objects/resource_iron_outcrop.png` | None | Deliberate fallback with ore/crate role props |
+| `herbalist_hut` | `resource_herb_patch` | `assets/objects/resource_herb_patch.png` | None | Deliberate fallback with plant/crate role props |
+| `salvage_camp` | `resource_old_ruins` | `assets/objects/resource_old_ruins.png` | Shared with Salvage Yard | Deliberate fallback, now identified by cart/crate role props |
+| `roadside_ad_board` | `object_notice_board_gold` | `assets/objects/object_notice_board_gold.png` | Previously unused | Existing art activated as a repeatable placed decor building |
+| `notice_board` | `decor_notice_board` | `assets/objects/location_notice_board.png` | None | Correct quest-board asset and behavior |
+| `sponsored_quest_board` | `decor_sponsored_quest_board` | `assets/objects/location_sponsored_quest_board.png` | None | Correct sponsored quest-board asset and behavior |
+
+The four missing dedicated building files above have reviewed PixelLab objects:
+Warehouse `eafa5511-44ac-4fa4-87b3-40b9b6008ac3`, Storehouse
+`fea5c1f0-762c-4994-84d6-46af13db9b01`, Premium Fabricator
+`f56e2e45-87d7-46c0-a135-dc8c43f989d4`, and Frontier Outpost
+`b31706d8-db29-42db-b8eb-df5858b1dbe1`. Network download was unavailable in
+this workspace, so no generated result is claimed as a checked-in PNG.
 
 ## Special Locations
 
@@ -45,6 +75,7 @@ Generated assets are optional and must stay routed through
 | `decor_premium_temple` | `public/assets/objects/location_premium_temple.png` | Premium Temple | New PixelLab asset |
 | `decor_patch_notes_shrine` | `public/assets/objects/location_patch_notes_shrine.png` | Patch Notes Shrine | New PixelLab asset |
 | `decor_hero_union_tent` | `public/assets/objects/location_hero_union_tent.png` | Hero Union Tent | New PixelLab asset |
+| `object_notice_board_gold` | `public/assets/objects/object_notice_board_gold.png` | Placeable Roadside Ad Board | Existing PixelLab asset activated; intentionally separate from quest boards |
 
 ## Props
 

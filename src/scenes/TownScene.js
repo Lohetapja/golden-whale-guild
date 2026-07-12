@@ -248,6 +248,42 @@ const DECOR_BUILD_CATALOG = [
 
 const DECOR_BUILD_BY_ID = Object.fromEntries(DECOR_BUILD_CATALOG.map((entry) => [entry.id, entry]));
 
+// Small, owned role accents. They reinforce a building's purpose without
+// becoming independent click targets or surviving a move/delete operation.
+const BUILDING_VISUAL_ATTACHMENTS = {
+  warehouse: [
+    { key: 'object_crate_stack', fallback: 'crate', x: -46, y: 2, height: 30 },
+    { key: 'object_cart', fallback: 'crate', x: 48, y: 3, height: 28 },
+  ],
+  storehouse: [
+    { key: 'object_crate_stack', fallback: 'crate', x: -38, y: 2, height: 27 },
+    { key: 'prop_barrel', fallback: 'barrel', x: 38, y: 2, height: 24 },
+  ],
+  premium_fabricator: [
+    { key: 'object_brazier', fallback: 'lamp', x: -50, y: 1, height: 31 },
+    { key: 'object_contract_stack', fallback: 'crate', x: 49, y: 2, height: 24 },
+  ],
+  frontier_outpost: [
+    { key: 'prop_signpost', fallback: 'signpost', x: -39, y: 1, height: 31 },
+    { key: 'prop_crate', fallback: 'crate', x: 39, y: 2, height: 23 },
+  ],
+  lumber_camp: [
+    { key: 'object_cart', fallback: 'crate', x: 38, y: 2, height: 27 },
+  ],
+  mining_camp: [
+    { key: 'prop_crate', fallback: 'crate', x: 36, y: 2, height: 23 },
+  ],
+  herbalist_hut: [
+    { key: 'object_bush', fallback: 'flowers', x: 35, y: 2, height: 25 },
+  ],
+  salvage_camp: [
+    { key: 'object_crate_stack', fallback: 'crate', x: 38, y: 2, height: 27 },
+  ],
+  roadside_ad_board: [
+    { key: 'object_coin_pile', fallback: 'ph-icon_coin', x: 22, y: 2, height: 15 },
+  ],
+};
+
 const RESOURCE_THRESHOLDS = {
   trustWarning: 34,
   trustCritical: 20,
@@ -1345,8 +1381,8 @@ export default class TownScene extends Phaser.Scene {
           x: boardSpot.x,
           y: boardSpot.y,
           pathNode: null,
-          interactionW: 118,
-          interactionH: 82,
+          interactionW: 82,
+          interactionH: 58,
           interactionPriority: 390,
           labelOffsetY: 6,
           isPlaced: true,
@@ -4306,6 +4342,60 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
+  drawIsoRoadSurfacePattern(overlay, road, tile, mask, plaza) {
+    const center = this.gridTileVisualCenter(road.x, road.y);
+    const midpoint = (a, b, inset = 0.12) => ({
+      x: Phaser.Math.Linear(center.x, (a.x + b.x) / 2, 1 - inset),
+      y: Phaser.Math.Linear(center.y, (a.y + b.y) / 2, 1 - inset),
+    });
+    const edges = [
+      { bit: 1, point: midpoint(tile[0], tile[1]) },
+      { bit: 2, point: midpoint(tile[1], tile[2]) },
+      { bit: 4, point: midpoint(tile[2], tile[3]) },
+      { bit: 8, point: midpoint(tile[3], tile[0]) },
+    ];
+
+    if (road.type === 'dirt') {
+      overlay.lineStyle(1, 0x765033, 0.34);
+      for (const edge of edges) {
+        if (!(mask & edge.bit)) continue;
+        overlay.lineBetween(center.x - 2, center.y, edge.point.x - 2, edge.point.y);
+        overlay.lineBetween(center.x + 2, center.y, edge.point.x + 2, edge.point.y);
+      }
+      overlay.fillStyle(0xf0d49a, 0.24);
+      overlay.fillEllipse(center.x, center.y, plaza ? 18 : 10, plaza ? 7 : 4);
+      return;
+    }
+
+    if (road.type === 'stone') {
+      const stones = plaza
+        ? [[0, 0], [-13, 0], [13, 0], [0, -6], [0, 6], [-20, -5], [20, 5]]
+        : [[0, 0], [-9, -3], [9, 3], [-5, 5], [5, -5]];
+      for (let i = 0; i < stones.length; i += 1) {
+        const [dx, dy] = stones[i];
+        overlay.fillStyle(i % 2 ? 0xb9b4aa : 0xd1ccc1, 0.34);
+        this.drawPolygon(overlay, [
+          { x: center.x + dx, y: center.y + dy - 3 },
+          { x: center.x + dx + 6, y: center.y + dy },
+          { x: center.x + dx, y: center.y + dy + 3 },
+          { x: center.x + dx - 6, y: center.y + dy },
+        ], i % 2 ? 0x9b9892 : 0xc4c0b8, 0.38, 0xf2ead8, 0.12, 1);
+      }
+      overlay.lineStyle(1, 0x777c82, 0.24);
+      for (const edge of edges) if (mask & edge.bit) overlay.lineBetween(center.x, center.y, edge.point.x, edge.point.y);
+      return;
+    }
+
+    overlay.lineStyle(1, 0xfff1a6, 0.34);
+    for (const edge of edges) if (mask & edge.bit) overlay.lineBetween(center.x, center.y, edge.point.x, edge.point.y);
+    this.drawPolygon(overlay, [
+      { x: center.x, y: center.y - (plaza ? 7 : 5) },
+      { x: center.x + (plaza ? 15 : 10), y: center.y },
+      { x: center.x, y: center.y + (plaza ? 7 : 5) },
+      { x: center.x - (plaza ? 15 : 10), y: center.y },
+    ], 0xffdf73, 0.3, 0xfff1a6, 0.42, 1);
+  }
+
   drawIsoRoadTile(graphics, overlay, road) {
     const type = ROAD_TYPES[road.type] || ROAD_TYPES.dirt;
     const plaza = isRoadPlazaTile(this.gridCells, road.x, road.y);
@@ -4331,17 +4421,14 @@ export default class TownScene extends Phaser.Scene {
     this.drawIsoRoadConnectors(graphics, tile, mask, type.edgeColor, road.type === 'premium' ? 0.66 : 0.56, plaza ? 0.82 : 0.68);
     this.drawPolygon(graphics, core, type.color, surfaceAlpha, 0xfff6dc, road.type === 'premium' ? 0.22 : 0.1, 1);
     this.drawIsoRoadConnectors(graphics, tile, mask, type.color, road.type === 'premium' ? 0.92 : 0.86, plaza ? 0.72 : 0.58);
+    this.drawIsoRoadSurfacePattern(overlay, road, tile, mask, plaza);
 
     if (road.type === 'stone') {
-      overlay.lineStyle(1, 0xf2ead8, 0.14);
-      overlay.lineBetween(inner[0].x + 5, inner[0].y + 3, inner[2].x - 5, inner[2].y - 3);
-      overlay.lineStyle(1, type.edgeColor, 0.2);
-      overlay.lineBetween(inner[1].x - 5, inner[1].y + 2, inner[3].x + 5, inner[3].y - 2);
+      overlay.lineStyle(1, 0xf2ead8, 0.1);
+      this.drawPolygon(overlay, this.insetPoints(tile, plaza ? 0.68 : 0.5), null, 0, 0xf2ead8, 0.1, 1);
     } else if (road.type === 'premium') {
-      overlay.fillStyle(0xfff1a6, 0.42);
-      overlay.fillCircle(center.x, center.y, plaza ? 3 : 2);
-      overlay.lineStyle(1, 0xfff1a6, 0.18);
-      overlay.strokeEllipse(center.x, center.y + 1, plaza ? 30 : 22, plaza ? 12 : 8);
+      overlay.fillStyle(0xfff1a6, 0.24);
+      overlay.fillCircle(center.x, center.y, plaza ? 2 : 1.5);
     } else {
       graphics.fillStyle(type.edgeColor, 0.18);
       graphics.fillEllipse(
@@ -5233,14 +5320,62 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
-  removeBuildingVisuals(id) {
-    for (const obj of this.buildingObjectsById?.[id] || []) obj.destroy?.();
+  registerBuildingOwnedVisual(id, object) {
+    if (!id || !object) return object;
+    if (!this.buildingObjectsById[id]) this.buildingObjectsById[id] = [];
+    object.setData?.('visualOwnerId', id);
+    this.buildingObjectsById[id].push(object);
+    return object;
+  }
+
+  destroyOwnedWorldObject(object) {
+    if (!object) return;
+    this.tweens?.killTweensOf?.(object);
+    for (const child of object.list || []) this.tweens?.killTweensOf?.(child);
+    object.destroy?.(true);
+  }
+
+  cleanupBuildingVisuals(id) {
+    if (!id) return;
+    const owned = new Set(this.buildingObjectsById?.[id] || []);
+    if (this.upgradeVisualsById?.[id]) owned.add(this.upgradeVisualsById[id]);
+    if (this.extractionCargoVisuals?.[id]) owned.add(this.extractionCargoVisuals[id]);
+    for (const object of owned) this.destroyOwnedWorldObject(object);
+
     delete this.buildingObjectsById?.[id];
     delete this.placeSpriteById?.[id];
     delete this.placeLabelsById?.[id];
-    this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== id);
-    this.doorSpots = (this.doorSpots || []).filter((spot) => spot.id !== id);
+    for (const key of Object.keys(this.placeSpriteById || {})) {
+      if (key.startsWith(`${id}:`)) delete this.placeSpriteById[key];
+    }
+    for (const key of Object.keys(this.placeLabelsById || {})) {
+      if (key.startsWith(`${id}:`)) delete this.placeLabelsById[key];
+    }
+    for (const key of Object.keys(this.attachedPlacesById || {})) {
+      if (key.startsWith(`${id}:`)) delete this.attachedPlacesById[key];
+    }
+    delete this.upgradeVisualsById?.[id];
+    delete this.extractionCargoVisuals?.[id];
+
+    this.worldInteractionTargets = (this.worldInteractionTargets || []).filter((target) => (
+      target.id !== id && target.ownerId !== id && target.place?.ownerId !== id
+    ));
+    this.doorSpots = (this.doorSpots || []).filter((spot) => spot.id !== id && spot.ownerId !== id);
     this.doorById = Object.fromEntries((this.doorSpots || []).map((spot) => [spot.id, spot]));
+
+    if (id === 'whale') {
+      this.whaleDressingBuilt = false;
+      this.coinBurst = null;
+    }
+    if (this.selectedPlaceId === id || String(this.selectedPlaceId || '').startsWith(`${id}:`)) {
+      this.clearSelection(false);
+    }
+  }
+
+  // Kept as the stable call site used by move/delete. Every building-owned
+  // world object must be registered so this removes the complete old stack.
+  removeBuildingVisuals(id) {
+    this.cleanupBuildingVisuals(id);
   }
 
   startMoveBuildingFromUi(id) {
@@ -5272,6 +5407,8 @@ export default class TownScene extends Phaser.Scene {
     this.removeBuildingVisuals(id);
     this.clearStaticPropsInsideFootprint(gridX, gridY, catalog.footprint);
     this.renderBuilding(place);
+    this.refreshUpgradeVisual(place);
+    if (getBaseBuildingId(place.baseId || place.id) === 'whale') this.buildWhaleStationDressing();
     if (EXTRACTION_BUILDINGS[getBaseBuildingId(place.baseId || place.id)]) {
       const baseId = getBaseBuildingId(place.baseId || place.id);
       const runtime = this.getBuildingRuntime(place.id);
@@ -5691,7 +5828,7 @@ export default class TownScene extends Phaser.Scene {
         count: entry.id === 'roads'
           ? Object.keys(ROAD_TYPES).length
           : entry.id === 'decorations'
-            ? this.getBuildMenuDecorationRows().length
+            ? entry.buildingIds.length + this.getBuildMenuDecorationRows().length
             : entry.buildingIds.length + this.getBuildMenuLocationRows(entry.id).length,
         event: 'gwg-build-category',
         active: entry.id === category.id,
@@ -5837,6 +5974,7 @@ export default class TownScene extends Phaser.Scene {
 
   resetAllPlaceLabels() {
     for (const place of Object.values(this.placeById || {})) this.resetPlaceLabel(place);
+    for (const place of Object.values(this.attachedPlacesById || {})) this.resetPlaceLabel(place);
   }
 
   addPlaceLabel(place, fontSize = LABEL_FONT_SIZE) {
@@ -5885,14 +6023,15 @@ export default class TownScene extends Phaser.Scene {
 
   createPlaceHitZone(place, img, onSelect) {
     const isBuilding = Boolean(this.buildingById?.[place.id]);
+    const isSmallSign = getBaseBuildingId(place.baseId || place.id) === 'roadside_ad_board';
     const visualWidth = img?.displayWidth || place.w || 64;
     const visualHeight = img?.displayHeight || place.h || 52;
     const width = place.interactionW || Math.max(
-      isBuilding ? 48 : 34,
+      isSmallSign ? 34 : isBuilding ? 48 : 34,
       Math.min(place.w || visualWidth, visualWidth) * (isBuilding ? 0.68 : 0.78),
     );
     const height = place.interactionH || Math.max(
-      isBuilding ? 42 : 30,
+      isSmallSign ? 28 : isBuilding ? 42 : 30,
       Math.min(place.h || visualHeight, visualHeight) * (isBuilding ? 0.58 : 0.74),
     );
     const centerY = place.y - (place.h || visualHeight || 52) * (isBuilding ? 0.36 : 0.44) + (place.interactionOffsetY || 0);
@@ -5925,6 +6064,7 @@ export default class TownScene extends Phaser.Scene {
     };
     this.registerWorldInteractionTarget({
       id: place.id,
+      ownerId: place.ownerId || (isBuilding ? place.id : null),
       type: isBuilding ? 'building' : 'decoration',
       place,
       hit,
@@ -6104,6 +6244,7 @@ export default class TownScene extends Phaser.Scene {
     this.doorSpots.push(this.getDoorSpotForPlace(b));
     this.doorById = Object.fromEntries(this.doorSpots.map((spot) => [spot.id, spot]));
     this.getBuildingRuntime(b.id);
+    this.renderBuildingRoleAttachments(b, placeDepth);
 
     if (b.id !== 'training') return;
     const yard = b;
@@ -6114,6 +6255,21 @@ export default class TownScene extends Phaser.Scene {
     const target = this.add.image(yard.x + 54, yard.y - 1, targetKey)
       .setScale(0.62).setOrigin(0.5, 1).setDepth(yard.y - 2);
     this.buildingObjectsById[b.id].push(dummy, target);
+  }
+
+  renderBuildingRoleAttachments(place, placeDepth) {
+    const baseId = getBaseBuildingId(place.baseId || place.id);
+    const attachments = BUILDING_VISUAL_ATTACHMENTS[baseId] || [];
+    for (const spec of attachments) {
+      const textureKey = resolveTexture(this, spec.key, spec.fallback);
+      if (!textureKey || !this.textures.exists(textureKey)) continue;
+      const image = this.add.image(place.x + spec.x, place.y + spec.y, textureKey)
+        .setOrigin(0.5, 1)
+        .setDepth(placeDepth + (spec.depthOffset || 2));
+      image.setScale(this.getTextureScaleForHeight(textureKey, spec.height || 24, 0.8));
+      image.setData('visualRole', 'building-attachment');
+      this.registerBuildingOwnedVisual(place.id, image);
+    }
   }
 
   buildDecorations() {
@@ -6479,71 +6635,87 @@ export default class TownScene extends Phaser.Scene {
   }
 
   buildWhaleStationDressing() {
-    // Golden Whale Milking Station: glow, coins, carpet, VIP rope. Peak premium.
+    // The Whale is already visually loud. Its owned dressing stays restrained,
+    // sits above roads but below actors, and is torn down with the building.
     const whale = this.buildingById.whale;
     if (!whale?.isPlaced || this.whaleDressingBuilt) return;
     this.whaleDressingBuilt = true;
     const coinKey = resolveTexture(this, 'icon_coin', 'ph-icon_coin');
     const coinScale = this.getTextureScaleForMaxDimension(coinKey, 10, 1);
+    const buildingDepth = this.isBuilderCity && Number.isInteger(whale.gridX) && Number.isInteger(whale.gridY)
+      ? this.getVisualDepth(whale.gridX, whale.gridY) + 40
+      : whale.y;
 
-    const glow = this.add.image(whale.x, whale.y - 60, 'glow')
-      .setDepth(whale.y - whale.h - 1)
-      .setScale(2.05)
-      .setAlpha(0.62);
+    const glow = this.add.image(whale.x, whale.y - 22, 'glow')
+      .setDepth(buildingDepth - 5)
+      .setScale(0.92)
+      .setAlpha(0.16)
+      .setTint(0xf6c945);
     this.tweens.add({
-      targets: glow, alpha: 0.92, scale: 2.32,
-      duration: 1100, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      targets: glow, alpha: 0.27, scale: 1.02,
+      duration: 1700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
-    const profitHalo = this.add.image(whale.x, whale.y - 18, 'glow')
-      .setDepth(whale.y - 2)
-      .setScale(1.1)
-      .setAlpha(0.35);
-    this.tweens.add({
-      targets: profitHalo, angle: 360, alpha: 0.62,
-      duration: 2400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
-    });
+    this.registerBuildingOwnedVisual(whale.id, glow);
 
-    // real whale sign asset floats above the door once it exists
-    const signKey = resolveTexture(this, 'icon_whale', 'ph-icon_whale');
-    this.add.image(whale.x, whale.y - whale.h * 0.55, signKey)
-      .setScale(1.38)
-      .setDepth(whale.y + 2);
+    const coinTrickle = this.add.particles(whale.x, whale.y - whale.h + 24, coinKey, {
+      x: { min: -26, max: 26 },
+      speedY: { min: -32, max: -18 },
+      speedX: { min: -8, max: 8 },
+      alpha: { start: 0.72, end: 0 },
+      scale: { min: coinScale * 0.5, max: coinScale * 0.78 },
+      lifespan: 1500,
+      frequency: this.rsp?.compact ? 720 : 480,
+      maxParticles: this.rsp?.compact ? 7 : 12,
+    }).setDepth(buildingDepth + 2);
+    this.registerBuildingOwnedVisual(whale.id, coinTrickle);
 
-    // steady trickle of coins rising out of the chimney region
-    this.add.particles(whale.x, whale.y - whale.h + 20, coinKey, {
-      x: { min: -Math.floor(whale.w * 0.42), max: Math.floor(whale.w * 0.42) },
-      speedY: { min: -45, max: -20 },
-      speedX: { min: -16, max: 16 },
-      alpha: { start: 1, end: 0 },
-      scale: { min: coinScale * 0.62, max: coinScale * 1.05 },
-      lifespan: 1900,
-      frequency: this.rsp?.compact ? 320 : 190,
-      maxParticles: this.rsp?.compact ? 14 : 28,
-    }).setDepth(whale.y + 2);
-
-    // burst emitter fired when the station cashes in during a cycle
     this.coinBurst = this.add.particles(whale.x, whale.y - 90, coinKey, {
-      speed: { min: 85, max: 210 },
+      speed: { min: 70, max: 160 },
       angle: { min: 210, max: 330 },
       gravityY: 260,
-      lifespan: 1200,
-      scale: { start: coinScale * 1.45, end: coinScale * 0.45 },
+      lifespan: 1050,
+      scale: { start: coinScale * 1.1, end: coinScale * 0.35 },
       alpha: { start: 1, end: 0 },
       emitting: false,
-      maxParticles: this.rsp?.compact ? 48 : 80,
-    }).setDepth(whale.y + 2);
+      maxParticles: this.rsp?.compact ? 28 : 46,
+    }).setDepth(buildingDepth + 2);
+    this.registerBuildingOwnedVisual(whale.id, this.coinBurst);
 
-    // premium entrance: red carpet + velvet rope in front of the door
-    this.add.image(whale.x, whale.y + 22, 'carpet').setScale(0.82).setDepth(2);
-    this.add.image(whale.x, whale.y + 30, 'viprope').setScale(0.9).setOrigin(0.5, 1).setDepth(whale.y + 30);
-    this.add.text(whale.x, whale.y + 45, 'VIP QUEUE', {
-      fontFamily: '"Courier New", monospace',
-      fontSize: '10px',
-      fontStyle: 'bold',
-      color: '#f6c945',
-      stroke: '#141a24',
-      strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(whale.y + 40);
+    const queuePlace = {
+      id: `${whale.id}:vip_queue`,
+      ownerId: whale.id,
+      name: 'VIP Queue',
+      x: whale.x + 67,
+      y: whale.y + 11,
+      w: 58,
+      h: 28,
+      interactionW: 52,
+      interactionH: 26,
+      labelOffsetY: 4,
+      description: 'A velvet line between ambition and disposable income.',
+      tooltipLines: ['Premium users queue briefly. Everyone else receives the immersive version.'],
+      effect: 'Attached premium landmark: +Prestige, +Corruption, no road blocking.',
+      interactive: true,
+    };
+    if (!this.attachedPlacesById) this.attachedPlacesById = {};
+    this.attachedPlacesById[queuePlace.id] = queuePlace;
+    const queueShadow = this.add.ellipse(queuePlace.x, queuePlace.y - 2, 54, 10, 0x10151d, 0.16)
+      .setDepth(buildingDepth + 1);
+    this.registerBuildingOwnedVisual(whale.id, queueShadow);
+    const queueKey = resolveTexture(this, 'decor_vip_rope_entrance', 'viprope');
+    const queueImage = this.add.image(queuePlace.x, queuePlace.y, queueKey)
+      .setOrigin(0.5, 1)
+      .setDepth(buildingDepth + 3);
+    queueImage.setScale(this.getTextureScaleForHeight(queueKey, 28, 0.9));
+    queueImage.setData('baseScaleX', queueImage.scaleX);
+    queueImage.setData('baseScaleY', queueImage.scaleY);
+    this.placeSpriteById[queuePlace.id] = queueImage;
+    this.registerBuildingOwnedVisual(whale.id, queueImage);
+    const queueLabel = this.addPlaceLabel(queuePlace, SMALL_LABEL_FONT_SIZE);
+    this.placeLabelsById[queuePlace.id] = queueLabel;
+    this.registerBuildingOwnedVisual(whale.id, queueLabel);
+    const queueHit = this.createPlaceHitZone(queuePlace, queueImage, () => this.showTooltip(queuePlace));
+    this.registerBuildingOwnedVisual(whale.id, queueHit);
   }
 
   burstCoins(count = 42) {
@@ -6561,7 +6733,8 @@ export default class TownScene extends Phaser.Scene {
 
   refreshUpgradeVisual(place) {
     const existing = this.upgradeVisualsById?.[place.id];
-    if (existing) existing.destroy();
+    if (existing) this.destroyOwnedWorldObject(existing);
+    delete this.upgradeVisualsById?.[place.id];
     if (place?.isPlaced === false) return;
 
     const level = this.getPlaceLevel(place);
@@ -6602,86 +6775,37 @@ export default class TownScene extends Phaser.Scene {
     };
 
     if (place.id === 'tavern') {
-      addImage(-w / 2 - 10, -8, resolveTexture(this, 'prop_barrel', 'barrel'), 0.85);
-      if (level >= 3) addImage(w / 2 + 10, -10, resolveTexture(this, 'prop_lamp', 'lamp'), 0.8);
-      g.fillStyle(0xf6c945);
-      g.fillRect(-26, -h + 22, 52, 7);
-      if (level >= 4) {
-        g.fillStyle(0xd9bc85, 0.75);
-        g.fillCircle(8, -h - 18, 8);
-        g.fillCircle(21, -h - 28, 6);
-      }
+      addImage(-w / 2 - 8, -7, resolveTexture(this, 'prop_barrel', 'barrel'), 0.78);
+      if (level >= 3) addImage(w / 2 + 8, -8, resolveTexture(this, 'prop_lamp', 'lamp'), 0.72);
+      if (level >= 4) addSparkles(4, 0xffd58a);
     } else if (place.id === 'blacksmith') {
-      g.fillStyle(0xff7a2f, 0.55 + level * 0.06);
-      g.fillRoundedRect(-20, -46, 40, 28, 4);
-      g.fillStyle(0xf6c945, 0.75);
-      g.fillRect(-13, -39, 26, 12);
-      if (level >= 2) addImage(w / 2 + 10, -8, resolveTexture(this, 'object_anvil', 'crate'), 0.75);
-      if (level >= 3) addImage(-w / 2 - 10, -7, resolveTexture(this, 'prop_crate', 'crate'), 0.9);
-      if (level >= 4) addSparkles(8, 0xffa04d);
+      addImage(w / 2 + 8, -7, resolveTexture(this, 'object_anvil', 'crate'), 0.68);
+      if (level >= 3) addImage(-w / 2 - 8, -6, resolveTexture(this, 'prop_crate', 'crate'), 0.78);
+      if (level >= 4) addSparkles(5, 0xffa04d);
     } else if (place.id === 'guildhall') {
-      g.fillStyle(0x3e6db5);
-      g.fillRect(-w / 2 + 18, -h + 18, 12, 42);
-      g.fillRect(w / 2 - 30, -h + 18, 12, 42);
-      g.fillStyle(0xf2ead8);
-      for (let i = 0; i < level; i += 1) g.fillRect(w / 2 - 18, -30 - i * 5, 18, 4);
-      if (level >= 4) addImage(w / 2 + 12, -10, resolveTexture(this, 'prop_signpost', 'signpost'), 0.75);
+      addImage(w / 2 + 9, -8, resolveTexture(this, 'object_notice_board_02', 'notice_board'), 0.66);
+      if (level >= 4) addImage(-w / 2 - 8, -7, resolveTexture(this, 'prop_signpost', 'signpost'), 0.68);
     } else if (place.id === 'training') {
-      if (level >= 2) addImage(-w / 2 - 10, -8, resolveTexture(this, 'object_training_dummy', 'dummy'), 0.8);
-      if (level >= 3) addImage(w / 2 + 10, -8, resolveTexture(this, 'object_target', 'dummy'), 0.7);
-      g.lineStyle(3, 0x8a5a2b);
-      g.strokeCircle(0, -36, 14 + level * 2);
-      g.lineStyle(2, 0xf6c945);
-      g.strokeCircle(0, -36, 6 + level);
+      addImage(-w / 2 - 8, -7, resolveTexture(this, 'object_training_dummy', 'dummy'), 0.7);
+      if (level >= 3) addImage(w / 2 + 8, -7, resolveTexture(this, 'object_target', 'dummy'), 0.62);
     } else if (place.id === 'market') {
-      addImage(-w / 2 - 8, -8, resolveTexture(this, 'prop_crate', 'crate'), 0.85);
-      addImage(w / 2 + 8, -8, resolveTexture(this, 'prop_barrel', 'barrel'), 0.8);
-      if (level >= 3) {
-        g.fillStyle(0xf6c945);
-        for (let i = 0; i < level + 2; i += 1) g.fillCircle(-26 + i * 12, -44, 4);
-      }
-      if (level >= 4) addImage(0, -h - 8, resolveTexture(this, 'prop_signpost', 'signpost'), 0.8);
+      addImage(-w / 2 - 7, -7, resolveTexture(this, 'prop_crate', 'crate'), 0.75);
+      addImage(w / 2 + 7, -7, resolveTexture(this, 'prop_barrel', 'barrel'), 0.7);
+      if (level >= 3) addImage(0, -h - 4, resolveTexture(this, 'object_coin_pile', 'ph-icon_coin'), 0.5);
     } else if (place.id === 'whale') {
-      const upgradeCoinKey = resolveTexture(this, 'icon_coin', 'ph-icon_coin');
-      const upgradeCoinScale = this.getTextureScaleForMaxDimension(upgradeCoinKey, 10, 1);
-      const upgradeWhaleKey = resolveTexture(this, 'icon_whale', 'ph-icon_whale');
-      const upgradeWhaleScale = this.getTextureScaleForMaxDimension(upgradeWhaleKey, 28 + level * 3, 1.4);
-      addImage(0, -h * 0.52, 'glow', 1.15 + level * 0.18);
-      addImage(0, -h * 0.58, upgradeWhaleKey, upgradeWhaleScale);
-      addImage(0, 20, 'viprope', 1 + level * 0.05);
-      addSparkles(10 + level * 3, 0xffe08a);
-      for (let i = 0; i < level + 2; i += 1) {
-        addImage(-52 + i * 22, -h - 4 - (i % 2) * 8, upgradeCoinKey, upgradeCoinScale * 1.15);
-      }
+      addImage(-w / 2 - 5, -6, resolveTexture(this, 'object_coin_pile', 'ph-icon_coin'), 0.52);
+      if (level >= 4) addImage(w / 2 + 5, -6, resolveTexture(this, 'object_contract_stack', 'crate'), 0.5);
+      addSparkles(Math.min(8, 2 + level), 0xffe08a);
     } else if (place.id === 'dungeon') {
-      g.fillStyle(0x7a4bd0, 0.24 + level * 0.08);
-      g.fillEllipse(0, -32, w * 0.55, 34 + level * 5);
-      g.fillStyle(0xe74c3c);
-      g.fillRect(-30, -58, 5, 5);
-      g.fillRect(25, -58, 5, 5);
-      if (level >= 3) {
-        g.fillStyle(0xf2ead8);
-        g.fillCircle(-w / 2 - 6, -24, 8);
-        g.fillRect(-w / 2 - 10, -20, 8, 5);
-      }
+      addImage(-w / 2 - 6, -6, resolveTexture(this, 'object_notice_board_gold', 'signpost'), 0.6);
+      if (level >= 3) addImage(w / 2 + 6, -6, resolveTexture(this, 'object_brazier', 'lamp'), 0.62);
     } else if (place.id === 'debt_collector_booth') {
-      g.fillStyle(0xf2ead8);
-      for (let i = 0; i < level + 1; i += 1) g.fillRect(-w / 2 + 6 + i * 13, -h - 6, 10, 14);
-      g.fillStyle(0x14101c);
-      g.fillRect(w / 2 + 4, -32, 7, 22);
-      g.fillRect(w / 2 + 16, -32, 7, 22);
+      addImage(w / 2 + 7, -6, resolveTexture(this, 'object_contract_stack', 'crate'), 0.54);
     } else if (place.id === 'complaint_barrel') {
-      g.fillStyle(0x6b4a2b);
-      g.fillRect(-w / 2 - 8, -18, 6, 28);
-      g.fillRect(w / 2 + 4, -18, 6, 28);
-      g.fillStyle(0xf2ead8);
-      g.fillRect(-w / 2 - 14, -38, w + 28, 16);
-      g.fillStyle(0xc0392b);
-      g.fillRect(-w / 2 - 8, -31, w + 16, 3);
+      addImage(w / 2 + 5, -5, resolveTexture(this, 'object_notice_board_02', 'notice_board'), 0.46);
     } else if (place.id === 'notice_board') {
-      g.fillStyle(0xfff6dc);
-      for (let i = 0; i < level + 2; i += 1) g.fillRect(-24 + i * 13, -h + 8 + (i % 2) * 10, 10, 12);
-      if (level >= 3) addSparkles(4, 0x7fdc93);
+      addImage(w / 2 + 5, -6, resolveTexture(this, 'object_notice_board_02', 'notice_board'), 0.5);
+      if (level >= 3) addSparkles(3, 0x7fdc93);
     } else if (level >= 3) {
       // generic fallback stays subtle: no banner bars or posts (they read as
       // debug artifacts floating over the taller angled sprites), just a few
