@@ -90,11 +90,13 @@ import {
   CARRIER_CONFIG,
   EXTRACTION_BUILDINGS,
   EXTRACTION_IDS,
+  EXTRACTION_PRIORITIES,
   EXTRACTION_RANGE_TILES,
   FRONTIER_BUILD_SURCHARGE,
   STORED_RESOURCES,
   STOREHOUSE_CAP_PER_LEVEL,
   TERRITORY_RADIUS,
+  normalizeExtractionRuntime,
   normalizeNodeRuntime,
 } from '../systems/extraction.js';
 import {
@@ -725,6 +727,12 @@ export default class TownScene extends Phaser.Scene {
       heroInjuries: 0,
       heroesLeft: 0,
       corruptionEvents: 0,
+      resourceNodesDiscovered: 0,
+      resourceNodesSurveyed: 0,
+      extractionCampsBuilt: 0,
+      extractionWorkersAssigned: 0,
+      resourceDeliveries: 0,
+      resourcesSpent: 0,
       ...(saved?.stats || {}),
     };
     this.completedObjectives = new Set(saved?.completedObjectives || []);
@@ -767,6 +775,8 @@ export default class TownScene extends Phaser.Scene {
     // regrowing forest cells. Nodes lazily hydrate from POI_RESOURCE_YIELDS.
     this.resourceNodes = this.hydrateResourceNodes(saved?.resourceNodes);
     this.carriers = [];
+    this.savedResourceDeliveries = Array.isArray(saved?.resourceDeliveries) ? saved.resourceDeliveries.slice(0, 12) : [];
+    this.extractionCargoVisuals = {};
     this.harvestedForestCells = new Map(
       Array.isArray(saved?.harvestedForest)
         ? saved.harvestedForest
@@ -848,6 +858,9 @@ export default class TownScene extends Phaser.Scene {
     this.setupBuildInput();
     this.startIdleChatter();
     this.startServiceWalkers();
+    this.restoreExtractionAssignments();
+    this.refreshExtractionCargoVisuals();
+    this.restoreResourceDeliveries();
 
     // shared state for the UI scene
     this.registry.set('day', this.day);
@@ -917,6 +930,13 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-node-access', this.establishNodeAccess, this);
     this.game.events.on('gwg-node-gatherer', this.assignNodeGatherer, this);
     this.game.events.on('gwg-node-abandon', this.abandonNode, this);
+    this.game.events.on('gwg-node-camp', this.startNodeCampPlacement, this);
+    this.game.events.on('gwg-extraction-assign', this.assignExtractionWorkerFromUi, this);
+    this.game.events.on('gwg-extraction-toggle', this.toggleExtractionFromUi, this);
+    this.game.events.on('gwg-extraction-priority', this.cycleExtractionPriorityFromUi, this);
+    this.game.events.on('gwg-extraction-carrier', this.requestExtractionCarrierFromUi, this);
+    this.game.events.on('gwg-premium-salvage', this.convertPremiumSalvageFromUi, this);
+    this.game.events.on('gwg-storehouse-action', this.runStorehouseActionFromUi, this);
     this.game.events.on('gwg-confirm-build', this.confirmRoadPlan, this);
     this.game.events.on('gwg-focus-hero', this.focusHeroFromRoster, this);
     this.game.events.on('gwg-toggle-hero-favorite', this.toggleHeroFavoriteFromUi, this);
@@ -982,6 +1002,13 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-node-access', this.establishNodeAccess, this);
       this.game.events.off('gwg-node-gatherer', this.assignNodeGatherer, this);
       this.game.events.off('gwg-node-abandon', this.abandonNode, this);
+      this.game.events.off('gwg-node-camp', this.startNodeCampPlacement, this);
+      this.game.events.off('gwg-extraction-assign', this.assignExtractionWorkerFromUi, this);
+      this.game.events.off('gwg-extraction-toggle', this.toggleExtractionFromUi, this);
+      this.game.events.off('gwg-extraction-priority', this.cycleExtractionPriorityFromUi, this);
+      this.game.events.off('gwg-extraction-carrier', this.requestExtractionCarrierFromUi, this);
+      this.game.events.off('gwg-premium-salvage', this.convertPremiumSalvageFromUi, this);
+      this.game.events.off('gwg-storehouse-action', this.runStorehouseActionFromUi, this);
       this.game.events.off('gwg-confirm-build', this.confirmRoadPlan, this);
       this.game.events.off('gwg-focus-hero', this.focusHeroFromRoster, this);
       this.game.events.off('gwg-toggle-hero-favorite', this.toggleHeroFavoriteFromUi, this);
@@ -1049,6 +1076,7 @@ export default class TownScene extends Phaser.Scene {
         tradeSettings: parsed.tradeSettings || null,
         productionIncidents: Array.isArray(parsed.productionIncidents) ? parsed.productionIncidents : [],
         resourceNodes: parsed.resourceNodes && typeof parsed.resourceNodes === 'object' ? parsed.resourceNodes : null,
+        resourceDeliveries: Array.isArray(parsed.resourceDeliveries) ? parsed.resourceDeliveries : [],
         harvestedForest: Array.isArray(parsed.harvestedForest) ? parsed.harvestedForest : null,
         areaReputation: parsed.areaReputation || {},
         townReputation: Number.isFinite(parsed.townReputation) ? parsed.townReputation : null,
@@ -1393,6 +1421,8 @@ export default class TownScene extends Phaser.Scene {
       overloadedDays: 0,
       lastUpkeepDay: 0,
       production: normalizeProductionRuntime({}, getBaseBuildingId(id)),
+      extraction: normalizeExtractionRuntime({}, getBaseBuildingId(id)),
+      storage: { mode: 'all', resource: null, priority: 'normal', reserveMinimum: 0 },
     };
     this.cityState.buildingRuntime[id] = {
       ...defaults,
@@ -1404,6 +1434,13 @@ export default class TownScene extends Phaser.Scene {
         ...(savedRuntime.actionDays || {}),
       },
       production: normalizeProductionRuntime(savedRuntime.production, getBaseBuildingId(id)),
+      extraction: normalizeExtractionRuntime(savedRuntime.extraction, getBaseBuildingId(id)),
+      storage: {
+        mode: savedRuntime.storage?.mode === 'restricted' ? 'restricted' : 'all',
+        resource: STORED_RESOURCES.includes(savedRuntime.storage?.resource) ? savedRuntime.storage.resource : null,
+        priority: ['low', 'normal', 'high'].includes(savedRuntime.storage?.priority) ? savedRuntime.storage.priority : 'normal',
+        reserveMinimum: Math.max(0, Math.min(20, Number(savedRuntime.storage?.reserveMinimum) || 0)),
+      },
     };
     return this.cityState.buildingRuntime[id];
   }
@@ -1572,9 +1609,18 @@ export default class TownScene extends Phaser.Scene {
     const progressMet = (Number(runtime.upgradeProgress) || 0) >= requiredProgress;
     const usageMet = (Number(runtime.usageCount) || 0) >= requiredUses;
     const counterMet = counterValue >= counterGoal;
-    const materialCost = nextLevel >= 3 && getBuildingCatalogEntry(place.id)
-      ? { planks: Math.max(1, nextLevel - 2), ...(nextLevel >= 4 ? { tools: 1 } : {}) }
-      : {};
+    const baseId = getBaseBuildingId(place.baseId || place.id);
+    const firstMaterialCosts = {
+      tavern: { wood: 2 }, inn: { wood: 3 }, hero_hostel: { wood: 3 },
+      watchtower: { wood: 2, iron: 1 }, frontier_outpost: { wood: 2, iron: 1 },
+      storehouse: { wood: 2 }, lumber_camp: { wood: 1 }, mining_camp: { wood: 1 },
+      herbalist_hut: { wood: 1 }, salvage_camp: { wood: 1 }, blacksmith: { iron: 2 },
+    };
+    const materialCost = nextLevel === 2
+      ? { ...(firstMaterialCosts[baseId] || {}) }
+      : nextLevel >= 3 && getBuildingCatalogEntry(place.id)
+        ? { planks: Math.max(1, nextLevel - 2), ...(nextLevel >= 4 ? { tools: 1 } : {}) }
+        : {};
     const materialsMet = hasRecipeInputs(this.townInventory, materialCost);
     const usageRequirementMet = nextLevel <= 2 ? (progressMet || usageMet || counterMet) : (progressMet && (usageMet || counterMet));
     const met = usageRequirementMet && materialsMet;
@@ -1885,6 +1931,7 @@ export default class TownScene extends Phaser.Scene {
       tradeSettings: structuredClone(this.tradeSettings || normalizeTradeSettings()),
       productionIncidents: (this.productionSummary?.incidents || []).slice(-8),
       resourceNodes: structuredClone(this.resourceNodes || {}),
+      resourceDeliveries: this.serializeResourceDeliveries(),
       harvestedForest: [...(this.harvestedForestCells || new Map())].map(([key, regrowDay]) => ({ key, regrowDay })),
       areaReputation: { ...(this.areaReputation || {}) },
       townReputation: this.townReputation,
@@ -3289,6 +3336,22 @@ export default class TownScene extends Phaser.Scene {
       identity: this.getTownIdentity(),
       beds: this.getLodgingReport(),
       inventory: this.townInventory || {},
+      extraction: {
+        discoveredNodes: Object.values(this.explorationPointById || {}).filter((place) => (
+          this.isResourceNode(place) && this.discoveredPois?.has(place.id)
+        )).length,
+        surveyedNodes: Object.entries(this.resourceNodes || {}).filter(([, node]) => node?.surveyed).length,
+        camps: this.cityState.placedBuildings.filter((placement) => EXTRACTION_IDS.includes(getBaseBuildingId(placement.id))).length,
+        connected: this.cityState.placedBuildings
+          .map((placement) => this.buildingById?.[placement.id])
+          .filter((place) => place && EXTRACTION_IDS.includes(getBaseBuildingId(place.baseId || place.id)))
+          .some((place) => this.getBuildingRoadAccess(place).connected),
+        storehouses: this.getPlacedBuildingCount('storehouse'),
+        assigned: this.cityState.placedBuildings
+          .map((placement) => this.getExtractionRuntime(placement.id))
+          .filter((runtime) => runtime?.assignedHeroId).length,
+        delivered: Object.values(this.resourceNodes || {}).reduce((sum, node) => sum + (Number(node?.deliveredTotal) || 0), 0),
+      },
       fairBuildingLevelTotal: ['tavern', 'blacksmith', 'guildhall', 'training']
         .reduce((sum, id) => sum + (levels[id] || 1), 0),
     };
@@ -3319,6 +3382,8 @@ export default class TownScene extends Phaser.Scene {
     if ((this.townInventory?.loot || 0) > 0 && this.isBuildingPlaced('market')) return 'You have loot in storage. Use the Market to convert it into gold.';
     const lodging = this.getLodgingReport();
     if (lodging.homeless > 0) return `Heroes exceed bed capacity by ${lodging.homeless}. Upgrade or build lodging.`;
+    const extractionHint = this.cityState?.placedBuildings ? this.getExtractionAdvisorNotes()[0] : null;
+    if (extractionHint) return typeof extractionHint === 'string' ? extractionHint : extractionHint.text;
     if (R.threat >= RESOURCE_THRESHOLDS.threatWarning) return 'Warning: Threat is rising. Post safer quests.';
     if (R.trust < RESOURCE_THRESHOLDS.trustWarning) return 'Warning: Trust is low. Honest heroes may leave.';
     if (R.morale < RESOURCE_THRESHOLDS.moraleWarning) return 'Town Problem: heroes are losing morale.';
@@ -4559,6 +4624,81 @@ export default class TownScene extends Phaser.Scene {
     return this.isCatalogUnlocked(catalog) ? null : (catalog.lockReason || 'Locked by suspicious municipal policy.');
   }
 
+  getExtractionNodesFor(baseId, gridX, gridY) {
+    const config = EXTRACTION_BUILDINGS[baseId];
+    if (!config) return [];
+    const accepts = config.accepts || [config.resource];
+    return Object.values(this.explorationPointById || {})
+      .filter((place) => this.isResourceNode(place) && accepts.includes(POI_RESOURCE_YIELDS[place.id]?.resource))
+      .filter((place) => this.isRevealed(place.gridX, place.gridY))
+      .map((place) => ({ place, distance: Math.hypot((place.gridX || 0) - gridX, (place.gridY || 0) - gridY) }))
+      .sort((a, b) => a.distance - b.distance);
+  }
+
+  getNearestStorehouse(gridX, gridY) {
+    return this.cityState.placedBuildings
+      .filter((placement) => getBaseBuildingId(placement.id) === 'storehouse')
+      .map((placement) => ({
+        placement,
+        place: this.buildingById?.[placement.id],
+        distance: Math.hypot(placement.gridX - gridX, placement.gridY - gridY),
+      }))
+      .filter((entry) => entry.place?.isPlaced && !this.getBuildingRuntime(entry.place.id).closed)
+      .sort((a, b) => a.distance - b.distance)[0] || null;
+  }
+
+  hasHarvestableForestNear(gridX, gridY, radius = 10) {
+    return [...(this.forestBlockedCells || [])].some((key) => {
+      if (this.harvestedForestCells?.has(key)) return false;
+      const [x, y] = key.split(',').map(Number);
+      return Math.hypot(x - gridX, y - gridY) <= radius;
+    });
+  }
+
+  getExtractionPlacementAssessment(baseId, gridX, gridY, footprint = { w: 2, h: 2 }) {
+    const config = EXTRACTION_BUILDINGS[baseId];
+    if (!config) return null;
+    const centerX = gridX + footprint.w / 2;
+    const centerY = gridY + footprint.h / 2;
+    const nodes = this.getExtractionNodesFor(baseId, centerX, centerY);
+    const nearest = nodes[0] || null;
+    const forestAvailable = baseId === 'lumber_camp' && this.hasHarvestableForestNear(centerX, centerY);
+    const nodeInRange = nearest && nearest.distance <= EXTRACTION_RANGE_TILES;
+    if (!nodeInRange && !forestAvailable) {
+      const reason = baseId === 'lumber_camp'
+        ? 'No forest or Wood Grove in range.'
+        : nearest
+          ? `${nearest.place.name} is too far away (${Math.ceil(nearest.distance)}/${EXTRACTION_RANGE_TILES} tiles).`
+          : `${config.resource === 'iron' ? 'Iron Outcrop' : config.resource === 'herbs' ? 'Herb Patch' : 'Salvage site'} not discovered in range.`;
+      return { valid: false, quality: 'bad', reason, node: nearest?.place || null };
+    }
+    const roadCell = this.getRoadAccessCells(gridX, gridY, footprint)
+      .find((cell) => this.gridCells.get(gridKey(cell.x, cell.y))?.road);
+    const storage = this.getNearestStorehouse(centerX, centerY);
+    const inTerritory = this.isInTerritory(centerX, centerY);
+    const node = nodeInRange ? nearest.place : null;
+    const danger = node ? this.getResourceNode(node.id).danger : 12;
+    const areaRep = this.getAreaReputation(node ? this.getAreaIdForPlace(node) : 'frontier');
+    const warnings = [];
+    if (!roadCell) warnings.push('No road to storage; carriers will be slow and less reliable.');
+    if (!storage) warnings.push('No Storehouse; Guild Hall fallback is inefficient.');
+    else if (storage.distance > 28) warnings.push(`Storehouse is far away (${Math.ceil(storage.distance)} tiles).`);
+    if (!inTerritory) warnings.push('Outside supported territory; build a Frontier Outpost nearby.');
+    if (danger + areaRep >= 65) warnings.push(`Area reputation: Dangerous (${Math.min(100, danger + areaRep)}/100).`);
+    return {
+      valid: true,
+      quality: warnings.length ? 'warning' : 'good',
+      reason: warnings.join(' '),
+      node,
+      forestAvailable,
+      roadCell: roadCell || null,
+      storage,
+      danger,
+      areaRep,
+      expectedOutput: config.baseRate,
+    };
+  }
+
   validateBuildPlacement(gridX, gridY) {
     if (!this.buildMode) return { valid: false, reason: 'Choose something to build.' };
     const footprint = this.getBuildFootprint();
@@ -4619,6 +4759,10 @@ export default class TownScene extends Phaser.Scene {
     })) {
       return { valid: false, reason: 'Occupied tiles object to architecture.' };
     }
+    const extraction = this.getExtractionPlacementAssessment(catalog.id, gridX, gridY, footprint);
+    if (extraction && !extraction.valid) {
+      return { valid: false, quality: 'bad', reason: extraction.reason, footprint, extraction };
+    }
     if (catalog.roadRequired) {
       const hasRoad = this.getRoadAccessCells(gridX, gridY, footprint)
         .some((cell) => this.gridCells.get(gridKey(cell.x, cell.y))?.road);
@@ -4636,6 +4780,8 @@ export default class TownScene extends Phaser.Scene {
       cost: baseCost,
       footprint,
       outsideTerritory,
+      quality: extraction?.quality || (outsideTerritory ? 'warning' : 'good'),
+      extraction,
     };
   }
 
@@ -4658,10 +4804,13 @@ export default class TownScene extends Phaser.Scene {
     this.buildPreviewCell = cell;
     const result = this.validateBuildPlacement(cell.x, cell.y);
     const footprint = result.footprint || this.getBuildFootprint();
+    const anchor = this.gridToVisual(cell.x, cell.y, footprint);
     // delete mode highlights in amber: a valid target means "will remove"
     const validColor = this.buildMode.kind === 'delete' ? 0xf6c945 : 0x7fdc93;
     this.buildPreviewGraphics.clear().setVisible(true);
-    const previewColor = result.valid ? validColor : 0xf0938f;
+    const previewColor = result.valid
+      ? (result.quality === 'warning' ? 0xf6c945 : validColor)
+      : 0xf0938f;
     if (this.useIsoRendering()) {
       this.drawPolygon(
         this.buildPreviewGraphics,
@@ -4694,9 +4843,14 @@ export default class TownScene extends Phaser.Scene {
         this.buildPreviewGraphics.strokeRect(left, top, GRID_CONFIG.tileSize - 4, GRID_CONFIG.tileSize - 4);
       }
     }
+    if (result.extraction?.node) {
+      const node = result.extraction.node;
+      this.buildPreviewGraphics.lineStyle(2, previewColor, 0.9);
+      this.buildPreviewGraphics.strokeEllipse(node.x, node.y - 12, 76, 38);
+      this.buildPreviewGraphics.lineBetween(anchor.x, anchor.y - 8, node.x, node.y - 12);
+    }
 
     const definition = this.getBuildModeDefinition();
-    const anchor = this.gridToVisual(cell.x, cell.y, footprint);
     const name = definition?.name || 'Construction';
     const cost = result.cost ?? definition?.cost ?? 0;
     const costLabel = cost < 0 ? `+${-cost}g refund` : `${cost}g`;
@@ -4720,11 +4874,11 @@ export default class TownScene extends Phaser.Scene {
             : planCount
             ? `Plan: ${planCount} tiles / ${this.getRoadPlanCost()}g - Confirm to build`
             : 'Drag or tap to plan, then Confirm')
-          : 'Ready to place')
+          : (result.quality === 'warning' ? `Works, but inefficient: ${result.reason}` : 'Ready to place'))
       : result.reason;
     this.buildPreviewLabel
       ?.setText(`${name} - ${costLabel}\n${hint}`)
-      .setColor(result.valid ? '#d7f3d0' : '#ffd0cc')
+      .setColor(result.valid ? (result.quality === 'warning' ? '#ffe08a' : '#d7f3d0') : '#ffd0cc')
       .setPosition(labelX, labelY)
       .setVisible(true);
     this.updateBuildGhost(anchor, footprint, result.valid);
@@ -5118,6 +5272,21 @@ export default class TownScene extends Phaser.Scene {
     this.removeBuildingVisuals(id);
     this.clearStaticPropsInsideFootprint(gridX, gridY, catalog.footprint);
     this.renderBuilding(place);
+    if (EXTRACTION_BUILDINGS[getBaseBuildingId(place.baseId || place.id)]) {
+      const baseId = getBaseBuildingId(place.baseId || place.id);
+      const runtime = this.getBuildingRuntime(place.id);
+      const previousNodeId = runtime.extraction?.nodeId;
+      const assessment = this.getExtractionPlacementAssessment(baseId, gridX, gridY, catalog.footprint);
+      runtime.extraction = normalizeExtractionRuntime(runtime.extraction, baseId);
+      runtime.extraction.nodeId = assessment?.node?.id || null;
+      runtime.extraction.lastStatus = runtime.extraction.assignedHeroId ? 'Ready after relocation' : 'Idle: no worker assigned';
+      if (previousNodeId && previousNodeId !== runtime.extraction.nodeId) {
+        const previousNode = this.getResourceNode(previousNodeId);
+        if (previousNode?.assignedCampId === id) previousNode.assignedCampId = null;
+      }
+      if (runtime.extraction.nodeId) this.getResourceNode(runtime.extraction.nodeId).assignedCampId = id;
+      this.refreshExtractionCargoVisuals();
+    }
     this.redrawTerrainDetails();
     this.redrawTerrainVariety();
     this.redrawWildernessDressing();
@@ -5145,6 +5314,12 @@ export default class TownScene extends Phaser.Scene {
       return;
     }
     const refund = Math.floor((catalog.cost || 0) * 0.45);
+    const extraction = this.getBuildingRuntime(id).extraction;
+    if (extraction?.assignedHeroId) this.releaseExtractionWorker(id, false);
+    if (extraction?.nodeId) {
+      const node = this.getResourceNode(extraction.nodeId);
+      if (node?.assignedCampId === id) node.assignedCampId = null;
+    }
     this.clearBuildingCells(place);
     this.cityState.placedBuildings = this.cityState.placedBuildings.filter((entry) => entry.id !== id);
     this.removeBuildingVisuals(id);
@@ -5156,6 +5331,8 @@ export default class TownScene extends Phaser.Scene {
       delete this.placeById[id];
     }
     delete this.cityState.buildingRuntime[id];
+    this.extractionCargoVisuals?.[id]?.destroy?.(true);
+    delete this.extractionCargoVisuals?.[id];
     delete this.upgradeLevels[id];
     if (refund > 0) this.applyDeltas({ gold: refund });
     this.redrawTerrainDetails();
@@ -5285,7 +5462,20 @@ export default class TownScene extends Phaser.Scene {
     this.redrawWildernessDressing();
     this.doorById[building.id] = this.getDoorSpotForPlace(building);
     this.placeById[building.id] = building;
-    this.getBuildingRuntime(building.id);
+    const runtime = this.getBuildingRuntime(building.id);
+    if (EXTRACTION_BUILDINGS[id]) {
+      const assessment = this.getExtractionPlacementAssessment(id, gridX, gridY, catalog.footprint);
+      runtime.extraction = normalizeExtractionRuntime(runtime.extraction, id);
+      runtime.extraction.nodeId = assessment?.node?.id || null;
+      runtime.extraction.lastStatus = 'Idle: no worker assigned';
+      if (assessment?.node) {
+        const node = this.getResourceNode(assessment.node.id);
+        if (!node.assignedCampId) node.assignedCampId = building.id;
+      }
+      this.stats.extractionCampsBuilt = (this.stats.extractionCampsBuilt || 0) + 1;
+      this.refreshExtractionCargoVisuals();
+      this.checkObjectives();
+    }
     this.refreshUpgradeVisual(building);
     if (id === 'whale') this.buildWhaleStationDressing();
     const text = `${building.name} built. ${catalog.kind === 'shady' ? 'The permits arrived pre-corrupted.' : 'Infrastructure briefly resembles hope.'}`;
@@ -6081,7 +6271,12 @@ export default class TownScene extends Phaser.Scene {
     const activeSet = this.getActiveVisibilitySet();
     for (const point of Object.values(this.explorationPointById || {})) {
       const revealed = this.isRevealed(point.gridX, point.gridY);
-      if (revealed) this.discoveredPois?.add(point.id);
+      if (revealed && !this.discoveredPois?.has(point.id)) {
+        this.discoveredPois?.add(point.id);
+        if (this.isResourceNode(point)) {
+          this.stats.resourceNodesDiscovered = (this.stats.resourceNodesDiscovered || 0) + 1;
+        }
+      }
       const active = activeSet.has(gridKey(point.gridX, point.gridY));
       for (const obj of this.explorationPointObjectsById[point.id] || []) {
         obj.setVisible?.(revealed);
@@ -6859,6 +7054,50 @@ export default class TownScene extends Phaser.Scene {
     ];
   }
 
+  getStorehouseInspector(place) {
+    if (getBaseBuildingId(place?.baseId || place?.id) !== 'storehouse') return null;
+    const storage = this.getBuildingRuntime(place.id).storage;
+    return {
+      lines: [
+        `Accepts: ${storage.mode === 'all' ? 'all raw resources' : RESOURCE_BY_ID[storage.resource]?.label || storage.resource}`,
+        `Incoming priority: ${storage.priority}`,
+        `Reserve minimum: ${storage.reserveMinimum} per accepted resource`,
+        ...STORED_RESOURCES.map((id) => `${RESOURCE_BY_ID[id]?.label || id}: ${this.townInventory[id] || 0}/${this.getStorageCap(id)} (${this.getIncomingDeliveries(id)} incoming)`),
+      ],
+      actions: [
+        { label: storage.mode === 'all' ? 'Restrict Resource' : `Restricted: ${RESOURCE_BY_ID[storage.resource]?.label || storage.resource}`, event: 'gwg-storehouse-action', id: `${place.id}:mode` },
+        { label: `Incoming: ${storage.priority}`, event: 'gwg-storehouse-action', id: `${place.id}:priority` },
+        { label: `Reserve: ${storage.reserveMinimum}`, event: 'gwg-storehouse-action', id: `${place.id}:reserve` },
+      ],
+    };
+  }
+
+  runStorehouseActionFromUi(token) {
+    const [placeId, action] = String(token || '').split(':');
+    const place = this.buildingById?.[placeId];
+    if (!place || getBaseBuildingId(place.baseId || place.id) !== 'storehouse') return;
+    const storage = this.getBuildingRuntime(placeId).storage;
+    if (action === 'mode') {
+      if (storage.mode === 'all') {
+        storage.mode = 'restricted';
+        storage.resource = STORED_RESOURCES[0];
+      } else {
+        const next = STORED_RESOURCES.indexOf(storage.resource) + 1;
+        if (next >= STORED_RESOURCES.length) {
+          storage.mode = 'all';
+          storage.resource = null;
+        } else storage.resource = STORED_RESOURCES[next];
+      }
+    } else if (action === 'priority') {
+      const order = ['low', 'normal', 'high'];
+      storage.priority = order[(order.indexOf(storage.priority) + 1) % order.length];
+    } else if (action === 'reserve') {
+      storage.reserveMinimum = storage.reserveMinimum >= 10 ? 0 : storage.reserveMinimum + 5;
+    }
+    this.saveGame(false);
+    this.showPlaceInspector(place);
+  }
+
   getPlaceInspectorPayload(place) {
     if (place.mapPoint) {
       const actionConfig = this.getPoiActionConfig(place);
@@ -6873,6 +7112,10 @@ export default class TownScene extends Phaser.Scene {
       }[actionConfig.risk] || 'Risk: unclear, which is also information.';
       const node = this.isResourceNode(place) ? this.getResourceNode(place.id) : null;
       const sections = [
+        ...(node ? [{
+          title: 'Operation Status',
+          lines: this.getResourceNodeStatusLines(place, node),
+        }] : []),
         {
           title: 'Map Note',
           lines: [place.description, ...(place.tooltipLines || [])].filter(Boolean),
@@ -6894,24 +7137,22 @@ export default class TownScene extends Phaser.Scene {
           ],
         },
       ];
-      if (node) {
-        sections.push({
-          title: 'Resource Node',
-          lines: this.getResourceNodeStatusLines(place, node),
-        });
-      }
+      const nodeActions = node ? this.getResourceNodeActions(place, node) : [];
+      nodeActions.push({
+        label: onCooldown ? `Harvested (Day ${cooldownDay})` : 'Harvest Once',
+        event: 'gwg-poi-action',
+        id: place.id,
+        disabled: onCooldown,
+      });
       return {
         title: place.name,
-        subtitle: node ? 'Resource Node' : 'Exploration Point',
+        subtitle: node
+          ? `${RESOURCE_BY_ID[node.resource]?.label || node.resource} Node - Discovered - Danger ${node.danger}`
+          : 'Exploration Point',
+        primaryActions: node ? nodeActions : undefined,
         sections,
-        actions: [
-          ...(node ? this.getResourceNodeActions(place, node) : []),
-          {
-            label: onCooldown ? `Visited (Day ${cooldownDay})` : actionConfig.label,
-            event: 'gwg-poi-action',
-            id: place.id,
-            disabled: onCooldown,
-          },
+        actions: node ? [] : [
+          { label: onCooldown ? `Visited (Day ${cooldownDay})` : actionConfig.label, event: 'gwg-poi-action', id: place.id, disabled: onCooldown },
           { label: 'Open Town Log', event: 'gwg-open-town-log' },
         ],
       };
@@ -6932,11 +7173,22 @@ export default class TownScene extends Phaser.Scene {
     const specializations = catalog ? getBuildingSpecializations(place.id) : [];
     const specialization = metrics?.specialization || null;
     const production = catalog && place.isPlaced ? this.getProductionInspector(place) : null;
+    const extraction = catalog && place.isPlaced ? this.getExtractionInspector(place) : null;
+    const storehouse = catalog && place.isPlaced ? this.getStorehouseInspector(place) : null;
     const detailLines = [place.description, ...(place.tooltipLines || [])].filter(Boolean).slice(0, 4);
     const actions = [];
 
+    if (extraction) actions.push(...extraction.actions);
+    if (storehouse) actions.push(...storehouse.actions);
     if (production) actions.push(...production.actions);
     if (baseId === 'guildhall') actions.push({ label: 'Equip All Heroes', event: 'gwg-equip-all', id: place.id });
+    if (baseId === 'whale') actions.push({
+      label: `Process Premium Salvage (${this.townInventory.premiumSalvage || 0})`,
+      event: 'gwg-premium-salvage',
+      id: place.id,
+      disabled: (this.townInventory.premiumSalvage || 0) <= 0,
+      className: 'gwg-whale',
+    });
     if (baseId === 'market') {
       actions.push(
         { label: this.tradeSettings.autoExport ? 'Pause Auto-Export' : 'Enable Auto-Export', event: 'gwg-trade-action', id: 'toggle-auto' },
@@ -7011,6 +7263,8 @@ export default class TownScene extends Phaser.Scene {
       subtitle: lockReason || `Level ${info.level}${info.maxed ? ' / MAX' : ''}${catalog?.category ? ` - ${catalog.category}` : ''}${specialization ? ` - ${specialization.name}` : ''}`,
       primaryActions: actions,
       sections: [
+        ...(extraction ? [{ title: 'Extraction Operation', lines: extraction.lines }] : []),
+        ...(storehouse ? [{ title: 'Storage Control', lines: storehouse.lines }] : []),
         ...(production ? [{ title: 'Production', lines: production.lines }] : []),
         ...(baseId === 'market' ? [{ title: 'External Trade', lines: this.getTradeInspectorLines() }] : []),
         ...(baseId === 'guildhall' ? [{ title: 'Hero Supply', lines: this.getTownHeroSupplyLines() }] : []),
@@ -7133,6 +7387,7 @@ export default class TownScene extends Phaser.Scene {
     this.heroTooltipTarget = null;
     this.activeInspector = { type: 'place', id: place.id };
     this.selectPlace(place);
+    this.drawExtractionRoute(place);
     let trackedObjectiveProgress = false;
     if (place.id === 'guildhall') {
       this.stats.guildHallInspected = (this.stats.guildHallInspected || 0) + 1;
@@ -7560,6 +7815,26 @@ export default class TownScene extends Phaser.Scene {
     this.showPlaceInspector(place);
   }
 
+  convertPremiumSalvageFromUi() {
+    const amount = Math.min(2, this.townInventory.premiumSalvage || 0);
+    if (amount <= 0) return;
+    this.townInventory.premiumSalvage -= amount;
+    this.stats.resourcesSpent = (this.stats.resourcesSpent || 0) + amount;
+    const gold = amount * 120;
+    this.applyDeltas({ gold, corruption: amount * 4, trust: -amount });
+    for (const hero of this.getActiveHeroes().filter((item) => item.stats.whaleAccess).slice(0, amount)) {
+      hero.stats.power += 1;
+      hero.stats.envy = Phaser.Math.Clamp((hero.stats.envy || 0) + 5, 0, 100);
+    }
+    const text = `Golden Whale processed ${amount} premium salvage into ${gold}g and several harder questions.`;
+    this.game.events.emit('gwg-event', text);
+    this.addTownLog(text, 'golden_whale');
+    this.addReportLine('economy', text);
+    this.checkObjectives();
+    this.saveGame(false);
+    this.showPlaceInspector(this.buildingById.whale);
+  }
+
   chooseBuildingSpecialization(token) {
     const [placeId, specId] = String(token || '').split(':');
     const place = this.buildingById?.[placeId];
@@ -7661,6 +7936,10 @@ export default class TownScene extends Phaser.Scene {
       this.heroIntentLine.destroy();
       this.heroIntentLine = null;
     }
+    if (this.extractionRouteLine) {
+      this.extractionRouteLine.destroy();
+      this.extractionRouteLine = null;
+    }
     this.selectedPlaceId = null;
     this.selectedHeroId = null;
     this.resetAllPlaceLabels();
@@ -7676,6 +7955,17 @@ export default class TownScene extends Phaser.Scene {
     if (!hero?.intent) return;
     this.heroIntentLine = this.add.graphics().setDepth(4690);
     this.updateSelectedHeroIntentLine();
+  }
+
+  drawExtractionRoute(place) {
+    if (!this.getExtractionRuntime(place)) return;
+    const target = this.getDeliveryTarget(place, EXTRACTION_BUILDINGS[getBaseBuildingId(place.baseId || place.id)]?.resource);
+    if (!target) return;
+    this.extractionRouteLine = this.add.graphics().setDepth(4688);
+    this.extractionRouteLine.lineStyle(2, 0x8fb7c9, 0.5);
+    this.extractionRouteLine.lineBetween(place.x, place.y - 4, target.x, target.y - 4);
+    this.extractionRouteLine.fillStyle(0x8fb7c9, 0.8);
+    this.extractionRouteLine.fillCircle(target.x, target.y - 4, 4);
   }
 
   getHeroIntentDestination(hero) {
@@ -8281,6 +8571,7 @@ export default class TownScene extends Phaser.Scene {
     if (this.isHeroInjured(hero)) return hero.stats.injuryState === 'missing' ? 'Missing' : 'Injured';
     if (hero?.state === 'away' || hero?.awayUntil > this.day) return 'Returning';
     const action = `${hero?.currentAction || hero?.intent?.action || ''}`.toLowerCase();
+    if (hero?.state === 'working' || action.includes('woodcutter') || action.includes('miner') || action.includes('herbalist') || action.includes('salvage runner')) return 'Working';
     if (action.includes('explor') || action.includes('harvest') || action.includes('investigat') || action.includes('clear')) return 'Exploring';
     if (action.includes('intercept') || action.includes('attack') || action.includes('fight')) return 'Fighting';
     if (action.includes('loot') || action.includes('remains')) return 'Looting';
@@ -8296,13 +8587,14 @@ export default class TownScene extends Phaser.Scene {
     if (!hero?.intentRing) return;
     const status = this.getHeroRosterStatus(hero);
     const farZoom = this.cameras.main.zoom < 0.48;
-    const visibleStatuses = new Set(['Walking', 'Exploring', 'On Quest', 'Returning', 'Looting', 'Fighting', 'Injured', 'Missing']);
+    const visibleStatuses = new Set(['Walking', 'Working', 'Exploring', 'On Quest', 'Returning', 'Looting', 'Fighting', 'Injured', 'Missing']);
     const visible = visibleStatuses.has(status)
       && hero.stats.active !== false
       && !hero.stats.deathDay
       && (!farZoom || ['Fighting', 'Injured', 'Missing'].includes(status));
     const colors = {
       Walking: 0x8fb7c9,
+      Working: 0xc7b06a,
       Exploring: 0x7fdc93,
       'On Quest': 0x8db8ff,
       Returning: 0xb8c4d8,
@@ -8408,6 +8700,7 @@ export default class TownScene extends Phaser.Scene {
     }
     for (const [resource, amount] of Object.entries(requirement.materialCost || {})) {
       this.townInventory[resource] = Math.max(0, (this.townInventory[resource] || 0) - amount);
+      this.stats.resourcesSpent = (this.stats.resourcesSpent || 0) + amount;
     }
 
     const bonus = info.def?.deltas || {};
@@ -9098,7 +9391,9 @@ export default class TownScene extends Phaser.Scene {
 
   scheduleAmbient(hero, delay) {
     if (hero.state === 'away') return;
+    if (hero.stats?.gatheringNodeId) return;
     hero.timer = this.time.delayedCall(delay, () => {
+      if (hero.stats?.gatheringNodeId || hero.state === 'working') return;
       if (!this.tryAutonomousHeroAction(hero)) this.ambientMove(hero);
     });
   }
@@ -11040,7 +11335,7 @@ export default class TownScene extends Phaser.Scene {
   getIncomingDeliveries(id) {
     return (this.carriers || [])
       .filter((carrier) => carrier.container?.active && carrier.resource === id)
-      .reduce((sum, carrier) => sum + (carrier.cargo || 0), 0);
+      .reduce((sum, carrier) => sum + (carrier.assignedCargo || carrier.cargo || 0), 0);
   }
 
   // total daily extraction rate into stores for one resource, across all nodes
@@ -11114,9 +11409,11 @@ export default class TownScene extends Phaser.Scene {
     const node = this.getResourceNode(poiId);
     if (!place || !node) return;
     node.surveyed = true;
+    this.stats.resourceNodesSurveyed = (this.stats.resourceNodesSurveyed || 0) + 1;
     const text = `Surveyed the ${place.name}: about ${node.amount} ${node.resource} left, danger ${node.danger}, ${this.getNodeDistanceTiles(place)} tiles out.`;
     this.game.events.emit('gwg-event', text);
     this.addTownLog(text, 'economy');
+    this.checkObjectives();
     this.saveGame(false);
     if (this.activeInspector?.type === 'place') this.showPlaceInspector(place);
   }
@@ -11144,6 +11441,13 @@ export default class TownScene extends Phaser.Scene {
     const place = this.explorationPointById?.[poiId];
     const node = this.getResourceNode(poiId);
     if (!place || !node) return;
+    const camp = this.getCampsNearNode(place)
+      .map((placement) => this.buildingById?.[placement.id])
+      .find((candidate) => candidate && !this.getExtractionRuntime(candidate)?.assignedHeroId);
+    if (camp) {
+      this.assignExtractionWorkerFromUi(camp.id);
+      return;
+    }
     const hero = this.getActiveHeroes()
       .filter((item) => item.state !== 'away' && !this.isHeroInjured(item) && !item.stats.gatheringNodeId)
       .sort((a, b) => (b.stats.power || 0) - (a.stats.power || 0))[0];
@@ -11153,7 +11457,18 @@ export default class TownScene extends Phaser.Scene {
     }
     node.gathererId = hero.def.id;
     hero.stats.gatheringNodeId = poiId;
-    const text = `${hero.def.name} is now gathering ${node.resource} at the ${place.name}. They will bring extra each day.`;
+    this.interruptHero(hero);
+    this.walkTo(hero, {
+      ...place,
+      intentAction: `Surveying ${place.name}`,
+      reason: 'Temporary field assignment; establish a camp for continuous extraction.',
+      risk: node.danger >= 45 ? 'High' : 'Moderate',
+    }, () => {
+      hero.state = 'working';
+      hero.currentAction = `Assigned at ${place.name}; waiting for camp`;
+      this.setHeroAnimationState(hero, 'interact');
+    });
+    const text = `${hero.def.name} assigned to ${place.name}. Build a matching camp for continuous packaged extraction.`;
     this.game.events.emit('gwg-event', text);
     this.addTownLog(text, 'economy');
     this.saveGame(false);
@@ -11165,9 +11480,21 @@ export default class TownScene extends Phaser.Scene {
     if (!node) return;
     if (node.gathererId) {
       const hero = this.heroes?.find((item) => item.def.id === node.gathererId);
-      if (hero) hero.stats.gatheringNodeId = null;
+      if (hero) {
+        hero.stats.gatheringNodeId = null;
+        this.interruptHero(hero);
+        this.scheduleAmbient(hero, Phaser.Math.Between(900, 2200));
+      }
+    }
+    if (node.assignedCampId) {
+      const extraction = this.getExtractionRuntime(node.assignedCampId);
+      if (extraction) {
+        extraction.nodeId = null;
+        extraction.lastStatus = 'Idle: operation abandoned';
+      }
     }
     node.gathererId = null;
+    node.assignedCampId = null;
     node.accessEstablished = false;
     this.game.events.emit('gwg-event', 'Node abandoned. The wilderness resumes ownership immediately.');
     this.saveGame(false);
@@ -11184,36 +11511,356 @@ export default class TownScene extends Phaser.Scene {
     if (!node.accessEstablished) {
       actions.push({ label: 'Establish Access', event: 'gwg-node-access', id: place.id });
     }
+    const campId = this.getCampTypeForNode(node);
+    const camps = this.getCampsNearNode(place);
+    actions.push({
+      label: camps.length ? `${camps.length} Camp${camps.length === 1 ? '' : 's'} Established` : `Establish ${getBuildingCatalogEntry(campId)?.name || 'Camp'}`,
+      event: 'gwg-node-camp',
+      id: place.id,
+      disabled: camps.length > 0,
+    });
     if (!node.gathererId) {
-      actions.push({ label: 'Assign Gatherer', event: 'gwg-node-gatherer', id: place.id });
+      actions.push({ label: 'Assign Hero', event: 'gwg-node-gatherer', id: place.id });
     } else {
-      actions.push({ label: 'Reassign / Abandon', event: 'gwg-node-abandon', id: place.id });
+      actions.push({ label: 'Abandon Operation', event: 'gwg-node-abandon', id: place.id });
     }
     return actions;
   }
 
+  getCampTypeForNode(node) {
+    if (node?.resource === 'wood') return 'lumber_camp';
+    if (node?.resource === 'iron') return 'mining_camp';
+    if (node?.resource === 'herbs') return 'herbalist_hut';
+    return 'salvage_camp';
+  }
+
+  startNodeCampPlacement(poiId) {
+    const place = this.explorationPointById?.[poiId];
+    const node = this.getResourceNode(poiId);
+    if (!place || !node) return;
+    const campId = this.getCampTypeForNode(node);
+    this.buildMenuCategory = 'frontier';
+    this.buildMenuSelectedItemId = campId;
+    this.enterBuildMode('building', campId);
+    this.game.events.emit('gwg-event', `${getBuildingCatalogEntry(campId)?.name || 'Extraction camp'} selected for ${place.name}. Green is efficient; amber works badly; red is municipal fiction.`);
+  }
+
   getResourceNodeStatusLines(place, node) {
-    const camps = this.getCampsNearNode(place).length;
+    const campPlacements = this.getCampsNearNode(place);
+    const camps = campPlacements.length;
+    const assignedCamp = node.assignedCampId ? this.buildingById?.[node.assignedCampId] : this.buildingById?.[campPlacements[0]?.id];
+    const extraction = assignedCamp ? this.getExtractionRuntime(assignedCamp) : null;
     const gatherer = node.gathererId
       ? (this.heroes?.find((h) => h.def.id === node.gathererId)?.def.name || 'a hero')
       : 'none';
     const rate = this.getNodeExtractionRate(place, node);
     const depleted = node.amount <= 0;
+    const storage = this.getNearestStorehouse(place.gridX || 0, place.gridY || 0);
+    const areaRep = this.getAreaReputation(this.getAreaIdForPlace(place));
     return [
+      `Resource: ${RESOURCE_BY_ID[node.resource]?.label || node.resource} - discovered`,
       node.surveyed
         ? `Available: ${node.amount}/${node.maxAmount} ${node.resource}${depleted ? ' (depleted, regrowing)' : ''}.`
         : 'Available: unknown until surveyed.',
+      `Regeneration: ${node.regenPerDay > 0 ? `${node.regenPerDay}/day` : 'none; finite salvage'}.`,
+      `Danger: ${node.danger}/100 - area reputation ${areaRep}/100.`,
       `Distance: ${this.getNodeDistanceTiles(place)} tiles from town core.`,
       {
         text: `Access: ${node.accessEstablished ? 'established' : this.nodeHasRoadAccess(place) ? 'road nearby (not yet claimed)' : 'none - slow and dangerous'}.`,
         className: node.accessEstablished ? 'gwg-good' : (this.nodeHasRoadAccess(place) ? '' : 'gwg-bad'),
       },
       `Extraction camps in range: ${camps}${camps ? '' : ' - build a matching camp within 16 tiles.'}`,
+      `Assigned site: ${assignedCamp?.name || 'none'}.`,
       `Assigned gatherer: ${gatherer}.`,
+      `Nearest Storehouse: ${storage ? `${storage.place.name} (${Math.ceil(storage.distance)} tiles)` : 'none; remote supply is inefficient'}.`,
+      `Cargo waiting: ${extraction?.outputWaiting || 0}/${extraction?.outputCapacity || 0}.`,
       rate > 0
-        ? { text: `Extraction rate: ~${rate}/day into the town stores.`, className: 'gwg-good' }
-        : 'Extraction rate: 0/day. Needs a camp or a gatherer.',
+        ? { text: `Extraction rate: ~${rate}/day. ${extraction?.lastStatus || 'Operation active.'}`, className: 'gwg-good' }
+        : `Extraction status: ${extraction?.lastStatus || 'Idle: needs a camp and assigned worker.'}`,
     ];
+  }
+
+  getExtractionRuntime(placeOrId) {
+    const place = typeof placeOrId === 'string' ? this.buildingById?.[placeOrId] : placeOrId;
+    const baseId = getBaseBuildingId(place?.baseId || place?.id);
+    if (!place || !EXTRACTION_BUILDINGS[baseId]) return null;
+    const runtime = this.getBuildingRuntime(place.id);
+    runtime.extraction = normalizeExtractionRuntime(runtime.extraction, baseId);
+    return runtime.extraction;
+  }
+
+  getExtractionNodeForCamp(place) {
+    const extraction = this.getExtractionRuntime(place);
+    const current = extraction?.nodeId ? this.explorationPointById?.[extraction.nodeId] : null;
+    if (current && this.getCampsNearNode(current).some((placement) => placement.id === place.id)) return current;
+    const baseId = getBaseBuildingId(place?.baseId || place?.id);
+    const footprint = getBuildingCatalogEntry(baseId)?.footprint || { w: 2, h: 2 };
+    const assessment = this.getExtractionPlacementAssessment(baseId, place.gridX, place.gridY, footprint);
+    if (extraction) extraction.nodeId = assessment?.node?.id || null;
+    return assessment?.node || null;
+  }
+
+  getExtractionRisk(place, nodePlace = this.getExtractionNodeForCamp(place)) {
+    const node = nodePlace ? this.getResourceNode(nodePlace.id) : null;
+    const areaRep = nodePlace ? this.getAreaReputation(this.getAreaIdForPlace(nodePlace)) : 20;
+    const road = this.getBuildingRoadAccess(place).connected;
+    const supported = this.isInTerritory(place.gridX || 0, place.gridY || 0);
+    let risk = 4 + (node?.danger || 10) * 0.22 + areaRep * 0.16;
+    if (!road) risk += 8;
+    if (!supported) risk += 7;
+    if (node?.accessEstablished) risk -= 6;
+    return Phaser.Math.Clamp(Math.round(risk), 3, 38);
+  }
+
+  getRoadTransportMultiplier(place) {
+    const access = this.getBuildingRoadAccess(place);
+    if (!access.connected) return 0.55;
+    const road = this.getRoadAt(access.roadCell.x, access.roadCell.y);
+    return ROAD_TYPES[road?.type]?.speed || 1;
+  }
+
+  getExtractionInspector(place) {
+    const baseId = getBaseBuildingId(place?.baseId || place?.id);
+    const config = EXTRACTION_BUILDINGS[baseId];
+    const extraction = this.getExtractionRuntime(place);
+    if (!config || !extraction) return null;
+    const nodePlace = this.getExtractionNodeForCamp(place);
+    const node = nodePlace ? this.getResourceNode(nodePlace.id) : null;
+    const hero = extraction.assignedHeroId
+      ? this.heroes?.find((item) => item.def.id === extraction.assignedHeroId)
+      : null;
+    const storage = this.getNearestStorehouse(place.gridX || 0, place.gridY || 0);
+    const roadAccess = this.getBuildingRoadAccess(place);
+    const risk = this.getExtractionRisk(place, nodePlace);
+    const priority = EXTRACTION_PRIORITIES[extraction.priority] || EXTRACTION_PRIORITIES.normal;
+    return {
+      config,
+      extraction,
+      nodePlace,
+      node,
+      storage,
+      lines: [
+        `Resource site: ${nodePlace?.name || (config.canHarvestForest ? 'nearby harvestable forest' : 'none assigned')}`,
+        `Worker: ${hero ? `${hero.def.name} (${config.workerRole})` : 'none'}`,
+        `Status: ${extraction.lastStatus}`,
+        `Output waiting: ${extraction.outputWaiting}/${extraction.outputCapacity} ${config.resource}`,
+        `Production progress: ${Math.round(extraction.progress * 100)}% - priority ${priority.label}`,
+        `Expected package: ${config.baseRate} ${config.resource} before level/road bonuses`,
+        `Route: ${roadAccess.connected ? `${(ROAD_TYPES[this.getRoadAt(roadAccess.roadCell.x, roadAccess.roadCell.y)?.type] || ROAD_TYPES.dirt).name} access` : 'no road'} -> ${storage?.place?.name || 'Guild Hall fallback'}`,
+        `Travel: ${storage ? `${Math.ceil(storage.distance)} tiles` : 'no Storehouse route'} - speed x${this.getRoadTransportMultiplier(place)}`,
+        { text: `Injury/cargo risk: ${risk}%`, className: risk >= 20 ? 'gwg-bad' : risk >= 12 ? 'gwg-muted' : 'gwg-good' },
+      ],
+      actions: [
+        { label: hero ? 'Release Worker' : `Assign ${config.workerRole}`, event: 'gwg-extraction-assign', id: place.id },
+        { label: extraction.paused ? 'Start Extraction' : 'Pause Extraction', event: 'gwg-extraction-toggle', id: place.id },
+        { label: `Priority: ${priority.label}`, event: 'gwg-extraction-priority', id: place.id },
+        { label: 'Request Carrier', event: 'gwg-extraction-carrier', id: place.id, disabled: extraction.outputWaiting <= 0 },
+      ],
+    };
+  }
+
+  assignExtractionWorkerFromUi(placeId) {
+    const place = this.buildingById?.[placeId];
+    const extraction = this.getExtractionRuntime(place);
+    if (!place || !extraction) return;
+    if (extraction.assignedHeroId) {
+      this.releaseExtractionWorker(placeId);
+      return;
+    }
+    const nodePlace = this.getExtractionNodeForCamp(place);
+    if (!nodePlace && !EXTRACTION_BUILDINGS[getBaseBuildingId(place.baseId || place.id)]?.canHarvestForest) {
+      this.game.events.emit('gwg-event', `${place.name} has no valid resource site. Moving the building may improve its career.`);
+      return;
+    }
+    const hero = this.getActiveHeroes()
+      .filter((item) => item.state !== 'away' && !this.isHeroInjured(item) && !item.stats.gatheringNodeId)
+      .filter((item) => !this.postedQuests.some((quest) => quest.assignedHeroId === item.def.id))
+      .sort((a, b) => (b.stats.power || 0) - (a.stats.power || 0))[0];
+    if (!hero) {
+      this.game.events.emit('gwg-event', 'No free healthy hero can take extraction duty. The pickaxe remains management-adjacent.');
+      return;
+    }
+    const config = EXTRACTION_BUILDINGS[getBaseBuildingId(place.baseId || place.id)];
+    extraction.assignedHeroId = hero.def.id;
+    extraction.nodeId = nodePlace?.id || extraction.nodeId;
+    extraction.lastStatus = `Working: ${config.task}`;
+    if (nodePlace) {
+      const node = this.getResourceNode(nodePlace.id);
+      node.gathererId = hero.def.id;
+      node.assignedCampId = place.id;
+    }
+    hero.stats.gatheringNodeId = extraction.nodeId || place.id;
+    this.interruptHero(hero);
+    const spot = this.doorById[place.id] || place;
+    this.walkTo(hero, {
+      ...spot,
+      intentAction: `Working at ${place.name}`,
+      reason: `${config.workerRole} assigned to ${config.task}.`,
+      risk: this.getExtractionRisk(place) >= 20 ? 'High' : 'Moderate',
+    }, () => {
+      hero.state = 'working';
+      hero.currentAction = `${config.workerRole}: ${config.task}`;
+      hero.intent = { action: `Working: ${config.task}`, destinationId: place.id, destinationName: place.name, reason: 'Assigned extraction duty.', risk: this.getExtractionRisk(place) >= 20 ? 'High' : 'Moderate' };
+      this.setHeroAnimationState(hero, 'interact');
+      this.publishHeroRoster();
+    });
+    this.stats.extractionWorkersAssigned = (this.stats.extractionWorkersAssigned || 0) + 1;
+    this.checkObjectives();
+    this.game.events.emit('gwg-event', `${hero.def.name} assigned as ${config.workerRole} at ${place.name}.`);
+    this.saveGame(false);
+    this.showPlaceInspector(place);
+  }
+
+  releaseExtractionWorker(placeId, showPanel = true) {
+    const place = this.buildingById?.[placeId];
+    const extraction = this.getExtractionRuntime(place);
+    if (!place || !extraction) return;
+    const hero = this.heroes?.find((item) => item.def.id === extraction.assignedHeroId);
+    if (hero) {
+      hero.stats.gatheringNodeId = null;
+      this.interruptHero(hero);
+      this.scheduleAmbient(hero, Phaser.Math.Between(900, 2200));
+    }
+    if (extraction.nodeId) {
+      const node = this.getResourceNode(extraction.nodeId);
+      if (node?.gathererId === extraction.assignedHeroId) node.gathererId = null;
+    }
+    extraction.assignedHeroId = null;
+    extraction.lastStatus = 'Idle: no worker assigned';
+    this.saveGame(false);
+    if (showPanel) this.showPlaceInspector(place);
+  }
+
+  toggleExtractionFromUi(placeId) {
+    const place = this.buildingById?.[placeId];
+    const extraction = this.getExtractionRuntime(place);
+    if (!place || !extraction) return;
+    extraction.paused = !extraction.paused;
+    extraction.lastStatus = extraction.paused ? 'Paused by player' : (extraction.assignedHeroId ? 'Ready to work' : 'Idle: no worker assigned');
+    this.saveGame(false);
+    this.showPlaceInspector(place);
+  }
+
+  cycleExtractionPriorityFromUi(placeId) {
+    const place = this.buildingById?.[placeId];
+    const extraction = this.getExtractionRuntime(place);
+    if (!place || !extraction) return;
+    const order = ['low', 'normal', 'high'];
+    extraction.priority = order[(order.indexOf(extraction.priority) + 1) % order.length];
+    this.saveGame(false);
+    this.showPlaceInspector(place);
+  }
+
+  requestExtractionCarrierFromUi(placeId) {
+    const place = this.buildingById?.[placeId];
+    const extraction = this.getExtractionRuntime(place);
+    if (!place || !extraction || extraction.outputWaiting <= 0) return;
+    extraction.carrierRequested = true;
+    this.dispatchCarriers(true);
+    this.saveGame(false);
+    this.showPlaceInspector(place);
+  }
+
+  restoreExtractionAssignments() {
+    for (const placement of this.cityState.placedBuildings) {
+      const place = this.buildingById?.[placement.id];
+      const extraction = this.getExtractionRuntime(place);
+      if (!place || !extraction?.assignedHeroId) continue;
+      const hero = this.heroes?.find((item) => item.def.id === extraction.assignedHeroId && item.stats.active !== false && !item.stats.deathDay);
+      if (!hero) {
+        extraction.assignedHeroId = null;
+        extraction.lastStatus = 'Idle: assigned worker unavailable';
+        continue;
+      }
+      hero.stats.gatheringNodeId = extraction.nodeId || place.id;
+      const spot = this.doorById[place.id] || place;
+      hero.container.setPosition(spot.x, spot.y);
+      hero.state = 'working';
+      const config = EXTRACTION_BUILDINGS[getBaseBuildingId(place.baseId || place.id)];
+      hero.currentAction = `${config.workerRole}: ${config.task}`;
+      hero.intent = { action: `Working: ${config.task}`, destinationId: place.id, destinationName: place.name, reason: 'Restored extraction assignment.', risk: this.getExtractionRisk(place) >= 20 ? 'High' : 'Moderate' };
+      this.setHeroAnimationState(hero, 'interact');
+    }
+  }
+
+  refreshExtractionCargoVisuals() {
+    for (const visual of Object.values(this.extractionCargoVisuals || {})) visual?.destroy?.(true);
+    this.extractionCargoVisuals = {};
+    for (const placement of this.cityState.placedBuildings) {
+      const place = this.buildingById?.[placement.id];
+      const extraction = this.getExtractionRuntime(place);
+      if (!place || !extraction || extraction.outputWaiting <= 0) continue;
+      const baseId = getBaseBuildingId(place.baseId || place.id);
+      const config = EXTRACTION_BUILDINGS[baseId];
+      const textureKey = resolveTexture(this, 'prop_crate', 'crate');
+      if (!textureKey || !this.textures.exists(textureKey)) continue;
+      const sprite = this.add.image(0, 0, textureKey).setOrigin(0.5, 1);
+      sprite.setScale(this.getTextureScaleForHeight(textureKey, 22, 0.8));
+      sprite.setTint(config.packageTint);
+      const label = this.add.text(12, -20, `${extraction.outputWaiting}`, {
+        fontFamily: '"Courier New", monospace', fontSize: '9px', fontStyle: 'bold', color: '#fff6dc',
+        stroke: '#0c1118', strokeThickness: 2, backgroundColor: '#0f1521dd', padding: { x: 3, y: 1 },
+      }).setOrigin(0.5);
+      const door = this.doorById[place.id] || place;
+      const container = this.add.container(door.x + 18, door.y + 3, [sprite, label]).setDepth(door.y + 18);
+      this.extractionCargoVisuals[place.id] = container;
+    }
+  }
+
+  serializeResourceDeliveries() {
+    return (this.carriers || [])
+      .filter((carrier) => carrier.container?.active && carrier.extractionDelivery && !carrier.deliveryCompleted)
+      .map((carrier) => ({
+        id: carrier.def.id,
+        resource: carrier.resource,
+        amount: carrier.assignedCargo || carrier.cargo || 0,
+        nodeId: carrier.nodeId,
+        sourceId: carrier.originId,
+        destinationId: carrier.destinationId || null,
+      }))
+      .filter((delivery) => delivery.amount > 0)
+      .slice(0, 12);
+  }
+
+  restoreResourceDeliveries() {
+    for (const delivery of this.savedResourceDeliveries || []) {
+      const source = this.buildingById?.[delivery.sourceId];
+      if (!source || !EXTRACTION_BUILDINGS[getBaseBuildingId(source.baseId || source.id)]) {
+        const node = this.getResourceNode(delivery.nodeId);
+        if (node) node.pending += delivery.amount;
+        continue;
+      }
+      const started = this.spawnCarrier(source, delivery.resource, delivery.amount, delivery.nodeId, source.name, {
+        directFallback: false,
+        originId: source.id,
+        restored: true,
+        persistDelivery: true,
+        onLeftover: (leftover) => {
+          const extraction = this.getExtractionRuntime(source);
+          if (extraction) extraction.outputWaiting += leftover;
+        },
+        onDelivered: (delivered) => {
+          const extraction = this.getExtractionRuntime(source);
+          if (extraction) {
+            extraction.deliveredTotal += delivered;
+            extraction.lastStatus = delivered > 0 ? `Delivered ${delivered} ${delivery.resource}` : 'Waiting: delivery rejected';
+          }
+          const node = delivery.nodeId ? this.getResourceNode(delivery.nodeId) : null;
+          if (node) node.deliveredTotal += delivered;
+          if (delivered > 0) {
+            this.stats.resourceDeliveries = (this.stats.resourceDeliveries || 0) + 1;
+            this.checkObjectives();
+          }
+          this.refreshExtractionCargoVisuals();
+        },
+      });
+      if (!started) {
+        const extraction = this.getExtractionRuntime(source);
+        if (extraction) extraction.outputWaiting += delivery.amount;
+      }
+    }
+    this.savedResourceDeliveries = [];
+    this.refreshExtractionCargoVisuals();
   }
 
   // --- extraction, transport, storage ---------------------------------------
@@ -11224,60 +11871,114 @@ export default class TownScene extends Phaser.Scene {
     for (const placement of this.getCampsNearNode(place)) {
       const config = EXTRACTION_BUILDINGS[getBaseBuildingId(placement.id)];
       const runtime = this.getBuildingRuntime(placement.id);
-      if (runtime.closed) continue;
+      const extraction = this.getExtractionRuntime(placement.id);
+      if (runtime.closed || extraction?.paused || !extraction?.assignedHeroId) continue;
       const level = this.getPlaceLevel(this.buildingById[placement.id]);
-      let campRate = config.baseRate + (level - 1);
-      if (this.getBuildingRoadAccess(this.buildingById[placement.id]).connected) campRate += 1;
-      if (node.accessEstablished) campRate += 1;
-      campRate += this.getDistrictBonusesForPlace(this.buildingById[placement.id])
-        .reduce((sum, bonus) => sum + (Number(bonus.extractionBonus) || 0), 0);
-      if ((this.townInventory.tools || 0) > 0) campRate += 1;
+      const priority = EXTRACTION_PRIORITIES[extraction.priority] || EXTRACTION_PRIORITIES.normal;
+      let campRate = (config.baseRate + (level - 1)) * priority.speed;
+      if (this.getBuildingRoadAccess(this.buildingById[placement.id]).connected) campRate *= 1.15;
+      if (node.accessEstablished) campRate *= 1.1;
       rate += campRate;
     }
-    if (node.gathererId) rate += 2;
-    return rate;
+    return Math.round(rate * 10) / 10;
   }
 
   // day-cycle: every working camp/gatherer pulls from its node into a pending
   // package, harvests forest for lumber camps, then regen ticks the nodes
   runExtractionStep() {
     let anyBottleneck = false;
-    for (const place of Object.values(this.explorationPointById || {})) {
-      if (!this.isResourceNode(place) || !this.isRevealed(place.gridX, place.gridY)) continue;
-      const node = this.getResourceNode(place.id);
-      if (!node) continue;
-      // regrow first (loot ruins have regenPerDay 0)
-      if (node.amount < node.maxAmount) {
-        node.amount = Math.min(node.maxAmount, node.amount + (node.regenPerDay || 0));
+    for (const node of Object.values(this.resourceNodes || {})) {
+      if (node.amount < node.maxAmount) node.amount = Math.min(node.maxAmount, node.amount + (node.regenPerDay || 0));
+    }
+    for (const placement of this.cityState.placedBuildings.filter((entry) => getBaseBuildingId(entry.id) === 'frontier_outpost')) {
+      const nearbyNodes = Object.values(this.explorationPointById || {}).filter((place) => (
+        this.isResourceNode(place) && Math.hypot((place.gridX || 0) - placement.gridX, (place.gridY || 0) - placement.gridY) <= 14
+      ));
+      for (const nodePlace of nearbyNodes) this.changeAreaReputation(this.getAreaIdForPlace(nodePlace), -1, 'Frontier patrols');
+    }
+    for (const placement of this.cityState.placedBuildings) {
+      const baseId = getBaseBuildingId(placement.id);
+      const config = EXTRACTION_BUILDINGS[baseId];
+      if (!config) continue;
+      const place = this.buildingById?.[placement.id];
+      const runtime = this.getBuildingRuntime(placement.id);
+      const extraction = this.getExtractionRuntime(place);
+      if (!place || !extraction) continue;
+      if (runtime.closed || extraction.paused) {
+        extraction.lastStatus = runtime.closed ? 'Idle: building closed' : 'Paused by player';
+        continue;
       }
-      const rate = this.getNodeExtractionRate(place, node);
-      if (rate <= 0 || node.amount <= 0) continue;
-      const freeStorage = Math.max(0, this.getStorageCap(node.resource) - (this.townInventory[node.resource] || 0) - node.pending);
-      if (freeStorage <= 0) {
+      const hero = this.heroes?.find((item) => item.def.id === extraction.assignedHeroId);
+      if (!hero || hero.stats.active === false || hero.stats.deathDay) {
+        extraction.assignedHeroId = null;
+        extraction.lastStatus = 'Idle: no worker assigned';
+        continue;
+      }
+      if (this.isHeroInjured(hero)) {
+        extraction.lastStatus = `Idle: ${hero.def.name} is injured`;
+        continue;
+      }
+      const nodePlace = this.getExtractionNodeForCamp(place);
+      const node = nodePlace ? this.getResourceNode(nodePlace.id) : null;
+      const forestAvailable = config.canHarvestForest && this.hasHarvestableForestNear(place.gridX, place.gridY);
+      if (!node && !forestAvailable) {
+        extraction.lastStatus = 'Idle: no matching resource in range';
+        continue;
+      }
+      if (node && node.amount <= 0) {
+        extraction.lastStatus = node.regenPerDay ? 'Idle: node depleted and regrowing' : 'Idle: site depleted';
+        continue;
+      }
+      if (this.isResourceStorageFull(node?.resource || config.resource)) {
+        extraction.lastStatus = 'Idle: storage full';
         anyBottleneck = true;
         continue;
       }
-      const extracted = Math.min(rate, node.amount, freeStorage);
-      node.amount -= extracted;
-      node.pending += extracted;
-      for (const placement of this.getCampsNearNode(place)) {
-        const runtime = this.getBuildingRuntime(placement.id);
-        runtime.productionDone = (runtime.productionDone || 0) + 1;
-        runtime.upgradeProgress = Math.min(100, (runtime.upgradeProgress || 0) + 2);
+      if (extraction.outputWaiting >= extraction.outputCapacity) {
+        extraction.lastStatus = 'Waiting for carrier: output pile full';
+        anyBottleneck = true;
+        continue;
       }
-      // premium wreckage salvage leaks a little corruption as satire
-      if (node.premium && extracted > 0 && Math.random() < 0.5) this.applyDeltas({ corruption: 1 });
-      // gatherer can be injured in dangerous unclaimed nodes
-      if (node.gathererId && !node.accessEstablished && node.danger >= 40 && Math.random() < 0.12) {
-        const hero = this.heroes?.find((h) => h.def.id === node.gathererId);
-        if (hero) {
-          this.injureHero(hero, 2, 'injured', `the ${place.name}`);
-          this.addReportLine('warnings', `${hero.def.name} was hurt gathering at the unsecured ${place.name}.`);
-        }
+      const priority = EXTRACTION_PRIORITIES[extraction.priority] || EXTRACTION_PRIORITIES.normal;
+      const roadMultiplier = this.getRoadTransportMultiplier(place);
+      extraction.progress += 0.72 * priority.speed * Math.max(0.55, roadMultiplier);
+      if (extraction.progress < 1) {
+        extraction.lastStatus = `Working: ${config.task} (${Math.round(extraction.progress * 100)}%)`;
+        continue;
       }
+      extraction.progress = Math.max(0, extraction.progress - 1);
+      const level = this.getPlaceLevel(place);
+      let amount = Math.min(config.baseRate + Math.max(0, level - 1), extraction.outputCapacity - extraction.outputWaiting);
+      if (node) {
+        amount = Math.min(amount, node.amount);
+        node.amount -= amount;
+        node.lastHarvestDay = this.day;
+      } else {
+        amount = Math.min(amount, this.harvestForestForCamp(place, 1));
+      }
+      if (amount <= 0) {
+        extraction.lastStatus = 'Idle: local resource exhausted';
+        continue;
+      }
+      extraction.outputWaiting += amount;
+      extraction.extractedTotal += amount;
+      extraction.lastStatus = `Waiting for carrier: ${extraction.outputWaiting}/${extraction.outputCapacity} ${node?.resource || config.resource}`;
+      runtime.productionDone = (runtime.productionDone || 0) + 1;
+      runtime.upgradeProgress = Math.min(100, (runtime.upgradeProgress || 0) + 2);
+      const risk = this.getExtractionRisk(place, nodePlace) * priority.risk;
+      if (Math.random() < risk / 400) {
+        this.injureHero(hero, risk >= 24 ? 3 : 2, risk >= 24 ? 'badly injured' : 'injured', nodePlace?.name || 'frontier logging');
+        extraction.lastStatus = `Unsafe route: ${hero.def.name} injured`;
+        this.changeAreaReputation(nodePlace ? this.getAreaIdForPlace(nodePlace) : 'frontier', 4, nodePlace?.name || place.name);
+        this.addReportLine('warnings', `${hero.def.name} was injured at ${place.name}. The area gained paperwork and a bad reputation.`);
+      } else if (Math.random() < risk / 650 && extraction.outputWaiting > 0) {
+        extraction.outputWaiting -= 1;
+        extraction.lastStatus = 'Delayed: one cargo unit was stolen on the frontier route';
+        this.changeAreaReputation(nodePlace ? this.getAreaIdForPlace(nodePlace) : 'frontier', 2, nodePlace?.name || place.name);
+      }
+      if (node?.premium && Math.random() < 0.45) this.applyDeltas({ corruption: 1 });
     }
-    // lumber camps also thin nearby forest into wood
-    this.harvestForestFromCamps();
+    this.refreshExtractionCargoVisuals();
     if (anyBottleneck) {
       this.addReportLine('warnings', 'Storage full: some extraction paused. Build or upgrade a Storehouse.');
     }
@@ -11286,28 +11987,51 @@ export default class TownScene extends Phaser.Scene {
   }
 
   // carriers pick up pending packages and walk them toward a delivery building
-  dispatchCarriers() {
+  dispatchCarriers(force = false) {
     if (!this.isBuilderCity) return;
     this.carriers = (this.carriers || []).filter((carrier) => carrier.container?.active);
     const maxCarriers = this.rsp?.compact ? 2 : 4;
-    for (const place of Object.values(this.explorationPointById || {})) {
+    const camps = this.cityState.placedBuildings
+      .map((placement) => this.buildingById?.[placement.id])
+      .filter((place) => place && EXTRACTION_BUILDINGS[getBaseBuildingId(place.baseId || place.id)])
+      .sort((a, b) => Number(this.getExtractionRuntime(b)?.carrierRequested) - Number(this.getExtractionRuntime(a)?.carrierRequested));
+    for (const camp of camps) {
       if (this.carriers.length >= maxCarriers) break;
-      if (!this.isResourceNode(place)) continue;
-      const node = this.getResourceNode(place.id);
-      if (!node || node.pending <= 0) continue;
-      if (this.carriers.some((carrier) => carrier.nodeId === place.id)) continue;
-      const camps = this.getCampsNearNode(place);
-      if (!camps.length) {
-        // no camp (pure gatherer) - deliver directly, no carrier art
-        const delivered = this.addTownResource(node.resource, node.pending, `Gatherer at ${place.name}`);
-        node.pending -= delivered;
+      const extraction = this.getExtractionRuntime(camp);
+      if (!extraction || extraction.outputWaiting <= 0) continue;
+      if (!force && !extraction.carrierRequested && extraction.outputWaiting < Math.min(4, extraction.outputCapacity)) continue;
+      if (this.carriers.some((carrier) => carrier.originId === camp.id && carrier.nodeId === extraction.nodeId)) continue;
+      const config = EXTRACTION_BUILDINGS[getBaseBuildingId(camp.baseId || camp.id)];
+      const node = extraction.nodeId ? this.getResourceNode(extraction.nodeId) : null;
+      const resource = node?.resource || config.resource;
+      if (this.isResourceStorageFull(resource)) {
+        extraction.lastStatus = 'Waiting: destination storage full';
         continue;
       }
-      const camp = this.buildingById[camps[0].id];
-      const load = Math.min(node.pending, 6);
-      node.pending -= load;
-      this.spawnCarrier(camp, node.resource, load, place.id, place.name);
+      const load = Math.min(extraction.outputWaiting, 6);
+      const started = this.spawnCarrier(camp, resource, load, extraction.nodeId, camp.name, {
+        directFallback: false,
+        originId: camp.id,
+        persistDelivery: true,
+        onLeftover: (leftover) => { extraction.outputWaiting += leftover; },
+        onDelivered: (delivered) => {
+          extraction.deliveredTotal += delivered;
+          extraction.lastStatus = delivered > 0 ? `Delivered ${delivered} ${resource}` : 'Waiting: delivery rejected';
+          if (node) node.deliveredTotal += delivered;
+          if (delivered > 0) {
+            this.stats.resourceDeliveries = (this.stats.resourceDeliveries || 0) + 1;
+            this.checkObjectives();
+          }
+          this.refreshExtractionCargoVisuals();
+        },
+      });
+      if (started) {
+        extraction.outputWaiting -= load;
+        extraction.carrierRequested = false;
+        extraction.lastStatus = `Carrier assigned: ${load} ${resource}`;
+      }
     }
+    this.refreshExtractionCargoVisuals();
   }
 
   getDeliveryTarget(fromPlace, resource = null) {
@@ -11316,15 +12040,27 @@ export default class TownScene extends Phaser.Scene {
       : PROCESSED_RESOURCES.includes(resource)
         ? ['warehouse', 'market', 'storehouse', 'guildhall']
         : ['storehouse', 'warehouse', 'market', 'guildhall'];
-    const candidates = preferred
-      .flatMap((baseId) => this.cityState.placedBuildings.filter((p) => getBaseBuildingId(p.id) === baseId))
-      .map((p) => this.doorById[p.id])
-      .filter(Boolean);
-    if (!candidates.length) return null;
-    return candidates.sort((a, b) => (
-      Phaser.Math.Distance.Between(fromPlace.x, fromPlace.y, a.x, a.y)
-      - Phaser.Math.Distance.Between(fromPlace.x, fromPlace.y, b.x, b.y)
-    ))[0];
+    for (const baseId of preferred) {
+      const candidates = this.cityState.placedBuildings
+        .filter((placement) => getBaseBuildingId(placement.id) === baseId)
+        .map((placement) => ({ placement, door: this.doorById[placement.id] }))
+        .filter(({ placement, door }) => {
+          if (!door) return false;
+          if (baseId !== 'storehouse') return true;
+          const storage = this.getBuildingRuntime(placement.id).storage;
+          return storage.mode === 'all' || storage.resource === resource;
+        })
+        .sort((a, b) => (
+          (baseId === 'storehouse'
+            ? ({ high: -500, normal: 0, low: 500 }[this.getBuildingRuntime(a.placement.id).storage.priority]
+              - ({ high: -500, normal: 0, low: 500 }[this.getBuildingRuntime(b.placement.id).storage.priority]))
+            : 0)
+          + Phaser.Math.Distance.Between(fromPlace.x, fromPlace.y, a.door.x, a.door.y)
+          - Phaser.Math.Distance.Between(fromPlace.x, fromPlace.y, b.door.x, b.door.y)
+        ));
+      if (candidates.length) return candidates[0].door;
+    }
+    return null;
   }
 
   spawnCarrier(camp, resource, amount, nodeId, nodeName, options = {}) {
@@ -11350,22 +12086,33 @@ export default class TownScene extends Phaser.Scene {
     const sprite = this.add.image(0, 0, textureKey).setOrigin(0.5, 1);
     sprite.setScale(this.getTextureScaleForHeight(textureKey, 24, 1.1));
     if (!this.textures.exists(config.assetKey) && config.tint) sprite.setTint(config.tint);
-    const container = this.add.container(door.x, door.y, [sprite]).setDepth(door.y);
+    const packageKey = resolveTexture(this, 'prop_crate', 'crate');
+    const packageSprite = packageKey && this.textures.exists(packageKey)
+      ? this.add.image(7, -18, packageKey).setOrigin(0.5, 1).setScale(this.getTextureScaleForHeight(packageKey, 13, 0.55)).setTint(config.tint || 0xffffff).setVisible(false)
+      : null;
+    const container = this.add.container(target.x, target.y, packageSprite ? [sprite, packageSprite] : [sprite]).setDepth(target.y);
+    const routeMultiplier = this.getRoadTransportMultiplier(camp);
 
     const carrier = {
-      def: { id: `carrier-${resource}-${this.time.now}`, name: config.name, speed: 66, assetKey: textureKey },
+      def: { id: `carrier-${resource}-${this.time.now}`, name: config.name, speed: Math.round(66 * routeMultiplier), assetKey: textureKey },
       sprite,
       container,
       stats: {},
       walker: true,
       spriteHeight: 24,
       resource,
-      cargo: amount,
+      cargo: 0,
+      assignedCargo: amount,
       nodeId,
       originId: options.originId || camp.id,
       originName: camp.name || nodeName,
       destinationName: target.name || this.getPlaceName(target.id),
-      currentAction: `carrying ${amount} ${resource}`,
+      destinationId: target.id || null,
+      routeStatus: routeMultiplier < 0.8 ? 'No road: slow and unreliable' : routeMultiplier > 1.2 ? 'Upgraded road: fast route' : 'Dirt road: normal route',
+      currentAction: `walking to collect ${amount} ${resource}`,
+      packageSprite,
+      extractionDelivery: Boolean(options.persistDelivery),
+      deliveryCompleted: false,
     };
     this.prepareHeroAnimation(carrier);
     this.carriers.push(carrier);
@@ -11380,7 +12127,8 @@ export default class TownScene extends Phaser.Scene {
       getCenter: () => ({ x: container.x, y: container.y - 22 }),
       onSelect: () => this.showCarrierInspector(carrier),
     });
-    this.walkTo(carrier, target, () => {
+    const completeDelivery = () => {
+      carrier.deliveryCompleted = true;
       const delivered = this.addTownResource(resource, amount, '');
       const leftover = amount - delivered;
       if (leftover > 0) {
@@ -11393,6 +12141,7 @@ export default class TownScene extends Phaser.Scene {
       if (delivered > 0) {
         this.floatText(target.x, target.y - 34, `+${delivered} ${resource}`, '#d7f3d0');
       }
+      options.onDelivered?.(delivered);
       this.worldInteractionTargets = this.worldInteractionTargets.filter((entry) => entry !== carrier.targetEntry);
       this.tweens.add({
         targets: container,
@@ -11401,7 +12150,14 @@ export default class TownScene extends Phaser.Scene {
         delay: 300,
         onComplete: () => container.destroy(),
       });
-    });
+    };
+    const collectCargo = () => {
+      carrier.cargo = amount;
+      carrier.currentAction = `carrying ${amount} ${resource} to ${carrier.destinationName}`;
+      packageSprite?.setVisible(true);
+      this.walkTo(carrier, target, completeDelivery);
+    };
+    this.walkTo(carrier, door, collectCargo);
     return true;
   }
 
@@ -11415,10 +12171,11 @@ export default class TownScene extends Phaser.Scene {
         {
           title: 'Delivery',
           lines: [
-            `Cargo: ${carrier.cargo} ${RESOURCE_BY_ID[carrier.resource]?.label || carrier.resource}`,
+            `Cargo: ${carrier.cargo || 0}/${carrier.assignedCargo || carrier.cargo || 0} ${RESOURCE_BY_ID[carrier.resource]?.label || carrier.resource}`,
             `Origin: ${carrier.originName || 'unknown supplier'}`,
             `Destination: ${carrier.destinationName || 'town storage'}`,
             `Status: ${carrier.currentAction || 'walking with inventory'}`,
+            `Route: ${carrier.routeStatus || 'route status pending'}`,
           ],
         },
         {
@@ -11430,6 +12187,28 @@ export default class TownScene extends Phaser.Scene {
   }
 
   // --- forest harvesting ----------------------------------------------------
+
+  harvestForestForCamp(place, maxCells = 1) {
+    if (!place || !this.forestBlockedCells?.size) return 0;
+    const footprint = getBuildingCatalogEntry(place.id)?.footprint || { w: 2, h: 2 };
+    const cx = place.gridX + footprint.w / 2;
+    const cy = place.gridY + footprint.h / 2;
+    const targets = [...this.forestBlockedCells]
+      .filter((key) => !this.harvestedForestCells.has(key))
+      .map((key) => {
+        const [x, y] = key.split(',').map(Number);
+        return { key, dist: Math.hypot(x - cx, y - cy) };
+      })
+      .filter((cell) => cell.dist <= 10)
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, maxCells);
+    for (const target of targets) this.harvestedForestCells.set(target.key, this.day + 12);
+    if (targets.length) {
+      this.redrawWildernessDressing();
+      this.addReportLine('economy', `${place.name} harvested ${targets.length} forest cell${targets.length === 1 ? '' : 's'}. Stumps entered the visual roadmap.`);
+    }
+    return targets.length * 2;
+  }
 
   harvestForestFromCamps() {
     const lumberCamps = this.cityState.placedBuildings.filter((p) => getBaseBuildingId(p.id) === 'lumber_camp');
@@ -11721,6 +12500,18 @@ export default class TownScene extends Phaser.Scene {
     if (!hasDelivery && this.cityState.placedBuildings.some((p) => EXTRACTION_IDS.includes(getBaseBuildingId(p.id)))) {
       notes.push({ text: 'Extraction camps have nowhere to deliver. Build a Storehouse or Market.', className: 'gwg-bad' });
     }
+    const campBottlenecks = this.cityState.placedBuildings
+      .map((placement) => this.buildingById?.[placement.id])
+      .filter((place) => place && EXTRACTION_BUILDINGS[getBaseBuildingId(place.baseId || place.id)])
+      .map((place) => ({ place, extraction: this.getExtractionRuntime(place) }))
+      .filter(({ extraction }) => extraction && /Idle|Waiting|Unsafe|Delayed/.test(extraction.lastStatus || ''))
+      .slice(0, 3);
+    for (const { place, extraction } of campBottlenecks) {
+      notes.push({
+        text: `${place.name}: ${extraction.lastStatus}.`,
+        className: /full|no worker|no matching|Unsafe/.test(extraction.lastStatus || '') ? 'gwg-bad' : 'gwg-muted',
+      });
+    }
     return notes.slice(0, 4);
   }
 
@@ -11907,7 +12698,10 @@ export default class TownScene extends Phaser.Scene {
         continue;
       }
       state.progress = Math.max(0, state.progress - recipe.days);
-      for (const [id, amount] of Object.entries(inputs)) this.townInventory[id] = Math.max(0, (this.townInventory[id] || 0) - amount);
+      for (const [id, amount] of Object.entries(inputs)) {
+        this.townInventory[id] = Math.max(0, (this.townInventory[id] || 0) - amount);
+        this.stats.resourcesSpent = (this.stats.resourcesSpent || 0) + amount;
+      }
       if (priority.upkeep > 0) this.applyDeltas({ gold: -priority.upkeep });
       this.recordProductionFlow(this.productionSummary.consumedToday, inputs);
       for (const [id, baseAmount] of Object.entries(recipe.outputs)) {

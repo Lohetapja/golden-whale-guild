@@ -12,7 +12,7 @@
 // explicit `null` reaching a `normalize(raw = {})` default. This pipeline closes
 // that class up front by sanitizing containers before the scene ever touches them.
 
-export const SAVE_VERSION = 10;
+export const SAVE_VERSION = 11;
 
 export function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -30,7 +30,7 @@ const NULLABLE_OBJECT_FIELDS = ['pendingPolicy', 'poiCooldowns', 'townInventory'
 
 // Fields that must be arrays. A wrong-typed value becomes an empty array.
 const ARRAY_FIELDS = ['availableQuests', 'postedQuests', 'unlockedLocations', 'completedObjectives',
-  'townLog', 'achievements', 'discoveredPois', 'productionIncidents', 'harvestedForest'];
+  'townLog', 'achievements', 'discoveredPois', 'productionIncidents', 'harvestedForest', 'resourceDeliveries'];
 
 // Repair container types without discarding unknown fields. Idempotent.
 function sanitizeContainers(save) {
@@ -55,7 +55,19 @@ function sanitizeContainers(save) {
 // migration. Register real transforms here when a breaking change lands — each
 // receives the whole save and returns the upgraded save.
 const MIGRATIONS = {
-  // 9: (save) => ({ ...save, someNewField: deriveIt(save) }),
+  10: (save) => ({
+    ...save,
+    resourceDeliveries: Array.isArray(save.resourceDeliveries) ? save.resourceDeliveries : [],
+    stats: {
+      ...(isPlainObject(save.stats) ? save.stats : {}),
+      resourceNodesDiscovered: Number(save.stats?.resourceNodesDiscovered) || 0,
+      resourceNodesSurveyed: Number(save.stats?.resourceNodesSurveyed) || 0,
+      extractionCampsBuilt: Number(save.stats?.extractionCampsBuilt) || 0,
+      extractionWorkersAssigned: Number(save.stats?.extractionWorkersAssigned) || 0,
+      resourceDeliveries: Number(save.stats?.resourceDeliveries) || 0,
+      resourcesSpent: Number(save.stats?.resourcesSpent) || 0,
+    },
+  }),
 };
 
 // Turn an arbitrary parsed value into a validated, current-version save.

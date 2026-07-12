@@ -310,3 +310,22 @@ is reused through `assetManifest` and remains fallback-safe:
 These are integration placeholders, not claims that the reused source art is
 final. Dedicated Sawmill, Workshop, Salvage Yard, and product icons remain
 good candidates for a later controlled asset batch.
+
+## 2026-07 Visible Extraction Loop Reuse
+
+No PixelLab generation or download was used for the extraction-loop pass.
+The system deliberately reuses existing manifest assets with fallbacks:
+
+- Lumber Camp / forest source: `resource_wood_grove`
+- Mining Camp / iron source: `resource_iron_outcrop`
+- Herbalist Hut / herb source: `resource_herb_patch`
+- Salvage Camp / ruins source: `resource_old_ruins`
+- Frontier Outpost: existing Watchtower/building fallback
+- Storehouse: existing Market stall/building fallback
+- Visible cargo packages: `prop_crate`, tinted by resource
+- Carriers: existing worker sprites selected through carrier configuration
+- Resource UI: existing wood, iron, herb, loot, gem, and whale icon slots
+
+These reused assets are integrated and fallback-safe, but dedicated extraction
+camp, Storehouse, carrier, and cargo sprites remain candidates for one later
+focused asset batch.

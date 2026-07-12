@@ -225,21 +225,25 @@ export const BUILDING_CATALOG = [
   // These reuse existing node/prop art so no PixelLab assets are needed.
   core('lumber_camp', 'Lumber Camp', 'Frontier / Supply', 180, { w: 2, h: 2 }, 'Harvests wood from nearby forest or grove nodes.', {
     assetKey: 'resource_wood_grove',
+    roadRequired: false,
     effect: 'Extracts wood while within range of a forest or wood node. Road access speeds delivery.',
     flavor: 'Turns majestic ancient trees into practical bunk beds.',
   }),
   core('mining_camp', 'Mining Camp', 'Frontier / Supply', 220, { w: 2, h: 2 }, 'Digs iron from a nearby outcrop node.', {
     assetKey: 'resource_iron_outcrop',
+    roadRequired: false,
     effect: 'Extracts iron for the Blacksmith while near an iron node.',
     flavor: 'The pickaxes are unionised; the ore is not.',
   }),
   core('herbalist_hut', 'Herbalist Hut', 'Frontier / Supply', 180, { w: 2, h: 2 }, 'Gathers herbs from a nearby patch node.', {
     assetKey: 'resource_herb_patch',
+    roadRequired: false,
     effect: 'Extracts herbs for the Potion Shop while near a herb node.',
     flavor: 'Smells medicinal in a way that is either healing or a lawsuit.',
   }),
   core('salvage_camp', 'Salvage Camp', 'Frontier / Supply', 240, { w: 2, h: 2 }, 'Recovers loot from nearby ruins or wreckage.', {
     assetKey: 'resource_old_ruins',
+    roadRequired: false,
     kind: 'mixed',
     effect: 'Extracts loot for the Market while near a ruins/wreckage node. Premium wreckage adds corruption.',
     flavor: 'One hero\'s tragedy is another town\'s inventory.',
@@ -251,6 +255,7 @@ export const BUILDING_CATALOG = [
   }),
   core('frontier_outpost', 'Frontier Outpost', 'Frontier / Supply', 300, { w: 2, h: 2 }, 'Projects safe territory into the wilds and reveals nearby fog.', {
     assetKey: 'building_watchtower',
+    roadRequired: false,
     effect: 'Establishes remote territory: cheaper/safer frontier construction and a small reveal radius.',
     flavor: 'A flag, a fence, and the confident assumption that this counts as civilisation.',
   }),

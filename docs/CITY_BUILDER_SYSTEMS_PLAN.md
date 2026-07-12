@@ -494,39 +494,53 @@ compatible, update this plan when reality changes.
 Config lives in `src/systems/extraction.js`; runtime in TownScene. See
 [INSPIRATION_SYSTEMS.md](INSPIRATION_SYSTEMS.md) for the loop diagram.
 
-Core loop: **explore → discover node → secure area → build extraction camp →
-connect road → carriers transport goods → Storehouse stores them → town
-buildings consume them → attract better heroes → expand farther → bigger
-hazards.**
+Core loop: **discover -> survey -> secure -> extract -> package -> transport ->
+store -> consume -> expand.** The complete loop is visible on the map: a camp
+fills a cargo pile, a carrier collects it, and town stock changes only when
+that carrier reaches storage.
 
 - **Resource nodes**: every resource POI has runtime state (finite amount,
-  regen, danger, surveyed/access/gatherer). Inspector actions: Survey,
-  Establish Access, Assign Gatherer, Collect, Abandon. Persisted in
+  regen, danger, area reputation, surveyed/access/gatherer/camp assignment).
+  Inspector actions stay above flavor text: Survey, Establish Camp, Assign
+  Hero, Harvest Once, and Abandon Operation. Persisted in
   `save.resourceNodes`.
 - **Extraction buildings** (Frontier & Supply build category): lumber_camp,
   mining_camp, herbalist_hut, salvage_camp (extract a matching resource from a
   node within `EXTRACTION_RANGE_TILES`), storehouse (storage caps + delivery
   target), frontier_outpost (territory anchor + reveal). All reuse existing
   node/prop art — no new PixelLab assets.
-- **Carriers**: `spawnCarrier` reuses the walker/animation system; delivers a
-  node's `pending` package to the nearest Storehouse/Market/Guild Hall and
-  credits `townInventory` on arrival.
-- **Storage**: `getStorageCap(resource)` = base + storehouse levels; STORED
-  resources (wood/iron/herbs/loot) are capped, outputs (gold/potions/gear)
-  are not. Full storage pauses extraction (surfaced in advisor + Town Stores).
+- **Camp operation**: extraction requires a healthy assigned hero. Each camp
+  tracks progress, pause state, low/normal/high priority, output capacity,
+  extracted/delivered totals, and an exact idle or bottleneck reason.
+- **Visible packages and carriers**: output waits beside the camp as a tinted
+  crate with a quantity label. `spawnCarrier` walks empty from storage to the
+  source, reveals its cargo after pickup, then returns along the route.
+  Inventory is credited only on arrival. Active extraction deliveries persist
+  and safely restart after loading.
+- **Storage**: `getStorageCap(resource)` = base + Storehouse levels. Raw and
+  premium salvage resources are capped. Storehouses can accept all resources
+  or restrict one, set incoming priority, and expose a reserve setting. Full
+  storage pauses extraction and leaves cargo at the camp.
+- **Road and frontier quality**: no road remains possible but slow and risky;
+  dirt, stone, and premium roads affect carrier speed. Placement previews are
+  green for supported sites, amber for inefficient sites, and red when no
+  matching resource is in range.
 - **Territory**: `getTerritoryAnchors` / `isInTerritory`; `getEffectiveBuildCost`
   applies `FRONTIER_BUILD_SURCHARGE` outside territory (frontier toolkit
   exempt).
-- **Forest**: `forestBlockedCells` block building; `harvestForestFromCamps`
-  moves cells into `harvestedForestCells` (persisted, with regrow day);
-  `regrowForest` restores them. `redrawWildernessDressing` skips harvested
-  cells.
-- **Save/load**: `resourceNodes`, `harvestedForest`, and hero
-  `gatheringNodeId` persist; old saves hydrate safe defaults from
-  `POI_RESOURCE_YIELDS`.
+- **Forest**: Lumber Camps cut only nearby harvestable forest cells, one
+  package at a time. Harvested cells visibly clear, persist with a regrow day,
+  and return after roughly 12 days.
+- **Consumption and guidance**: early upgrades consume small amounts of
+  wood/iron; production consumes raw inputs; Golden Whale can process premium
+  salvage quickly with trust/corruption consequences. Advisor notes, camp
+  inspectors, placement previews, and objectives expose bottlenecks.
+- **Save/load**: `resourceNodes`, extraction runtime, active resource
+  deliveries, `harvestedForest`, objective stats, and hero assignments persist
+  through save version 11. Old saves receive safe defaults.
 
-Next candidates: road-quality transport speed, depletion-driven camp
-relocation, cursed-forest POIs, and per-district storage.
+Next candidates: carrier route choice, working Storehouse reserve rules,
+depletion-driven camp relocation, cursed-forest POIs, and dedicated camp art.
 
 ---
 

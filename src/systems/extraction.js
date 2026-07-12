@@ -21,6 +21,10 @@ export const EXTRACTION_BUILDINGS = {
     canHarvestForest: true,
     carrier: 'wood_carrier',
     baseRate: 3,
+    workerRole: 'Woodcutter',
+    task: 'cutting timber',
+    packageCapacity: 10,
+    packageTint: 0x9c7b4a,
   },
   mining_camp: {
     id: 'mining_camp',
@@ -28,6 +32,10 @@ export const EXTRACTION_BUILDINGS = {
     label: 'Mining Camp',
     carrier: 'ore_carrier',
     baseRate: 2,
+    workerRole: 'Miner',
+    task: 'breaking ore',
+    packageCapacity: 8,
+    packageTint: 0xa8a8b4,
   },
   herbalist_hut: {
     id: 'herbalist_hut',
@@ -35,6 +43,10 @@ export const EXTRACTION_BUILDINGS = {
     label: 'Herbalist Hut',
     carrier: 'herb_collector',
     baseRate: 3,
+    workerRole: 'Herbalist',
+    task: 'bundling herbs',
+    packageCapacity: 10,
+    packageTint: 0x8fbf7a,
   },
   salvage_camp: {
     id: 'salvage_camp',
@@ -43,6 +55,10 @@ export const EXTRACTION_BUILDINGS = {
     label: 'Salvage Camp',
     carrier: 'salvage_runner',
     baseRate: 2,
+    workerRole: 'Salvage Runner',
+    task: 'sorting salvage',
+    packageCapacity: 8,
+    packageTint: 0xc7b06a,
   },
 };
 
@@ -50,6 +66,31 @@ export const EXTRACTION_IDS = Object.keys(EXTRACTION_BUILDINGS);
 
 // how close (in tiles) a camp must be to a matching node to work
 export const EXTRACTION_RANGE_TILES = 16;
+
+export const EXTRACTION_PRIORITIES = {
+  low: { id: 'low', label: 'Low', speed: 0.7, risk: 0.7 },
+  normal: { id: 'normal', label: 'Normal', speed: 1, risk: 1 },
+  high: { id: 'high', label: 'High', speed: 1.35, risk: 1.2 },
+};
+
+export function normalizeExtractionRuntime(raw = {}, buildingId = '') {
+  const config = EXTRACTION_BUILDINGS[buildingId];
+  if (!config) return null;
+  const source = raw && typeof raw === 'object' ? raw : {};
+  return {
+    nodeId: typeof source.nodeId === 'string' ? source.nodeId : null,
+    assignedHeroId: typeof source.assignedHeroId === 'string' ? source.assignedHeroId : null,
+    paused: Boolean(source.paused),
+    priority: EXTRACTION_PRIORITIES[source.priority] ? source.priority : 'normal',
+    progress: Math.max(0, Math.min(1, Number(source.progress) || 0)),
+    outputWaiting: Math.max(0, Math.floor(Number(source.outputWaiting) || 0)),
+    outputCapacity: Math.max(config.packageCapacity, Math.floor(Number(source.outputCapacity) || config.packageCapacity)),
+    extractedTotal: Math.max(0, Math.floor(Number(source.extractedTotal) || 0)),
+    deliveredTotal: Math.max(0, Math.floor(Number(source.deliveredTotal) || 0)),
+    carrierRequested: Boolean(source.carrierRequested),
+    lastStatus: typeof source.lastStatus === 'string' ? source.lastStatus : 'Idle: no worker assigned',
+  };
+}
 
 // --- carriers ---------------------------------------------------------------
 // Visible workers that haul a package from a camp toward the nearest
@@ -103,6 +144,9 @@ export function makeNodeRuntime(resource, premium = false) {
     surveyed: false,
     accessEstablished: false,
     gathererId: null,
+    assignedCampId: null,
+    deliveredTotal: 0,
+    lastHarvestDay: 0,
     pending: 0, // extracted-but-not-yet-delivered package units
   };
 }
@@ -118,6 +162,9 @@ export function normalizeNodeRuntime(raw, resource, premium = false) {
     surveyed: Boolean(raw.surveyed),
     accessEstablished: Boolean(raw.accessEstablished),
     gathererId: raw.gathererId || null,
+    assignedCampId: typeof raw.assignedCampId === 'string' ? raw.assignedCampId : null,
+    deliveredTotal: Math.max(0, Math.floor(Number(raw.deliveredTotal) || 0)),
+    lastHarvestDay: Math.max(0, Math.floor(Number(raw.lastHarvestDay) || 0)),
     pending: Number.isFinite(raw.pending) ? Math.max(0, raw.pending) : 0,
   };
 }

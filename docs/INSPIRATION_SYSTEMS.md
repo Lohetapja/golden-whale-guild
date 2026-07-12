@@ -78,20 +78,20 @@ If a proposed feature doesn't push one of these arrows, it's decoration.
 
 The larger world and resource nodes now drive a real expansion loop:
 
-**Explore → discover node → secure area → build extraction camp → connect road
-→ transport goods (carriers) → store resources → supply town buildings →
-attract better heroes → expand farther → face stronger hazards.**
+**Discover -> survey -> secure -> extract -> package -> transport -> store ->
+consume -> expand.**
 
 Implemented pieces:
 - **Resource nodes** (`src/systems/extraction.js` + POI inspector): finite
-  amount, danger, distance, road access, gatherer, regen. Actions: Survey,
-  Establish Access, Assign Gatherer, Collect (send hero), Abandon. Unclaimed
-  distant nodes are slow and can injure gatherers.
+  amount, danger, area reputation, road/storage access, assigned camp/worker,
+  and regeneration. Actions stay visible at the top of the inspector.
 - **Extraction buildings**: Lumber/Mining/Herbalist/Salvage camps extract a
   matching resource from a node within 16 tiles; Storehouse raises storage
   caps and receives deliveries; Frontier Outpost projects safe territory.
-- **Carriers** (Settlers-style): visible workers haul packages from camp to
-  the nearest Storehouse/Market/Guild Hall; delivery credits town inventory.
+- **Workers and carriers** (Settlers-style): extraction requires an assigned
+  hero. A visible package waits at the camp, then an empty carrier walks from
+  storage to collect it and visibly returns with cargo. Delivery, not
+  extraction, credits town inventory.
 - **Storage & bottlenecks**: per-resource caps (base 24 + 30/storehouse
   level). Full storage pauses extraction; the advisor and Town Stores panel
   explain it; resources never silently vanish (leftovers stay pending).
@@ -99,8 +99,14 @@ Implemented pieces:
   influence radii. Building outside territory costs +35% gold (frontier
   toolkit exempt so you can bootstrap outward).
 - **Forest gameplay**: dense forest blocks building (roads can cut through);
-  Lumber Camps thin nearby forest tiles into wood; harvested tiles regrow
-  after ~12 days.
+  Lumber Camps thin one nearby harvestable cell per package, and harvested
+  tiles regrow after roughly 12 days.
+- **Road and placement feedback**: matching resource range is mandatory.
+  Green, amber, and red previews explain supported, inefficient, and invalid
+  sites. Road quality changes carrier speed and frontier risk.
+- **Safe persistence**: camp state, cargo, active extraction deliveries,
+  forest harvest state, and objective progress migrate through save version
+  11. Automated save tests use an isolated key.
 
 Design guardrails: gold stays the main construction cost; resources are a
 parallel pressure, not an early-game paywall. Everything is deterministic on

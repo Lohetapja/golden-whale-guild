@@ -35,7 +35,7 @@ function check(name, cond) {
 // --- fixtures ---------------------------------------------------------------
 function baseValidSave(overrides = {}) {
   return {
-    saveVersion: 10,
+    saveVersion: 11,
     day: 5,
     resources: { gold: 650, trust: 40 },
     townRankId: 'garage',
@@ -59,6 +59,7 @@ const FIXTURES = {
   arraysReplacedByNull: baseValidSave({ availableQuests: null, postedQuests: null, townLog: null }),
   objectReplacedByString: baseValidSave({ resources: 'not-an-object', stats: 42 }),
   malformedOptionalFields: baseValidSave({ pendingPolicy: 'oops', monsterState: [], weekTracker: 7 }),
+  malformedResourceDeliveries: baseValidSave({ resourceDeliveries: 'in transit, allegedly' }),
   futureVersion: baseValidSave({ saveVersion: 99, unknownFutureField: { keep: true } }),
   legacyV1: { saveVersion: 1, day: 2, resources: { gold: 100 } },
   bigMap: baseValidSave({ cityBuilder: { placedBuildings: [], revealed: Array.from({ length: 4000 }, (_, i) => `${i % 144},${Math.floor(i / 144)}`) } }),
@@ -90,6 +91,14 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
 {
   const r = mig.migrateAndValidate(FIXTURES.malformedOptionalFields);
   check('malformed nullable object -> null', r.data.pendingPolicy === null && r.data.monsterState === null && r.data.weekTracker === null);
+}
+{
+  const r = mig.migrateAndValidate(FIXTURES.malformedResourceDeliveries);
+  check('malformed resource deliveries -> []', Array.isArray(r.data.resourceDeliveries) && r.data.resourceDeliveries.length === 0);
+}
+{
+  const r = mig.migrateAndValidate({ saveVersion: 10, stats: null });
+  check('v10 extraction defaults added', r.data.stats && r.data.stats.resourceDeliveries === 0 && Array.isArray(r.data.resourceDeliveries));
 }
 {
   const r = mig.migrateAndValidate(FIXTURES.futureVersion);
