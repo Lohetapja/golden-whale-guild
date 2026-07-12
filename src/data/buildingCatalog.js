@@ -281,7 +281,7 @@ export const BUILDING_CATALOG = [
     flavor: 'A room where raw materials acquire handles and labor expectations.',
   }),
   core('salvage_yard', 'Salvage Yard', 'Production', 440, { w: 2, h: 2 }, 'Sorts raw loot into trade goods or recovered equipment.', {
-    assetKey: 'resource_old_ruins',
+    assetKey: 'building_salvage_camp',
     unlockKey: 'rank2',
     lockReason: 'Reach Recognized Settlement rank.',
     kind: 'mixed',

@@ -138,3 +138,22 @@ multi-session effort. This report is the durable continuation point.
 - CONTINUATION STRATEGY: loop fire→long-wait→bulk-download across categories;
   expensive char/monster animations to drive budget toward 1372. Trackers in
   scratchpad gwg_inflight.tsv. Not stopping — throughput is slow, not blocked.
+
+### Art-direction reworks (2nd continuation — richer/functional per feedback)
+The newer simple/bright/icon-like buildings were reworked toward the older
+detailed, grounded, functional style (high detail + detailed shading + richer
+functional prompts). Integrated at canonical paths (overwrote the simple ones),
+verified loading in test-key browser (no errors, prod save untouched):
+- Premium Lodge 15c7cc11 — now a warm timber+stone guesthouse (dormers, porch,
+  balcony, glowing windows). Reads as premium lodging.
+- Sawmill a96dccd0 — now a real timber mill (water wheel, saw platform, plank/log
+  stacks, ramp). Reads as wood processing.
+- Inn 19376ef2 — detailed half-timbered 2.5-storey inn (dormers, sign, chimney
+  smoke, barrels, ivy). Reads as cozy lodging.
+- Salvage Yard a10dbeeb — gritty scrapyard (scrap piles, sorting workshop, crane,
+  forge). Reads as reclamation. Catalog salvage_yard also repointed to this art.
+- Balance: 1010 used / 989 remaining (target 1372). Building animation batches +
+  worker characters continuing.
+- Roads: still procedural+working in-world; iso surface tiles staged only. Safe
+  live swap needs seamless SQUARE road textures (renderer crops squares) or a
+  sprite autotiler — NOT done, honestly staged/deferred.
