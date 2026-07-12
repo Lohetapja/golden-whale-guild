@@ -8852,6 +8852,18 @@ export default class TownScene extends Phaser.Scene {
 
     const sprite = this.placeSpriteById[place.id];
     if (sprite) {
+      // Swap to the new level's art if a tier sprite exists (Storehouse,
+      // Warehouse, Premium Fabricator, ...). Refresh scale/anchors so the
+      // hitbox and hover stay correct; buildings without tier art keep base.
+      const nextTexture = buildingTexture(this, place);
+      if (sprite.texture.key !== nextTexture) {
+        sprite.setTexture(nextTexture);
+        const rescale = this.getPlaceSpriteScale(place, nextTexture, place.visualScale ?? LAYOUT_CONSTANTS.BUILDING_SCALE);
+        sprite.setScale(rescale);
+        sprite.setData('baseScaleX', sprite.scaleX);
+        sprite.setData('baseScaleY', sprite.scaleY);
+        sprite.setData('hoverScale', rescale * 1.03);
+      }
       const baseScaleX = sprite.scaleX;
       const baseScaleY = sprite.scaleY;
       this.tweens.add({

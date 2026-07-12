@@ -102,3 +102,24 @@ isometric world renders connected diamond shoulders, cores, edge connectors,
 and type-specific surface details so straight pieces, corners, junctions, and
 plazas share edges without stretching square art into the wrong perspective.
 All road layers remain below actors and world objects.
+
+## 2026-07 Isometric Building Pass
+
+Proven PixelLab recipe for the coherent isometric building set (Storehouse,
+Warehouse, Premium Fabricator, Guild Hall, Tavern, Market, Blacksmith, Potion
+Shop, Watchtower, Hero Hostel, Frontier Outpost):
+
+- Tool: `create_map_object`, `view: "low top-down"` (or `high top-down`),
+  `detail: high`, `single color outline`, `medium shading`, 160-176px canvas.
+- Prompt shape: "isometric fantasy city-builder <role>, angled view with two
+  visible walls and a roof, <role props>, warm medieval palette, clean
+  silhouette, transparent background, no text".
+- Upgrade tiers via `create_object_state` from the chosen base ("upgrade to
+  level N: add <architecture>, keep the same palette and isometric angle") so the
+  building stays recognisable as it grows.
+
+Naming / resolver:
+- Base level-1 art: `building_<type>.png` (Phaser key `building_<type>`).
+- Upgrade art: `building_<type>_l2` / `_l3` (manifest keys). `buildingTexture()`
+  in `src/assets.js` resolves `${key}_l{level}` -> base -> placeholder, never an
+  unrelated building. Upgrades swap the sprite + refresh scale/hitbox.

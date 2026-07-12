@@ -39,6 +39,20 @@ export const ASSET_MANIFEST = [
   { key: 'building_storehouse', path: 'assets/buildings/building_storehouse.png', type: 'image', fallback: 'generated frontier store with raw-material attachments' },
   { key: 'building_premium_fabricator', path: 'assets/buildings/building_premium_fabricator.png', type: 'image', fallback: 'generated premium workshop with machinery attachments' },
   { key: 'building_frontier_outpost', path: 'assets/buildings/building_frontier_outpost.png', type: 'image', fallback: 'generated frontier post with supply attachments' },
+  // --- isometric building upgrade tiers (PixelLab, 2026-07 asset pass) -----
+  // The base `building_<type>` key above holds the level-1 art; these hold the
+  // level-2/3 upgrade art. resolveBuildingLevelKey() picks the right tier and
+  // falls back to the base key when a tier file is missing.
+  { key: 'building_storehouse_l2', path: 'assets/buildings/storehouse/storehouse_l2.png', type: 'image', fallback: 'building_storehouse' },
+  { key: 'building_storehouse_l3', path: 'assets/buildings/storehouse/storehouse_l3.png', type: 'image', fallback: 'building_storehouse' },
+  { key: 'building_warehouse_l2', path: 'assets/buildings/warehouse/warehouse_l2.png', type: 'image', fallback: 'building_warehouse' },
+  { key: 'building_warehouse_l3', path: 'assets/buildings/warehouse/warehouse_l3.png', type: 'image', fallback: 'building_warehouse' },
+  { key: 'building_premium_fabricator_l2', path: 'assets/buildings/premium-fabricator/premium_fabricator_l2.png', type: 'image', fallback: 'building_premium_fabricator' },
+  { key: 'building_premium_fabricator_l3', path: 'assets/buildings/premium-fabricator/premium_fabricator_l3.png', type: 'image', fallback: 'building_premium_fabricator' },
+  { key: 'building_guild_hall_l2', path: 'assets/buildings/upgrades/guild_hall_l2.png', type: 'image', fallback: 'building_guild_hall' },
+  { key: 'building_tavern_l2', path: 'assets/buildings/upgrades/tavern_l2.png', type: 'image', fallback: 'building_tavern' },
+  { key: 'building_market_l2', path: 'assets/buildings/upgrades/market_l2.png', type: 'image', fallback: 'building_market' },
+  { key: 'building_blacksmith_l2', path: 'assets/buildings/upgrades/blacksmith_l2.png', type: 'image', fallback: 'building_blacksmith' },
   // future satire buildings (art ready, catalog wiring pending)
   { key: 'building_rngesus_shrine', path: 'assets/buildings/building_rngesus_shrine.png', type: 'image', fallback: 'not yet buildable' },
   { key: 'building_pity_chapel', path: 'assets/buildings/building_pity_chapel.png', type: 'image', fallback: 'not yet buildable' },

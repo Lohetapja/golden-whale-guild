@@ -55,8 +55,23 @@ export function resolveTexture(scene, assetKey, fallbackKey = null) {
   return scene.textures.exists(assetKey) ? assetKey : fallbackKey;
 }
 
+// Resolve a building's sprite, preferring level-tier art when it exists.
+// Fallback order (per the asset-upgrade spec):
+//   1. `${assetKey}_l{level}`  (exact type + level, capped at the highest tier art)
+//   2. `${assetKey}`           (base = level-1 art)
+//   3. `ph-<type>` placeholder
+// Never falls back to an unrelated building type.
+const MAX_BUILDING_TIER_ART = 3;
 export function buildingTexture(scene, def) {
-  return resolveTexture(scene, def.assetKey, `ph-${def.baseId || String(def.id || '').split('__')[0]}`);
+  const base = def.assetKey;
+  const level = Math.max(1, Number(scene.upgradeLevels?.[def.id]) || Number(def.level) || 1);
+  if (level >= 2 && base) {
+    for (let tier = Math.min(level, MAX_BUILDING_TIER_ART); tier >= 2; tier -= 1) {
+      const tierKey = `${base}_l${tier}`;
+      if (scene.textures.exists(tierKey)) return tierKey;
+    }
+  }
+  return resolveTexture(scene, base, `ph-${def.baseId || String(def.id || '').split('__')[0]}`);
 }
 
 export function heroTexture(scene, def) {

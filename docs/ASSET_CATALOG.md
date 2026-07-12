@@ -360,3 +360,16 @@ The system deliberately reuses existing manifest assets with fallbacks:
 These reused assets are integrated and fallback-safe, but dedicated extraction
 camp, Storehouse, carrier, and cargo sprites remain candidates for one later
 focused asset batch.
+
+## 2026-07 Isometric Building + Upgrade Tiers (PixelLab)
+
+New coherent isometric art generated and integrated:
+- Storehouse L1/L2/L3, Warehouse L1/L2/L3, Premium Fabricator L1/L2/L3
+  (`public/assets/buildings/{storehouse,warehouse,premium-fabricator}/`).
+- Core buildings replaced with isometric versions + `_l2` upgrade art:
+  Guild Hall, Tavern, Market, Blacksmith
+  (`building_*.png` + `public/assets/buildings/upgrades/*_l2.png`).
+- New isometric buildings: Potion Shop, Watchtower, Hero Hostel, Frontier
+  Outpost (`building_*.png`).
+Level art resolves through `buildingTexture()` (type+level -> base -> placeholder).
+Full generation accounting: docs/PIXELLAB_GENERATION_REPORT.md.
