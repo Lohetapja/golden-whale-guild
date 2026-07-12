@@ -4364,36 +4364,98 @@ export default class TownScene extends Phaser.Scene {
       }
       overlay.fillStyle(0xf0d49a, 0.24);
       overlay.fillEllipse(center.x, center.y, plaza ? 18 : 10, plaza ? 7 : 4);
+      // scattered pebbles and dirt clods so the packed-earth path reads as a
+      // well-travelled road rather than a flat brown fill (Settlers/Anno feel)
+      const specks = plaza ? 14 : 8;
+      for (let i = 0; i < specks; i += 1) {
+        const ang = (this.getTerrainHash(road.x * 7 + i, road.y * 13 + i, 64) / 64) * 6.283;
+        const rad = (this.getTerrainHash(road.x + i * 3, road.y - i * 2, 60) / 60) * (plaza ? 20 : 11);
+        const px = Math.round(center.x + Math.cos(ang) * rad);
+        const py = Math.round(center.y + Math.sin(ang) * rad * 0.5);
+        const tone = this.getTerrainHash(road.x - i, road.y + i, 3);
+        overlay.fillStyle(tone === 0 ? 0x8a6b46 : tone === 1 ? 0x5c4326 : 0xc9a877, 0.4);
+        overlay.fillRect(px, py, tone === 2 ? 2 : 1, 1);
+      }
       return;
     }
 
     if (road.type === 'stone') {
-      const stones = plaza
-        ? [[0, 0], [-13, 0], [13, 0], [0, -6], [0, 6], [-20, -5], [20, 5]]
-        : [[0, 0], [-9, -3], [9, 3], [-5, 5], [5, -5]];
-      for (let i = 0; i < stones.length; i += 1) {
-        const [dx, dy] = stones[i];
-        overlay.fillStyle(i % 2 ? 0xb9b4aa : 0xd1ccc1, 0.34);
+      // denser, size- and shade-varied cobblestones for a fitted paved street
+      const cobbles = plaza
+        ? [[0, 0], [-13, 0], [13, 0], [0, -6], [0, 6], [-20, -5], [20, 5], [-8, -6], [8, 6], [-8, 6], [8, -6], [-16, 4], [16, -4]]
+        : [[0, 0], [-9, -3], [9, 3], [-5, 5], [5, -5], [-13, 0], [13, 0], [0, -6], [0, 6], [-4, -2], [4, 2]];
+      for (let i = 0; i < cobbles.length; i += 1) {
+        const [dx, dy] = cobbles[i];
+        const shade = this.getTerrainHash(road.x + i, road.y + i, 3);
+        const fill = shade === 0 ? 0xd1ccc1 : shade === 1 ? 0xb9b4aa : 0xc7c2b8;
+        const stroke = shade === 1 ? 0x9b9892 : 0xc4c0b8;
+        const w = 4 + this.getTerrainHash(road.x - i, road.y + i * 2, 3);
         this.drawPolygon(overlay, [
           { x: center.x + dx, y: center.y + dy - 3 },
-          { x: center.x + dx + 6, y: center.y + dy },
+          { x: center.x + dx + w, y: center.y + dy },
           { x: center.x + dx, y: center.y + dy + 3 },
-          { x: center.x + dx - 6, y: center.y + dy },
-        ], i % 2 ? 0x9b9892 : 0xc4c0b8, 0.38, 0xf2ead8, 0.12, 1);
+          { x: center.x + dx - w, y: center.y + dy },
+        ], fill, 0.42, stroke, 0.4, 1);
       }
-      overlay.lineStyle(1, 0x777c82, 0.24);
+      overlay.lineStyle(1, 0x777c82, 0.22);
       for (const edge of edges) if (mask & edge.bit) overlay.lineBetween(center.x, center.y, edge.point.x, edge.point.y);
       return;
     }
 
-    overlay.lineStyle(1, 0xfff1a6, 0.34);
+    // premium: ornate gold inlay with gem accents (satirical luxury paving)
+    overlay.lineStyle(1, 0xfff1a6, 0.4);
     for (const edge of edges) if (mask & edge.bit) overlay.lineBetween(center.x, center.y, edge.point.x, edge.point.y);
     this.drawPolygon(overlay, [
       { x: center.x, y: center.y - (plaza ? 7 : 5) },
       { x: center.x + (plaza ? 15 : 10), y: center.y },
       { x: center.x, y: center.y + (plaza ? 7 : 5) },
       { x: center.x - (plaza ? 15 : 10), y: center.y },
-    ], 0xffdf73, 0.3, 0xfff1a6, 0.42, 1);
+    ], 0xffdf73, 0.32, 0xfff1a6, 0.5, 1);
+    this.drawPolygon(overlay, [
+      { x: center.x, y: center.y - 2 },
+      { x: center.x + 4, y: center.y },
+      { x: center.x, y: center.y + 2 },
+      { x: center.x - 4, y: center.y },
+    ], 0xfff6cf, 0.5, 0xffffff, 0.35, 1);
+    const gems = plaza ? 4 : 2;
+    for (let i = 0; i < gems; i += 1) {
+      overlay.fillStyle(i % 2 ? 0x8ad4ff : 0xff9ad4, 0.7);
+      overlay.fillRect(center.x + (i % 2 ? 9 : -10), center.y + (i < 2 ? -3 : 3), 1, 1);
+    }
+  }
+
+  // Build (once, cached) a diamond-clipped version of a detailed square road
+  // texture so it can be stamped straight onto iso tiles. Returns the texture
+  // key, or null if the source texture is missing (caller falls back to the
+  // procedural surface).
+  ensureRoadDiamondTexture(type) {
+    const key = `road_diamond_${type}`;
+    if (this.textures.exists(key)) return key;
+    const srcKey = { dirt: 'tile_road_dirt', stone: 'tile_road_stone', premium: 'tile_road_premium' }[type];
+    if (!srcKey || !this.textures.exists(srcKey)) return null;
+    const src = this.textures.get(srcKey).getSourceImage();
+    if (!src || !src.width) return null;
+    const W = ISO_TILE_WIDTH;
+    const H = ISO_TILE_HEIGHT;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+      ctx.beginPath();
+      ctx.moveTo(W / 2, 0);
+      ctx.lineTo(W, H / 2);
+      ctx.lineTo(W / 2, H);
+      ctx.lineTo(0, H / 2);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(src, 0, 0, src.width, src.height, 0, 0, W, H);
+      this.textures.addCanvas(key, canvas);
+      return key;
+    } catch {
+      return this.textures.exists(key) ? key : null;
+    }
   }
 
   drawIsoRoadTile(graphics, overlay, road) {
@@ -4419,24 +4481,72 @@ export default class TownScene extends Phaser.Scene {
     this.drawIsoRoadConnectors(graphics, tile, mask, shoulderColor, plaza ? 0.33 : 0.28, plaza ? 0.94 : 0.76);
     this.drawPolygon(graphics, inner, type.edgeColor, road.type === 'premium' ? 0.68 : 0.52, type.edgeColor, 0.48, 1);
     this.drawIsoRoadConnectors(graphics, tile, mask, type.edgeColor, road.type === 'premium' ? 0.66 : 0.56, plaza ? 0.82 : 0.68);
-    this.drawPolygon(graphics, core, type.color, surfaceAlpha, 0xfff6dc, road.type === 'premium' ? 0.22 : 0.1, 1);
-    this.drawIsoRoadConnectors(graphics, tile, mask, type.color, road.type === 'premium' ? 0.92 : 0.86, plaza ? 0.72 : 0.58);
-    this.drawIsoRoadSurfacePattern(overlay, road, tile, mask, plaza);
-
-    if (road.type === 'stone') {
-      overlay.lineStyle(1, 0xf2ead8, 0.1);
-      this.drawPolygon(overlay, this.insetPoints(tile, plaza ? 0.68 : 0.5), null, 0, 0xf2ead8, 0.1, 1);
-    } else if (road.type === 'premium') {
-      overlay.fillStyle(0xfff1a6, 0.24);
-      overlay.fillCircle(center.x, center.y, plaza ? 2 : 1.5);
+    const roadTexKey = this.ensureRoadDiamondTexture(road.type);
+    if (roadTexKey) {
+      // Full-tile diamond stamp so connected road tiles share edges and merge
+      // into one continuous surface (no gaps / "separate squares"), matching the
+      // polished build-menu preview instead of a flat procedural fill.
+      const tw = Math.abs(tile[1].x - tile[3].x);
+      const th = Math.abs(tile[2].y - tile[0].y);
+      const img = this.add.image(center.x, center.y, roadTexKey)
+        .setOrigin(0.5, 0.5)
+        .setDepth(20.45);
+      img.setDisplaySize(tw + 2, th + 2);
+      this.cityRoadImages.push(img);
+      // Soft grass/curb only on OPEN edges (no road neighbour on that side).
+      // Connected sides stay untouched so the road reads as one path.
+      const openEdges = [
+        [1, tile[0], tile[1]], [2, tile[1], tile[2]],
+        [4, tile[2], tile[3]], [8, tile[3], tile[0]],
+      ];
+      for (const [bit, a, b] of openEdges) {
+        if (mask & bit) continue;
+        overlay.lineStyle(2, 0x33421f, 0.32);
+        overlay.lineBetween(a.x, a.y, b.x, b.y);
+      }
+      // Gradual material transition: where this (higher-tier) road meets a
+      // lower-tier neighbour, fade the neighbour's colour in over the shared
+      // half of the tile so Dirt->Stone->Premium blend instead of hard-cutting.
+      const tierRank = { dirt: 0, stone: 1, premium: 2 };
+      const myRank = tierRank[road.type] ?? 0;
+      const neigh = [
+        [1, tile[0], tile[1], road.x, road.y - 1],
+        [2, tile[1], tile[2], road.x + 1, road.y],
+        [4, tile[2], tile[3], road.x, road.y + 1],
+        [8, tile[3], tile[0], road.x - 1, road.y],
+      ];
+      for (const [bit, a, b, nx, ny] of neigh) {
+        if (!(mask & bit)) continue;
+        const ntype = this._roadTypeLookup?.get(`${nx},${ny}`);
+        if (!ntype || (tierRank[ntype] ?? 0) >= myRank) continue;
+        const ncolor = (ROAD_TYPES[ntype] || ROAD_TYPES.dirt).color;
+        const midA = { x: (a.x + center.x) / 2, y: (a.y + center.y) / 2 };
+        const midB = { x: (b.x + center.x) / 2, y: (b.y + center.y) / 2 };
+        this.drawPolygon(overlay, [a, b, midB, midA], ncolor, 0.5, ncolor, 0.3, 1);
+      }
+      if (road.type === 'premium') {
+        overlay.fillStyle(0xfff1a6, 0.2);
+        overlay.fillCircle(center.x, center.y, plaza ? 2 : 1.5);
+      }
     } else {
-      graphics.fillStyle(type.edgeColor, 0.18);
-      graphics.fillEllipse(
-        center.x + ((hash % 13) - 6),
-        center.y + (((hash >> 4) % 9) - 4),
-        plaza ? 9 : 6,
-        plaza ? 4 : 3,
-      );
+      this.drawPolygon(graphics, core, type.color, surfaceAlpha, 0xfff6dc, road.type === 'premium' ? 0.22 : 0.1, 1);
+      this.drawIsoRoadConnectors(graphics, tile, mask, type.color, road.type === 'premium' ? 0.92 : 0.86, plaza ? 0.72 : 0.58);
+      this.drawIsoRoadSurfacePattern(overlay, road, tile, mask, plaza);
+      if (road.type === 'stone') {
+        overlay.lineStyle(1, 0xf2ead8, 0.1);
+        this.drawPolygon(overlay, this.insetPoints(tile, plaza ? 0.68 : 0.5), null, 0, 0xf2ead8, 0.1, 1);
+      } else if (road.type === 'premium') {
+        overlay.fillStyle(0xfff1a6, 0.24);
+        overlay.fillCircle(center.x, center.y, plaza ? 2 : 1.5);
+      } else {
+        graphics.fillStyle(type.edgeColor, 0.18);
+        graphics.fillEllipse(
+          center.x + ((hash % 13) - 6),
+          center.y + (((hash >> 4) % 9) - 4),
+          plaza ? 9 : 6,
+          plaza ? 4 : 3,
+        );
+      }
     }
 
     if (plaza) {
@@ -4451,6 +4561,8 @@ export default class TownScene extends Phaser.Scene {
     if (!this.cityRoadImages) this.cityRoadImages = [];
     for (const image of this.cityRoadImages) image.destroy();
     this.cityRoadImages = [];
+    // lookup used by drawIsoRoadTile for gradual material transitions
+    this._roadTypeLookup = new Map(this.cityState.roads.map((r) => [`${r.x},${r.y}`, r.type]));
     const graphics = this.cityRoadGraphics;
     const overlay = this.cityRoadOverlay;
     graphics.clear();
