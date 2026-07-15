@@ -90,7 +90,13 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
 }
 {
   const r = mig.migrateAndValidate(FIXTURES.malformedOptionalFields);
-  check('malformed nullable object -> null', r.data.pendingPolicy === null && r.data.monsterState === null && r.data.weekTracker === null);
+  check('malformed nullable objects repaired safely',
+    r.data.pendingPolicy === null
+    && r.data.weekTracker === null
+    && r.data.monsterState
+    && Array.isArray(r.data.monsterState.activeAttacks)
+    && r.data.monsterState.lairs
+    && Array.isArray(r.data.monsterState.attackHistory));
 }
 {
   const r = mig.migrateAndValidate(FIXTURES.malformedResourceDeliveries);
@@ -99,6 +105,15 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
 {
   const r = mig.migrateAndValidate({ saveVersion: 10, stats: null });
   check('v10 extraction defaults added', r.data.stats && r.data.stats.resourceDeliveries === 0 && Array.isArray(r.data.resourceDeliveries));
+}
+{
+  const r = mig.migrateAndValidate({ saveVersion: 11, monsterState: null, heroStats: { mira: { power: 8 } } });
+  check('v11 world danger defaults added',
+    r.data.saveVersion === mig.SAVE_VERSION
+    && Array.isArray(r.data.monsterState.activeAttacks)
+    && typeof r.data.monsterState.lairs === 'object'
+    && Array.isArray(r.data.monsterState.attackHistory));
+  check('v11 hero health defaults added', r.data.heroStats.mira.health === 100 && r.data.heroStats.mira.maxHealth === 100);
 }
 {
   const r = mig.migrateAndValidate(FIXTURES.futureVersion);

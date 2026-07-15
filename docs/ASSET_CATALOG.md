@@ -373,3 +373,11 @@ New coherent isometric art generated and integrated:
   Outpost (`building_*.png`).
 Level art resolves through `buildingTexture()` (type+level -> base -> placeholder).
 Full generation accounting: docs/PIXELLAB_GENERATION_REPORT.md.
+
+## 2026-07 Persistent Danger Asset Use
+
+No new PixelLab generations were needed. Persistent danger reuses the existing
+`monster_*` set, POI/lair art, corpses, bones, loot bags, coin piles, warning
+icons, workers, guards, and hero animation fallbacks. Health bars, selection
+feedback, graves, and building damage markers are runtime overlays; all static
+art remains replaceable through `assetManifest`.

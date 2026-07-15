@@ -635,3 +635,21 @@ around existing buildings and placement:
 Remaining visual debt: dedicated checked-in art for the four pending manifest
 slots, dedicated Lumber/Salvage production variants, and a browser screenshot
 pass once local browser access is available.
+
+## Persistent World Danger (implemented 2026-07)
+
+- Hostile POIs own persistent lair state: level, danger, monster family, spawn
+  pressure, active cap, discovery, scouting, suppression, recovery, attacks,
+  and loot expectations.
+- Monsters are saved map actors with health, movement, home leash, detection,
+  chase, attack, flee, and return states. Per-lair and global caps bound cost.
+- Proximity aggression prefers vulnerable workers, cargo, injured heroes,
+  guards, and monster-specific building targets. Combat, damage, retreat,
+  death, remains, loot, and named graves happen visibly on the map.
+- Watchtowers widen response range; Guard Patrol walkers and heroes physically
+  intercept. Players can follow, prioritize, scout, and assign expeditions.
+- Buildings retain damage and repair state. Attacks and deaths worsen local
+  reputation; small lairs can be cleared while strong dungeons recover later.
+
+Still planned: terrain-cost pathfinding, multi-hero expedition composition,
+poison/slime ground effects, and a separate civilian population.

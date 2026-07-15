@@ -12,7 +12,7 @@
 // explicit `null` reaching a `normalize(raw = {})` default. This pipeline closes
 // that class up front by sanitizing containers before the scene ever touches them.
 
-export const SAVE_VERSION = 11;
+export const SAVE_VERSION = 12;
 
 export function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -67,6 +67,24 @@ const MIGRATIONS = {
       resourceDeliveries: Number(save.stats?.resourceDeliveries) || 0,
       resourcesSpent: Number(save.stats?.resourcesSpent) || 0,
     },
+  }),
+  11: (save) => ({
+    ...save,
+    monsterState: {
+      ...(isPlainObject(save.monsterState) ? save.monsterState : {}),
+      activeAttacks: Array.isArray(save.monsterState?.activeAttacks) ? save.monsterState.activeAttacks : [],
+      lairs: isPlainObject(save.monsterState?.lairs) ? save.monsterState.lairs : {},
+      attackHistory: Array.isArray(save.monsterState?.attackHistory) ? save.monsterState.attackHistory : [],
+    },
+    heroStats: Object.fromEntries(Object.entries(isPlainObject(save.heroStats) ? save.heroStats : {}).map(([id, stats]) => {
+      const safe = isPlainObject(stats) ? stats : {};
+      const maxHealth = Math.max(1, Number(safe.maxHealth) || 100);
+      return [id, {
+        ...safe,
+        maxHealth,
+        health: Math.max(0, Math.min(maxHealth, Number.isFinite(Number(safe.health)) ? Number(safe.health) : maxHealth)),
+      }];
+    })),
   }),
 };
 

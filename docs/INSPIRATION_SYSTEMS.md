@@ -140,3 +140,13 @@ Everything above runs under a fictional pay-to-win economy: the Golden Whale
 sells power, corruption buys speed, trust pays for it, and the town log
 remembers every "optional" purchase. No real payments, ever — the joke only
 works because it's fake.
+
+## AoE2-style wilderness pressure (implemented foundation)
+
+- Lairs leak persistent monsters instead of firing invisible random events.
+- Detection causes investigate, chase, and attack behavior; a home leash makes
+  monsters return rather than pursuing units across the entire map forever.
+- Heroes and guards travel to interceptions. Unknown lairs can first be
+  inferred when a monster enters revealed land, then located by scouting.
+- Death locations and attack history feed area reputation, making unsafe
+  routes a lasting planning problem rather than a single log line.
