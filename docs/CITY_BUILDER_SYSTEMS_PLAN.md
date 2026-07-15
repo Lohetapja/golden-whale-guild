@@ -704,3 +704,36 @@ assignments, and terrain-cost routing for dedicated repair crews.
 
 Still planned: editable multi-point patrol routes, a dedicated guard roster,
 terrain line-of-sight occlusion, and multi-hero formation controls.
+
+## Persistent Hero Society (implemented 2026-07)
+
+- Every named hero now owns a normalized social profile layered onto existing
+  health, equipment, traits, quests, combat, injuries, and animation state.
+  Profiles track origin, career, influence, faction, contract expectations,
+  promises, grievances, mentorship, party membership, scars, and legacy.
+- Relationships are directed and event-driven. Rescues, shared quests,
+  mentorship, premium favouritism, loot sharing, theft, abandonment, policy
+  agreement, and grave honours write bounded memories and relationship deltas.
+  Minor resentment fades; major rescue debts and betrayals persist.
+- Thresholds expose understandable Friend, Trusted Companion, Worthy/Bitter
+  Rival, Grudge, Public Enemy, and Life Debt states in hero inspectors.
+- Players can form persistent parties, invite members, set loot and risk
+  policies, patrol the frontier, and defend town. Cohesion explains its main
+  friendship, rivalry, leadership, victory, casualty, and loot-policy causes;
+  it modifies quest performance and loot claimant selection.
+- Mentors and juniors physically visit the Training Yard or Guild Hall. The
+  junior progresses, the mentor gains prestige, and both remember the lesson.
+- Career titles derive from completed work rather than age alone. Promotions
+  increase power, influence, contract tier, expectations, and Week Report
+  visibility. Low satisfaction produces a warning and renegotiation window
+  before departure.
+- Hero deaths create persistent Guild Hall memorial records and consequences
+  for friends and parties. Burial can honour the fallen. Experienced heroes
+  may retire into named mentor, advisor, or resident records.
+- Save version 15 persists the relationship graph, memories, parties, social
+  events, memorials, retirements, and per-hero profiles. Old saves begin neutral
+  and do not trigger immediate social chaos.
+
+Still planned: custom party naming, explicit multi-hero quest selection,
+independent departed heroes roaming the world, richer retirement jobs, and a
+dedicated relationship-map view.

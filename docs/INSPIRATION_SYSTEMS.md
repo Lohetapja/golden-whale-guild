@@ -162,3 +162,18 @@ works because it's fake.
 - A town-level response priority provides Caesar-style policy weighting while
   keeping individual RTS-like Intercept, Escort, Track, and Defend orders
   available when the player wants direct control.
+
+## Character continuity and guild politics
+
+- Named heroes remember real quest, combat, rescue, loot, mentorship, policy,
+  death, and memorial events instead of receiving frame-by-frame mood noise.
+- Persistent parties borrow readable group cohesion from expedition games:
+  shared victories and trust help, while rivalry, casualties, unfair loot, and
+  poor leadership create visible penalties and possible fractures.
+- Careers, contracts, expectations, retirement, and memorials make the roster
+  a history of the guild rather than a replaceable power total. Social events
+  remain compact Town Log and Week Report stories instead of blocking modals.
+- Factions are deliberately lightweight opinions, not a second politics game.
+  Influential heroes explain support or opposition inside the existing Policy
+  panel, while the town's fictional premium economy remains the source of many
+  avoidable arguments.

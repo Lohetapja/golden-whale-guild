@@ -149,6 +149,25 @@ import {
   upsertAlert,
 } from '../systems/townDefense.js';
 import {
+  CAREER_STAGES,
+  LOOT_POLICIES,
+  RISK_POLICIES,
+  applyRelationshipEvent,
+  chooseFaction,
+  computePartyCohesion,
+  createParty,
+  cyclePartyPolicy,
+  describeRelationship,
+  fadeMinorRelationships,
+  getCareerStage,
+  getHeroExpectations,
+  getPartyBonus,
+  getRelationship,
+  normalizeHeroProfile,
+  normalizeHeroSocialState,
+  recordSocialEvent,
+} from '../systems/heroSocial.js';
+import {
   applyImportedSave,
   buildExportBundle,
   createBackup,
@@ -884,6 +903,7 @@ export default class TownScene extends Phaser.Scene {
     this.availableQuests = saved?.availableQuests?.length ? saved.availableQuests : rollQuestNotices(this.day);
     this.postedQuests = saved?.postedQuests || [];
     this.savedHeroStats = saved?.heroStats || {};
+    this.heroSocial = normalizeHeroSocialState(saved?.heroSocial);
     this.heroDefinitions = HEROES.map((def) => {
       const savedName = this.savedHeroStats?.[def.id]?.name;
       return {
@@ -1038,6 +1058,8 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-production-priority', this.cycleProductionPriorityFromUi, this);
     this.game.events.on('gwg-equip-hero', this.equipHeroFromUi, this);
     this.game.events.on('gwg-equip-all', this.equipAllHeroesFromUi, this);
+    this.game.events.on('gwg-hero-social-action', this.runHeroSocialActionFromUi, this);
+    this.game.events.on('gwg-party-action', this.runPartyActionFromUi, this);
     this.game.events.on('gwg-trade-action', this.runTradeActionFromUi, this);
     this.game.events.on('gwg-store-filter', this.setStoreFilterFromUi, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -1117,6 +1139,8 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-production-priority', this.cycleProductionPriorityFromUi, this);
       this.game.events.off('gwg-equip-hero', this.equipHeroFromUi, this);
       this.game.events.off('gwg-equip-all', this.equipAllHeroesFromUi, this);
+      this.game.events.off('gwg-hero-social-action', this.runHeroSocialActionFromUi, this);
+      this.game.events.off('gwg-party-action', this.runPartyActionFromUi, this);
       this.game.events.off('gwg-trade-action', this.runTradeActionFromUi, this);
       this.game.events.off('gwg-store-filter', this.setStoreFilterFromUi, this);
     });
@@ -2092,6 +2116,7 @@ export default class TownScene extends Phaser.Scene {
         attackHistory: (this.monsterState?.attackHistory || []).slice(-WORLD_DANGER_LIMITS.attackHistoryLimit),
         defence: normalizeDefenceState(this.defenceState),
       },
+      heroSocial: structuredClone(normalizeHeroSocialState(this.heroSocial)),
       tutorial: { ...this.tutorial },
       cityBuilder: {
         mapVersion: this.cityState.mapVersion || 2,
@@ -2148,6 +2173,7 @@ export default class TownScene extends Phaser.Scene {
         awayUntil: hero.awayUntil || 0,
         combatTargetId: hero.combatTargetId || null,
         defenceOrder: hero.defenceOrder || null,
+        socialProfile: structuredClone(hero.stats.socialProfile),
       }])),
     };
   }
@@ -2965,6 +2991,10 @@ export default class TownScene extends Phaser.Scene {
       statDelta,
       lines: (tracker.lines || []).slice(-12),
       importantLog,
+      socialMilestones: (this.heroSocial.events || [])
+        .filter((event) => event.day >= startDay && event.day <= endDay && event.major)
+        .slice(-7)
+        .map((event) => event.text),
       pendingPolicy: pendingPolicy
         ? `${pendingPolicy.title} (${pendingAge} day${pendingAge === 1 ? '' : 's'} pending)`
         : 'No pending policy. Suspiciously decisive.',
@@ -3026,6 +3056,12 @@ export default class TownScene extends Phaser.Scene {
         lines: report.importantLog?.length
           ? report.importantLog
           : ['The town log mostly contained ordinary panic.'],
+      },
+      {
+        title: 'Hero Stories',
+        lines: report.socialMilestones?.length
+          ? report.socialMilestones
+          : ['No major friendship, rivalry, party, career, contract, retirement, or legacy milestone this week.'],
       },
       {
         title: 'Policy Status',
@@ -3099,6 +3135,7 @@ export default class TownScene extends Phaser.Scene {
   getPolicyPayload() {
     const pendingPolicy = this.getPendingPolicy();
     const age = this.getPendingPolicyAge();
+    const defence = DEFENCE_PRIORITIES[this.defenceState?.priority] || DEFENCE_PRIORITIES.balanced;
     const sections = pendingPolicy ? [
       {
         title: 'Pending Policy',
@@ -3116,6 +3153,26 @@ export default class TownScene extends Phaser.Scene {
         ],
       },
     ];
+    const influential = this.getActiveHeroes()
+      .map((hero) => ({ hero, profile: this.getHeroProfile(hero) }))
+      .filter((entry) => entry.profile.influence >= 18)
+      .sort((a, b) => b.profile.influence - a.profile.influence)
+      .slice(0, 4);
+    if (influential.length) {
+      sections.push({
+        title: 'Guild Voices',
+        lines: influential.map(({ hero, profile }) => {
+          const opinion = profile.faction === 'Premium Enthusiasts'
+            ? 'supports convenient power and suspiciously fast outcomes'
+            : profile.faction === 'Honest Veterans' || profile.faction === 'Protectors'
+              ? 'supports fair treatment, safety, and promises that survive accounting'
+              : profile.faction === 'Frontier Hunters'
+                ? 'supports decisive action against lairs'
+                : 'wants the policy to produce visible results';
+          return `${hero.def.name} (${profile.faction}, influence ${Math.round(profile.influence)}): ${opinion}.`;
+        }),
+      });
+    }
 
     const rows = pendingPolicy ? pendingPolicy.options.map((option) => ({
       title: option.label,
@@ -3255,6 +3312,15 @@ export default class TownScene extends Phaser.Scene {
 
     this.applyDeltas(option.deltas || {});
     option.hero?.(this);
+    const premiumChoice = /premium|sponsor|sell|whale/i.test(`${option.id} ${option.label}`);
+    for (const hero of this.getActiveHeroes()) {
+      const profile = this.getHeroProfile(hero);
+      const approves = premiumChoice
+        ? profile.faction === 'Premium Enthusiasts'
+        : ['Honest Veterans', 'Protectors', 'Tired Survivors'].includes(profile.faction);
+      hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty + (approves ? 2 : -2), 0, 100);
+      profile.contract.satisfaction = Phaser.Math.Clamp(profile.contract.satisfaction + (approves ? 2 : -3), 0, 100);
+    }
     this.pendingPolicy = null;
     this.updateTownNotice();
     this.stats.policiesChosen = (this.stats.policiesChosen || 0) + 1;
@@ -7669,6 +7735,26 @@ export default class TownScene extends Phaser.Scene {
         ...(production ? [{ title: 'Production', lines: production.lines }] : []),
         ...(baseId === 'market' ? [{ title: 'External Trade', lines: this.getTradeInspectorLines() }] : []),
         ...(baseId === 'guildhall' ? [{ title: 'Hero Supply', lines: this.getTownHeroSupplyLines() }] : []),
+        ...(baseId === 'guildhall' ? [{
+          title: 'Parties & Guild Politics',
+          lines: [
+            `${Object.keys(this.heroSocial.parties || {}).length} active parties.`,
+            ...Object.values(this.heroSocial.parties || {}).slice(0, 4).map((party) => `${party.name}: ${party.memberIds.length} members, cohesion ${party.cohesion}/100, ${LOOT_POLICIES.find((policy) => policy.id === party.lootPolicy)?.name || 'unwritten loot policy'}.`),
+            ...this.getActiveHeroes()
+              .map((hero) => ({ hero, profile: this.getHeroProfile(hero) }))
+              .filter(({ profile }) => profile.influence >= 25)
+              .sort((a, b) => b.profile.influence - a.profile.influence)
+              .slice(0, 3)
+              .map(({ hero, profile }) => `${hero.def.name}: ${profile.faction}, influence ${Math.round(profile.influence)}.`),
+          ],
+        }, {
+          title: 'Hall of Records',
+          lines: [
+            ...Object.values(this.heroSocial.memorials || {}).slice(-6).map((record) => `${record.name} - ${record.careerStage}, Day ${record.day}. ${record.cause}`),
+            ...this.heroSocial.retirements.slice(-4).map((record) => `${record.name} retired as ${record.role} on Day ${record.day}.`),
+            ...(!Object.keys(this.heroSocial.memorials || {}).length && !this.heroSocial.retirements.length ? ['No fallen or retired records yet. The blank page is optimistic.'] : []),
+          ],
+        }] : []),
         ...(this.getDefenceBuildingInspectorLines(place) ? [{ title: 'Defence Coverage', lines: this.getDefenceBuildingInspectorLines(place) }] : []),
         {
           title: 'What This Solves',
@@ -8740,15 +8826,389 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getHeroRelationshipLine(hero) {
-    const nameFor = (id) => this.heroes?.find((item) => item.def.id === id)?.def.name || null;
-    const parts = [];
-    const rival = nameFor(hero.stats.rivalId);
-    const admired = nameFor(hero.stats.admiredId);
-    const target = nameFor(hero.stats.resentmentTargetId);
-    if (rival) parts.push(`Rival: ${rival}`);
-    if (admired) parts.push(`Admires: ${admired}`);
-    if (target && target !== rival) parts.push(`Resentment target: ${target}`);
-    return parts.length ? parts.join(' / ') : 'Relationships: no named grudge yet.';
+    const relationships = this.getHeroRelationshipSummaries(hero);
+    if (!relationships.length) return 'Relationships: no named grudge yet.';
+    return relationships.slice(0, 2).map((entry) => `${entry.label}: ${entry.name}`).join(' / ');
+  }
+
+  getHeroById(id) {
+    return this.heroes?.find((hero) => hero.def.id === id) || null;
+  }
+
+  getHeroProfile(hero) {
+    if (!hero?.stats) return null;
+    hero.stats.socialProfile = normalizeHeroProfile(hero.stats.socialProfile, {
+      id: hero.def.id,
+      name: hero.def.name,
+      personality: hero.def.personality,
+      stats: hero.stats,
+    }, this.day);
+    hero.stats.socialProfile.faction ||= chooseFaction(hero.stats.socialProfile);
+    return hero.stats.socialProfile;
+  }
+
+  getHeroRelationshipSummaries(hero) {
+    if (!hero) return [];
+    return (this.heroes || [])
+      .filter((other) => other !== hero)
+      .map((other) => {
+        const record = getRelationship(this.heroSocial, hero.def.id, other.def.id);
+        const intensity = Math.max(
+          Math.abs(record.friendship || 0), Math.abs(record.trust || 0),
+          Math.abs(record.rivalry || 0), Math.abs(record.resentment || 0), Math.abs(record.debt || 0),
+        );
+        return { id: other.def.id, name: other.def.name, record, intensity, label: describeRelationship(record) };
+      })
+      .filter((entry) => entry.intensity >= 12)
+      .sort((a, b) => b.intensity - a.intensity);
+  }
+
+  recordHeroRelationshipEvent(source, target, eventId, context = {}) {
+    if (!source || !target || source === target) return null;
+    const before = describeRelationship(getRelationship(this.heroSocial, source.def.id, target.def.id));
+    const record = applyRelationshipEvent(this.heroSocial, source.def.id, target.def.id, eventId, {
+      day: this.day,
+      ...context,
+    });
+    if (!record) return null;
+    const after = describeRelationship(record);
+    if (['Competitive Rival', 'Bitter Rival', 'Friend', 'Trusted Companion', 'Public Enemy', 'Owes a Life Debt'].includes(after) && before !== after) {
+      const text = `${source.def.name} now considers ${target.def.name} a ${after}. Social progress remains subject to loot allocation.`;
+      recordSocialEvent(this.heroSocial, { day: this.day, type: 'relationship', heroIds: [source.def.id, target.def.id], text, major: true });
+      this.addTownLog(text, 'npc');
+      this.addReportLine('npc', text);
+      this.game.events.emit('gwg-event', text);
+    }
+    if ((record.rivalry || 0) >= 40) source.stats.rivalId = target.def.id;
+    if ((record.friendship || 0) >= 45 || (record.respect || 0) >= 60) source.stats.admiredId = target.def.id;
+    if ((record.resentment || 0) >= 40) source.stats.resentmentTargetId = target.def.id;
+    return record;
+  }
+
+  getPartyForHero(hero) {
+    const partyId = this.getHeroProfile(hero)?.partyId;
+    return partyId ? this.heroSocial.parties?.[partyId] || null : null;
+  }
+
+  refreshPartyCohesion(party) {
+    if (!party) return null;
+    const profiles = Object.fromEntries((this.heroes || []).map((hero) => [hero.def.id, this.getHeroProfile(hero)]));
+    return computePartyCohesion(this.heroSocial, party, profiles);
+  }
+
+  createHeroParty(hero) {
+    if (!hero || this.getPartyForHero(hero)) return null;
+    const party = createParty(this.heroSocial, hero.def.id, [], this.day);
+    party.name = `${hero.def.name.split(' ')[0]}'s Company`;
+    this.getHeroProfile(hero).partyId = party.id;
+    this.refreshPartyCohesion(party);
+    const text = `${hero.def.name} formed ${party.name}. Membership includes shared danger and separately invoiced loot.`;
+    recordSocialEvent(this.heroSocial, { day: this.day, type: 'party', heroIds: [hero.def.id], text, major: true });
+    this.addTownLog(text, 'npc');
+    this.addReportLine('npc', text);
+    return party;
+  }
+
+  inviteHeroToParty(party, inviter) {
+    if (!party || party.memberIds.length >= party.maxSize) return null;
+    const candidate = this.getActiveHeroes()
+      .filter((hero) => !this.getHeroProfile(hero).partyId && hero !== inviter && !this.isHeroInjured(hero))
+      .map((hero) => ({
+        hero,
+        score: (getRelationship(this.heroSocial, inviter.def.id, hero.def.id).friendship || 0)
+          + (getRelationship(this.heroSocial, inviter.def.id, hero.def.id).respect || 0)
+          + hero.stats.loyalty / 3,
+      }))
+      .sort((a, b) => b.score - a.score)[0]?.hero;
+    if (!candidate) return null;
+    party.memberIds.push(candidate.def.id);
+    this.getHeroProfile(candidate).partyId = party.id;
+    party.history = [...(party.history || []), `Day ${this.day}: ${candidate.def.name} joined.`].slice(-16);
+    this.recordHeroRelationshipEvent(candidate, inviter, 'quest_success', { text: 'Accepted an invitation to adventure together.', severity: 1 });
+    this.refreshPartyCohesion(party);
+    const text = `${candidate.def.name} joined ${party.name}. The waiver became a group document.`;
+    recordSocialEvent(this.heroSocial, { day: this.day, type: 'party', heroIds: [inviter.def.id, candidate.def.id], text, major: true });
+    this.addTownLog(text, 'npc');
+    return candidate;
+  }
+
+  startMentorship(mentor) {
+    const mentorProfile = this.getHeroProfile(mentor);
+    if (!mentor || this.isHeroInjured(mentor) || getCareerStage(mentorProfile).contractTier < 2) return false;
+    const junior = this.getActiveHeroes()
+      .filter((hero) => hero !== mentor && !this.isHeroInjured(hero) && !this.getHeroProfile(hero).mentorId)
+      .sort((a, b) => (a.stats.power || 0) - (b.stats.power || 0))[0];
+    const training = this.doorById.training || this.doorById.guildhall;
+    if (!junior || !training) return false;
+    const juniorProfile = this.getHeroProfile(junior);
+    juniorProfile.mentorId = mentor.def.id;
+    if (!mentorProfile.studentIds.includes(junior.def.id)) mentorProfile.studentIds.push(junior.def.id);
+    mentor.currentAction = `Mentoring ${junior.def.name}`;
+    junior.currentAction = `Training with ${mentor.def.name}`;
+    const finish = () => {
+      if (!mentor.container?.active || !junior.container?.active) return;
+      junior.stats.power += 1;
+      junior.stats.morale = Phaser.Math.Clamp(junior.stats.morale + 3, 0, 100);
+      mentor.stats.fame = Phaser.Math.Clamp((mentor.stats.fame || 0) + 2, 0, 100);
+      mentorProfile.career.mentorships += 1;
+      this.recordHeroRelationshipEvent(junior, mentor, 'mentorship', { location: 'Training Yard' });
+      this.recordHeroRelationshipEvent(mentor, junior, 'mentorship', { location: 'Training Yard' });
+      const text = `${mentor.def.name} trained ${junior.def.name}. The lesson contained actual experience and only one disclaimer.`;
+      recordSocialEvent(this.heroSocial, { day: this.day, type: 'mentorship', heroIds: [mentor.def.id, junior.def.id], text, major: true });
+      this.addTownLog(text, 'npc');
+      this.addReportLine('npc', text);
+      this.say(junior, 'I learned something!', true);
+      this.scheduleAmbient(mentor, 2200);
+      this.scheduleAmbient(junior, 2600);
+      this.publishHeroRoster();
+    };
+    this.walkTo(mentor, { ...training, intentAction: `Mentoring ${junior.def.name}`, reason: 'Formal mentorship session.', risk: 'Low' });
+    this.walkTo(junior, { ...training, intentAction: `Training with ${mentor.def.name}`, reason: 'Learning from an experienced hero.', risk: 'Low' }, finish);
+    return true;
+  }
+
+  runHeroSocialActionFromUi(token) {
+    const [heroId, action] = String(token || '').split(':');
+    const hero = this.getHeroById(heroId);
+    if (!hero) return;
+    const profile = this.getHeroProfile(hero);
+    const party = this.getPartyForHero(hero);
+    if (action === 'create-party') this.createHeroParty(hero);
+    else if (action === 'invite-party') this.inviteHeroToParty(party, hero);
+    else if (action === 'mentor') {
+      if (!this.startMentorship(hero)) this.game.events.emit('gwg-event', 'Mentorship requires an experienced, healthy mentor and an available junior.');
+    } else if (action === 'promise-equipment') {
+      profile.contract.promises.push({ id: `equipment-${this.day}`, type: 'equipment', madeDay: this.day, dueDay: this.day + 5, fulfilled: false });
+      this.addHeroHistory(hero, 'The guild promised better equipment. The promise now has a due date.');
+    } else if (action === 'renegotiate') {
+      const cost = 45 + profile.contract.tier * 35;
+      if (this.resources.gold < cost) this.game.events.emit('gwg-event', `Renegotiation costs ${cost}g. Respect remains outside the current budget.`);
+      else {
+        this.applyDeltas({ gold: -cost, trust: 1 });
+        hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty + 12, 0, 100);
+        profile.contract.satisfaction = Phaser.Math.Clamp(profile.contract.satisfaction + 18, 0, 100);
+        profile.contract.grievances = profile.contract.grievances.slice(-5);
+        this.addHeroHistory(hero, `Contract renegotiated for ${cost}g.`);
+      }
+    } else if (action === 'bonus') {
+      if (this.resources.gold < 100) this.game.events.emit('gwg-event', 'A recognition bonus requires 100g and one functioning signature.');
+      else {
+        this.applyDeltas({ gold: -100, morale: 1 });
+        hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty + 8, 0, 100);
+        hero.stats.fame = Phaser.Math.Clamp((hero.stats.fame || 0) + 4, 0, 100);
+        profile.contract.satisfaction = Phaser.Math.Clamp(profile.contract.satisfaction + 12, 0, 100);
+        profile.achievements.push(`Recognized publicly on Day ${this.day}`);
+      }
+    } else if (action === 'promote') this.evaluateHeroCareer(hero, true);
+    else if (action === 'release') this.leaveHeroPermanently(hero, 'Released from the Guild by mutual paperwork.');
+    this.refreshAllPartyCohesion();
+    this.publishHeroRoster();
+    this.saveGame(false);
+    if (hero.stats.active !== false || hero.stats.deathDay) this.showHeroInspector(hero);
+  }
+
+  runPartyActionFromUi(token) {
+    const [partyId, action] = String(token || '').split(':');
+    const party = this.heroSocial.parties?.[partyId];
+    if (!party) return;
+    if (action === 'loot') cyclePartyPolicy(party, 'lootPolicy', LOOT_POLICIES);
+    else if (action === 'risk') cyclePartyPolicy(party, 'riskPolicy', RISK_POLICIES);
+    else if (action === 'defend') {
+      const threats = (this.activeMonsterActors || []).filter((actor) => actor.container?.active).slice(0, 3);
+      const members = party.memberIds.map((id) => this.getHeroById(id)).filter((hero) => hero?.stats.active !== false && !this.isHeroInjured(hero));
+      if (!threats.length) this.game.events.emit('gwg-event', `${party.name} found no active monster. Defensive readiness became a group walk.`);
+      members.slice(0, Math.max(1, threats.length)).forEach((hero, index) => {
+        const threat = threats[index % Math.max(1, threats.length)];
+        if (threat) this.dispatchHeroToMonster(threat, hero, true, `${party.name} town defence order.`);
+      });
+      party.currentAssignment = { type: 'defence', day: this.day, name: 'Town Defence' };
+    } else if (action === 'patrol') {
+      const members = party.memberIds.map((id) => this.getHeroById(id)).filter((hero) => hero?.stats.active !== false && !this.isHeroInjured(hero));
+      members.slice(0, 3).forEach((hero) => {
+        const spot = this.getExplorationSpot(hero);
+        this.walkTo(hero, { ...spot, intentAction: `Patrolling frontier with ${party.name}`, reason: 'Persistent party patrol order.', risk: party.riskPolicy === 'bold' ? 'High' : 'Moderate' });
+      });
+      party.currentAssignment = { type: 'patrol', day: this.day, name: 'Frontier Patrol' };
+    }
+    else if (action === 'disband') {
+      for (const id of party.memberIds) {
+        const hero = this.getHeroById(id);
+        if (hero) this.getHeroProfile(hero).partyId = null;
+      }
+      recordSocialEvent(this.heroSocial, { day: this.day, type: 'party', heroIds: party.memberIds, text: `${party.name} disbanded. The shared tab remains active.`, major: true });
+      delete this.heroSocial.parties[partyId];
+    }
+    this.refreshPartyCohesion(party);
+    this.publishHeroRoster();
+    this.saveGame(false);
+    const leader = this.getHeroById(party.leaderId);
+    if (leader && this.heroSocial.parties?.[partyId]) this.showHeroInspector(leader);
+  }
+
+  refreshAllPartyCohesion() {
+    for (const party of Object.values(this.heroSocial.parties || {})) this.refreshPartyCohesion(party);
+  }
+
+  evaluateHeroCareer(hero, manual = false) {
+    const profile = this.getHeroProfile(hero);
+    const previousId = profile.careerStage;
+    const stage = getCareerStage(profile);
+    if (stage.id === previousId) {
+      if (manual) this.game.events.emit('gwg-event', `${hero.def.name} needs more quests, rescues, victories, or lair work before promotion.`);
+      return false;
+    }
+    profile.careerStage = stage.id;
+    profile.level = Math.max(profile.level + 1, stage.contractTier);
+    profile.contract.tier = stage.contractTier;
+    hero.stats.power += 1;
+    hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty + 5, 0, 100);
+    profile.influence = Phaser.Math.Clamp(profile.influence + stage.contractTier * 4, 0, 100);
+    const text = `${hero.def.name} was promoted to ${stage.name}. Their salary expectations were promoted as well.`;
+    profile.achievements.push(text);
+    recordSocialEvent(this.heroSocial, { day: this.day, type: 'promotion', heroIds: [hero.def.id], text, major: true });
+    this.addHeroHistory(hero, text);
+    this.addTownLog(text, 'npc');
+    this.addReportLine('npc', text);
+    this.game.events.emit('gwg-event', text);
+    return true;
+  }
+
+  retireHero(hero, reason) {
+    if (!hero || hero.stats.deathDay || hero.stats.active === false) return false;
+    const profile = this.getHeroProfile(hero);
+    profile.status = 'retired';
+    profile.retirementRole = profile.studentIds.length ? 'Guild Mentor' : profile.influence >= 45 ? 'Guild Advisor' : 'Named Resident';
+    hero.stats.active = false;
+    hero.stats.status = 'Retired';
+    hero.currentAction = profile.retirementRole;
+    hero.container.setVisible(false);
+    const record = { heroId: hero.def.id, name: hero.def.name, day: this.day, role: profile.retirementRole, reason, careerStage: profile.careerStage };
+    this.heroSocial.retirements = [...this.heroSocial.retirements, record].slice(-30);
+    const text = `${hero.def.name} retired as ${profile.retirementRole}. ${reason}`;
+    recordSocialEvent(this.heroSocial, { day: this.day, type: 'retirement', heroIds: [hero.def.id], text, major: true });
+    this.addTownLog(text, 'npc');
+    this.addReportLine('npc', text);
+    return true;
+  }
+
+  handleHeroDeathLegacy(hero, reason) {
+    const profile = this.getHeroProfile(hero);
+    profile.status = 'dead';
+    profile.careerStage = 'fallen';
+    const relationships = this.getHeroRelationshipSummaries(hero);
+    const memorial = {
+      heroId: hero.def.id,
+      name: hero.def.name,
+      day: this.day,
+      cause: reason,
+      careerStage: getCareerStage({ ...profile, status: 'active' }).name,
+      friends: relationships.filter((entry) => ['Friend', 'Trusted Companion'].includes(entry.label)).map((entry) => entry.id),
+      rivals: relationships.filter((entry) => /Rival|Enemy/.test(entry.label)).map((entry) => entry.id),
+      achievements: profile.achievements.slice(-6),
+      buried: false,
+      epitaph: `Here lies ${hero.def.name}. The town checked the loot table before the flowers.`,
+    };
+    this.heroSocial.memorials[hero.def.id] = memorial;
+    for (const friendId of memorial.friends) {
+      const friend = this.getHeroById(friendId);
+      if (!friend) continue;
+      friend.stats.morale = Phaser.Math.Clamp(friend.stats.morale - 10, 0, 100);
+      friend.stats.loyalty = Phaser.Math.Clamp(friend.stats.loyalty - 5, 0, 100);
+      this.getHeroProfile(friend).contract.grievances.push(`Mourning ${hero.def.name}, lost on Day ${this.day}.`);
+    }
+    const party = this.getPartyForHero(hero);
+    if (party) {
+      party.casualties += 1;
+      party.history.push(`Day ${this.day}: ${hero.def.name} fell.`);
+      party.memberIds = party.memberIds.filter((id) => id !== hero.def.id);
+      if (party.leaderId === hero.def.id) party.leaderId = party.memberIds[0] || null;
+      this.refreshPartyCohesion(party);
+    }
+    recordSocialEvent(this.heroSocial, { day: this.day, type: 'legacy', heroIds: [hero.def.id, ...memorial.friends], text: `${hero.def.name} entered the Hall of Records. Accountability arrived shortly afterward.`, major: true });
+  }
+
+  updateHeroSocialSystems() {
+    if (this.heroSocial.lastSocialDay === this.day) return;
+    this.heroSocial.lastSocialDay = this.day;
+    fadeMinorRelationships(this.heroSocial, this.day);
+    const lodging = this.getLodgingReport();
+    for (const hero of this.heroes || []) {
+      const profile = this.getHeroProfile(hero);
+      if (hero.stats.deathDay || profile.status === 'retired') continue;
+      profile.wealth = hero.stats.gold || 0;
+      profile.localReputation = Phaser.Math.Clamp((hero.stats.fame || 0) - (hero.stats.resentment || 0) / 3, -100, 100);
+      profile.influence = Phaser.Math.Clamp((hero.stats.fame || 0) * 0.55 + profile.level * 3, 0, 100);
+      profile.faction = chooseFaction(profile);
+      profile.contract.expectations = getHeroExpectations(profile, normalizeHeroEquipment(hero.stats.equipment), lodging);
+      const unmet = profile.contract.expectations.length;
+      profile.contract.unmetDays = unmet ? profile.contract.unmetDays + 1 : 0;
+      profile.contract.satisfaction = Phaser.Math.Clamp(profile.contract.satisfaction + (unmet ? -Math.min(4, unmet) : 2), 0, 100);
+      for (const promise of profile.contract.promises) {
+        if (promise.fulfilled) continue;
+        const equipment = normalizeHeroEquipment(hero.stats.equipment);
+        if (promise.type === 'equipment' && equipment.weapon !== 'Poor') {
+          promise.fulfilled = true;
+          hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty + 8, 0, 100);
+          this.addTownLog(`${hero.def.name}'s equipment promise was fulfilled. The ledger appeared briefly sincere.`, 'npc');
+        } else if (this.day > promise.dueDay && !promise.broken) {
+          promise.broken = true;
+          hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty - 14, 0, 100);
+          profile.contract.grievances.push(`Broken ${promise.type} promise from Day ${promise.madeDay}.`);
+          recordSocialEvent(this.heroSocial, { day: this.day, type: 'contract', heroIds: [hero.def.id], text: `${hero.def.name}'s promised ${promise.type} expired into a grievance.`, major: true });
+        }
+      }
+      if (profile.contract.satisfaction < 28 || hero.stats.loyalty < 24) {
+        if (!profile.contract.warningDay || this.day - profile.contract.warningDay >= 4) {
+          profile.contract.warningDay = this.day;
+          const reason = profile.contract.grievances.at(-1) || profile.contract.expectations[0] || 'general guild conduct';
+          const text = `${hero.def.name} is considering leaving: ${reason}. Renegotiation is still possible.`;
+          this.addTownLog(text, 'npc');
+          this.addReportLine('warnings', text);
+          recordSocialEvent(this.heroSocial, { day: this.day, type: 'departure-warning', heroIds: [hero.def.id], text, major: true });
+        }
+      }
+      if (profile.contract.warningDay && this.day - profile.contract.warningDay >= 5 && hero.stats.loyalty < 10 && this.day > 10) {
+        this.leaveHeroPermanently(hero, profile.contract.grievances.at(-1) || 'Contract expectations remained unmet.');
+        profile.status = 'departed';
+        profile.departureReason = profile.contract.grievances.at(-1) || 'Unmet expectations';
+        continue;
+      }
+      profile.retirementTendency = Phaser.Math.Clamp(
+        profile.retirementTendency + (profile.career.injuries || 0) * 0.2 + (profile.careerStage === 'legend' ? 2 : 0), 0, 100,
+      );
+      if (this.day > 28 && profile.retirementTendency >= 78 && hero.stats.loyalty >= 35 && Math.random() < 0.08) {
+        this.retireHero(hero, 'Their memoir found a publisher before the next lair did.');
+        continue;
+      }
+      this.evaluateHeroCareer(hero);
+    }
+    this.refreshAllPartyCohesion();
+    this.maybeRunSocialEvent();
+  }
+
+  maybeRunSocialEvent() {
+    if (this.day < 3 || this.day - (this.heroSocial.events.at(-1)?.day || 0) < 2 || Math.random() > 0.42) return;
+    const active = this.getActiveHeroes();
+    if (active.length < 2) return;
+    const pairs = active.flatMap((hero, index) => active.slice(index + 1).map((other) => ({ hero, other })));
+    const pair = pairs
+      .map((entry) => ({ ...entry, record: getRelationship(this.heroSocial, entry.hero.def.id, entry.other.def.id) }))
+      .sort((a, b) => Math.max(b.record.friendship || 0, b.record.rivalry || 0, b.record.resentment || 0)
+        - Math.max(a.record.friendship || 0, a.record.rivalry || 0, a.record.resentment || 0))[0];
+    if (!pair) return;
+    let text;
+    if ((pair.record.friendship || 0) >= 35) {
+      text = `${pair.hero.def.name} and ${pair.other.def.name} shared a Tavern table and several legally distinct memories.`;
+      this.recordHeroRelationshipEvent(pair.hero, pair.other, 'loot_shared', { text: 'Spent peaceful time together.', severity: 1, reciprocal: true });
+    } else if ((pair.record.rivalry || 0) >= 30 || (pair.record.resentment || 0) >= 30) {
+      text = `${pair.hero.def.name} challenged ${pair.other.def.name}'s record. The scoreboard requested mediation.`;
+      pair.hero.stats.morale = Phaser.Math.Clamp(pair.hero.stats.morale - 1, 0, 100);
+    } else {
+      text = `${pair.hero.def.name} and ${pair.other.def.name} compared quest scars. Both claimed theirs had better rarity.`;
+      this.recordHeroRelationshipEvent(pair.hero, pair.other, 'quest_success', { text: 'Compared field experience.', severity: 1, reciprocal: true });
+    }
+    recordSocialEvent(this.heroSocial, { day: this.day, type: 'social', heroIds: [pair.hero.def.id, pair.other.def.id], text });
+    this.addTownLog(text, 'npc');
   }
 
   getHeroActionText(hero) {
@@ -8917,9 +9377,34 @@ export default class TownScene extends Phaser.Scene {
     const whaleAccess = hero.stats.whaleAccess ? 'Yes' : (hero.stats.debt > 250 ? 'Technically' : 'No');
     const history = (hero.stats.history || []).slice(-5).reverse();
     const inventory = Array.isArray(hero.stats.inventory) ? hero.stats.inventory : [];
+    const profile = this.getHeroProfile(hero);
+    const stage = getCareerStage(profile);
+    const party = this.getPartyForHero(hero);
+    const relationships = this.getHeroRelationshipSummaries(hero);
+    const strongestFriend = relationships.find((entry) => ['Friend', 'Trusted Companion'].includes(entry.label));
+    const strongestRival = relationships.find((entry) => /Rival|Enemy|Grudge/.test(entry.label));
+    const nextStage = CAREER_STAGES[Math.min(CAREER_STAGES.length - 1, Math.max(0, CAREER_STAGES.findIndex((entry) => entry.id === profile.careerStage) + 1))];
+    const socialActions = hero.stats.deathDay || profile.status === 'retired' ? [] : [
+      { label: 'Assign Quest', event: 'gwg-open-quests', id: hero.def.id },
+      { label: 'Assign Defence', event: 'gwg-open-defense-alerts', id: hero.def.id },
+      { label: party ? 'Invite Available Hero' : 'Create Party', event: 'gwg-hero-social-action', id: `${hero.def.id}:${party ? 'invite-party' : 'create-party'}`, disabled: party ? party.memberIds.length >= party.maxSize : false },
+      { label: 'Assign Mentor Session', event: 'gwg-hero-social-action', id: `${hero.def.id}:mentor` },
+      { label: 'Promise Equipment', event: 'gwg-hero-social-action', id: `${hero.def.id}:promise-equipment` },
+      { label: 'Renegotiate Contract', event: 'gwg-hero-social-action', id: `${hero.def.id}:renegotiate` },
+      { label: 'Award 100g Recognition', event: 'gwg-hero-social-action', id: `${hero.def.id}:bonus`, disabled: this.resources.gold < 100 },
+      { label: 'Review Promotion', event: 'gwg-hero-social-action', id: `${hero.def.id}:promote` },
+      { label: 'Release from Guild', event: 'gwg-hero-social-action', id: `${hero.def.id}:release`, className: 'gwg-danger-action' },
+    ];
+    const partyActions = party ? [
+      { label: 'Defend Town', event: 'gwg-party-action', id: `${party.id}:defend` },
+      { label: 'Patrol Frontier', event: 'gwg-party-action', id: `${party.id}:patrol` },
+      { label: `Loot: ${LOOT_POLICIES.find((item) => item.id === party.lootPolicy)?.name || 'Equal Shares'}`, event: 'gwg-party-action', id: `${party.id}:loot` },
+      { label: `Risk: ${RISK_POLICIES.find((item) => item.id === party.riskPolicy)?.name || 'Balanced'}`, event: 'gwg-party-action', id: `${party.id}:risk` },
+      { label: 'Disband Party', event: 'gwg-party-action', id: `${party.id}:disband`, className: 'gwg-danger-action' },
+    ] : [];
     return {
       title: hero.def.name,
-      subtitle: `Status: ${hero.stats.status || hero.def.personality}`,
+      subtitle: `${stage.name} - ${profile.archetype} - ${hero.stats.status || hero.def.personality}`,
       primaryActions: [
         { label: 'Equip Best Available', event: 'gwg-equip-hero', id: hero.def.id },
         {
@@ -8928,6 +9413,8 @@ export default class TownScene extends Phaser.Scene {
           id: hero.def.id,
           className: hero.stats.favorite ? 'gwg-favorite-action active' : 'gwg-favorite-action',
         },
+        ...socialActions,
+        ...partyActions,
       ],
       sections: [
         {
@@ -8935,6 +9422,9 @@ export default class TownScene extends Phaser.Scene {
           lines: [
             `Originally: ${hero.stats.originalPersonality || hero.def.personality}`,
             `Current: ${hero.stats.currentPersonality || hero.stats.status || hero.def.personality}`,
+            `Origin: ${profile.origin}`,
+            `Career: Level ${profile.level} ${stage.name}`,
+            `Faction: ${profile.faction}`,
             `Mood: ${hero.stats.currentMood || 'Wary'}`,
             ...this.getHeroIntentLines(hero),
           ],
@@ -8955,6 +9445,55 @@ export default class TownScene extends Phaser.Scene {
             `Injury: ${this.isHeroInjured(hero) ? hero.stats.injuryState || 'injured' : 'healthy'}`,
             `Animation: ${hero.animationState || 'idle'}${hero.hasStateFrames ? ' (state frames)' : ' (static fallback)'}`,
             this.getHeroRelationshipLine(hero),
+          ],
+        },
+        {
+          title: 'Relationships',
+          lines: [
+            strongestFriend ? `Closest companion: ${strongestFriend.name} (${strongestFriend.label})` : 'Closest companion: none yet',
+            strongestRival ? `Strongest conflict: ${strongestRival.name} (${strongestRival.label})` : 'Strongest conflict: none yet',
+            profile.mentorId ? `Mentor: ${this.getHeroById(profile.mentorId)?.def.name || 'departed mentor'}` : 'Mentor: none',
+            profile.studentIds.length ? `Students: ${profile.studentIds.map((id) => this.getHeroById(id)?.def.name || id).join(', ')}` : 'Students: none',
+            ...relationships.slice(0, 4).map((entry) => {
+              const latest = entry.record.memories?.at(-1);
+              return `${entry.name}: ${entry.label}${latest ? ` - ${latest.text}` : ''}`;
+            }),
+          ],
+        },
+        ...(party ? [{
+          title: `Party - ${party.name}`,
+          lines: [
+            `Leader: ${this.getHeroById(party.leaderId)?.def.name || 'vacant'}`,
+            `Members: ${party.memberIds.map((id) => this.getHeroById(id)?.def.name || id).join(', ')}`,
+            `Cohesion: ${party.cohesion}/100 (${getPartyBonus(party).label})`,
+            ...party.cohesionReasons,
+            `Loot policy: ${LOOT_POLICIES.find((item) => item.id === party.lootPolicy)?.name}`,
+            `Risk policy: ${RISK_POLICIES.find((item) => item.id === party.riskPolicy)?.name}`,
+            `Record: ${party.victories} victories / ${party.failures} failures / ${party.casualties} casualties`,
+          ],
+        }] : []),
+        {
+          title: 'Career Record',
+          lines: [
+            `Quests: ${profile.career.quests} completed / ${profile.career.failures} failed`,
+            `Combat: ${profile.career.kills} kills / ${profile.career.rescues} rescues / ${profile.career.injuries} injuries`,
+            `Guild work: ${profile.career.buildingsDefended} buildings defended / ${profile.career.lairsCleared} lairs cleared`,
+            nextStage.id !== profile.careerStage ? `Next title: ${nextStage.name} at career score ${nextStage.minScore}.` : 'Highest active career title reached.',
+            ...(profile.achievements.length ? profile.achievements.slice(-3).map((line) => `- ${line}`) : ['- No signature achievement yet.']),
+            ...(profile.scars.length ? [`Scars: ${profile.scars.join(', ')}`] : []),
+          ],
+        },
+        {
+          title: 'Loyalty & Contract',
+          lines: [
+            `Loyalty: ${hero.stats.loyalty}/100 - Satisfaction: ${profile.contract.satisfaction}/100`,
+            `Contract tier: ${profile.contract.tier}`,
+            profile.contract.expectations.length ? `Expectations: ${profile.contract.expectations.join(', ')}` : 'Expectations currently met.',
+            profile.contract.promises.some((promise) => !promise.fulfilled && !promise.broken)
+              ? `Promises pending: ${profile.contract.promises.filter((promise) => !promise.fulfilled && !promise.broken).map((promise) => `${promise.type} by Day ${promise.dueDay}`).join(', ')}`
+              : 'Promises pending: none',
+            profile.contract.grievances.length ? { text: `Grievances: ${profile.contract.grievances.slice(-3).join(' / ')}`, className: 'gwg-bad' } : 'Grievances: none recorded',
+            profile.contract.warningDay ? { text: `Departure warning issued Day ${profile.contract.warningDay}.`, className: 'gwg-bad' } : 'Departure risk: no active warning',
           ],
         },
         {
@@ -9066,6 +9605,7 @@ export default class TownScene extends Phaser.Scene {
 
   getHeroRosterStatus(hero) {
     if (hero?.stats?.deathDay) return 'Dead';
+    if (this.getHeroProfile(hero)?.status === 'retired' || hero?.stats?.status === 'Retired') return 'Retired';
     if (hero?.stats?.active === false) {
       return /Left Town|Balance Refugee|Burned Out/.test(hero.stats.status || '') ? 'Left' : 'Reserve';
     }
@@ -9075,6 +9615,7 @@ export default class TownScene extends Phaser.Scene {
     if (hero?.state === 'working' || action.includes('woodcutter') || action.includes('miner') || action.includes('herbalist') || action.includes('salvage runner')) return 'Working';
     if (action.includes('explor') || action.includes('harvest') || action.includes('investigat') || action.includes('clear')) return 'Exploring';
     if (action.includes('intercept') || action.includes('attack') || action.includes('fight')) return 'Fighting';
+    if (action.includes('defend') || action.includes('patrol') || action.includes('escort')) return 'Defending';
     if (action.includes('loot') || action.includes('remains')) return 'Looting';
     if (action.includes('quest') || action.includes('preparing')) return 'On Quest';
     if (this.postedQuests?.some((quest) => quest.assignedHeroId === hero?.def?.id)) return 'On Quest';
@@ -9122,6 +9663,9 @@ export default class TownScene extends Phaser.Scene {
       const destination = assignedQuest && status === 'On Quest'
         ? assignedQuest.name
         : (hero.intent?.destinationName || this.getPlaceName(hero.destination || hero.at));
+      const profile = this.getHeroProfile(hero);
+      const party = this.getPartyForHero(hero);
+      const conflicts = this.getHeroRelationshipSummaries(hero).filter((entry) => /Rival|Enemy|Grudge/.test(entry.label));
       return {
         id: hero.def.id,
         name: hero.def.name,
@@ -9136,6 +9680,14 @@ export default class TownScene extends Phaser.Scene {
         reason: hero.intent?.reason || '',
         risk: hero.intent?.risk || 'Low',
         dead: Boolean(hero.stats.deathDay),
+        loyalty: hero.stats.loyalty || 0,
+        careerStage: getCareerStage(profile).name,
+        party: party?.name || '',
+        conflict: conflicts[0] ? `${conflicts[0].label}: ${conflicts[0].name}` : '',
+        urgent: profile.contract.warningDay ? 'Departure warning' : profile.contract.expectations[0] || '',
+        unhappy: profile.contract.satisfaction < 35 || hero.stats.loyalty < 30,
+        leaving: Boolean(profile.contract.warningDay),
+        premiumExposure: hero.stats.premiumExposure || 0,
         icon,
       };
     });
@@ -9529,6 +10081,13 @@ export default class TownScene extends Phaser.Scene {
         destMarker: null, bubble: null, bubbleTimer: null,
         awayUntil: savedStats.awayUntil || 0,
       };
+      hero.stats.socialProfile = normalizeHeroProfile(savedStats.socialProfile, {
+        id: def.id,
+        name: def.name,
+        personality: def.personality,
+        stats: hero.stats,
+      }, this.day);
+      hero.stats.socialProfile.faction ||= chooseFaction(hero.stats.socialProfile);
       this.prepareHeroAnimation(hero);
       if (hero.awayUntil > this.day) {
         hero.state = 'away';
@@ -9593,6 +10152,20 @@ export default class TownScene extends Phaser.Scene {
       if (hero.stats.active) this.scheduleAmbient(hero, Phaser.Math.Between(300, 2500));
       return hero;
     });
+    const validHeroIds = new Set(this.heroes.map((hero) => hero.def.id));
+    for (const [partyId, party] of Object.entries(this.heroSocial.parties || {})) {
+      party.memberIds = party.memberIds.filter((id) => validHeroIds.has(id));
+      if (!party.memberIds.length) {
+        delete this.heroSocial.parties[partyId];
+        continue;
+      }
+      if (!party.memberIds.includes(party.leaderId)) party.leaderId = party.memberIds[0];
+      for (const id of party.memberIds) {
+        const hero = this.getHeroById(id);
+        if (hero) this.getHeroProfile(hero).partyId = partyId;
+      }
+      this.refreshPartyCohesion(party);
+    }
   }
 
   getInitialHeroSpot(def, index = 0) {
@@ -9699,6 +10272,18 @@ export default class TownScene extends Phaser.Scene {
 
   leaveHeroPermanently(hero, reason) {
     if (!hero || hero.stats.active === false) return;
+    const profile = this.getHeroProfile(hero);
+    profile.status = 'departed';
+    profile.departureReason = reason;
+    const party = this.getPartyForHero(hero);
+    if (party) {
+      party.memberIds = party.memberIds.filter((id) => id !== hero.def.id);
+      party.history = [...party.history, `Day ${this.day}: ${hero.def.name} departed.`].slice(-16);
+      if (party.leaderId === hero.def.id) party.leaderId = party.memberIds[0] || null;
+      profile.partyId = null;
+      if (party.memberIds.length) this.refreshPartyCohesion(party);
+      else delete this.heroSocial.parties[party.id];
+    }
     hero.stats.active = false;
     hero.stats.status = 'Left Town';
     hero.stats.currentPersonality = 'Left Town';
@@ -9712,6 +10297,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.emit('gwg-event', text);
     this.addTownLog(text, 'npc');
     this.addReportLine('npc', text);
+    recordSocialEvent(this.heroSocial, { day: this.day, type: 'departure', heroIds: [hero.def.id], text, major: true });
   }
 
   progressHeroStories() {
@@ -9751,8 +10337,14 @@ export default class TownScene extends Phaser.Scene {
               : S.debt > 1600
                 ? 'Their debt became a district and they left before zoning approval.'
                 : 'The economy found the last nerve.';
-        this.leaveHeroPermanently(hero, reason);
-        continue;
+        const profile = this.getHeroProfile(hero);
+        if (!profile.contract.grievances.includes(reason)) profile.contract.grievances.push(reason);
+        if (!profile.contract.warningDay) {
+          profile.contract.warningDay = this.day;
+          const text = `${hero.def.name} warned the guild before departing: ${reason}`;
+          this.addTownLog(text, 'npc');
+          this.addReportLine('warnings', text);
+        }
       }
 
       this.evaluateHeroEvolution(hero);
@@ -9838,6 +10430,9 @@ export default class TownScene extends Phaser.Scene {
         + this.townReputation / 260
         + this.townPrestige / 420
         + this.getPlaceLevel(this.buildingById.guildhall) * 0.035
+        + Object.values(this.heroSocial.parties || {}).reduce((sum, party) => sum + Math.min(0.04, (party.victories || 0) * 0.006), 0)
+        + Math.min(0.05, Object.keys(this.heroSocial.memorials || {}).filter((id) => this.heroSocial.memorials[id]?.buried).length * 0.01)
+        - Math.min(0.12, Object.keys(this.heroSocial.memorials || {}).filter((id) => !this.heroSocial.memorials[id]?.buried).length * 0.025)
         - Math.max(0, this.resources.threat - 60) / 280,
       0.25,
       0.9,
@@ -9869,6 +10464,13 @@ export default class TownScene extends Phaser.Scene {
       risk: 'Low',
     };
     candidate.container.setVisible(true).setAlpha(1);
+    const profile = this.getHeroProfile(candidate);
+    profile.status = 'active';
+    profile.arrivalDay = this.day;
+    profile.departureReason = null;
+    profile.contract.warningDay = 0;
+    profile.contract.satisfaction = Math.max(55, profile.contract.satisfaction || 0);
+    profile.faction = chooseFaction(profile);
     this.setHeroAnimationState(candidate, 'happy');
     this.addHeroHistory(candidate, `Returned as ${candidate.stats.status}, suspiciously informed.`);
     this.refreshHeroStatusMarker(candidate);
@@ -10804,6 +11406,19 @@ export default class TownScene extends Phaser.Scene {
       collector.stats.fame = Phaser.Math.Clamp((collector.stats.fame || 0) + 1, 0, 100);
       collector.stats.envy = Phaser.Math.Clamp((collector.stats.envy || 0) + (delivered.premiumSalvage ? 3 : 0), 0, 100);
       this.addHeroHistory(collector, `Collected ${drop.name} after ${drop.monsterName}.`);
+      const killer = drop.killerId ? this.getHeroById(drop.killerId) : null;
+      const party = this.getPartyForHero(collector);
+      if (killer && killer !== collector && party?.id === this.getPartyForHero(killer)?.id) {
+        if (['equal', 'need'].includes(party.lootPolicy)) {
+          this.recordHeroRelationshipEvent(killer, collector, 'loot_shared', { relatedId: drop.id, location: drop.areaId || 'battlefield', reciprocal: true });
+        } else if (party.lootPolicy === 'finders') {
+          this.recordHeroRelationshipEvent(killer, collector, 'loot_stolen', {
+            text: `${collector.def.name} claimed ${drop.name} under Finders Keepers.`,
+            relatedId: drop.id,
+            severity: 3,
+          });
+        }
+      }
       this.say(collector, 'Loot secured.', true);
     }
     const summary = formatLootContents(delivered);
@@ -11036,8 +11651,18 @@ export default class TownScene extends Phaser.Scene {
         const distance = Phaser.Math.Distance.Between(hero.container.x, hero.container.y, drop.x, drop.y);
         const premiumValue = Number(drop.lootContents?.premiumSalvage || 0);
         const greed = (hero.stats.envy || 0) + (this.isWhaleHero(hero.def) ? 35 : 0) + (premiumValue && hero.stats.whaleAccess ? 45 : 0);
-        const killerBonus = drop.killerId === hero.def.id ? 80 : 0;
-        return { hero, score: killerBonus + greed - distance / 12 };
+        const party = this.getPartyForHero(hero);
+        const killerParty = drop.killerId ? this.getPartyForHero(this.getHeroById(drop.killerId)) : null;
+        const sameParty = party && killerParty?.id === party.id;
+        const equipment = normalizeHeroEquipment(hero.stats.equipment);
+        let policyBonus = 0;
+        if (sameParty && party.lootPolicy === 'equal') policyBonus += 24;
+        if (party?.lootPolicy === 'leader' && party.leaderId === hero.def.id) policyBonus += 38;
+        if (party?.lootPolicy === 'need' && (equipment.weapon === 'Poor' || equipment.armor === 'Poor')) policyBonus += 42;
+        if (party?.lootPolicy === 'premium' && hero.stats.whaleAccess) policyBonus += 48;
+        if (party?.lootPolicy === 'finders') policyBonus += Math.max(0, 35 - distance / 8);
+        const killerBonus = drop.killerId === hero.def.id ? (party?.lootPolicy === 'killer' ? 120 : 80) : 0;
+        return { hero, score: killerBonus + policyBonus + greed - distance / 12 };
       })
       .sort((a, b) => b.score - a.score);
     const hero = preferredHero?.state !== 'away' && !this.isHeroInjured(preferredHero) ? preferredHero : candidates[0]?.hero;
@@ -11154,6 +11779,21 @@ export default class TownScene extends Phaser.Scene {
           if (action === 'burn') this.townInventory.wood = Math.max(0, (this.townInventory.wood || 0) - 1);
           const verb = action === 'burn' ? 'burned' : 'buried';
           this.addTownLog(`${hero.def.name} ${verb} ${drop.name}. Public health briefly received a budget.`, 'monster');
+          if (action === 'bury' && drop.heroName) {
+            const fallen = this.heroes.find((candidate) => candidate.def.name === drop.heroName);
+            const memorial = fallen ? this.heroSocial.memorials[fallen.def.id] : null;
+            if (memorial) {
+              memorial.buried = true;
+              memorial.buriedDay = this.day;
+              memorial.honouredBy = hero.def.id;
+              this.recordHeroRelationshipEvent(hero, fallen, 'grave_honoured', {
+                text: `${hero.def.name} honoured ${fallen.def.name}'s grave.`,
+                location: drop.areaId || 'grave',
+                severity: 3,
+              });
+              recordSocialEvent(this.heroSocial, { day: this.day, type: 'legacy', heroIds: [hero.def.id, fallen.def.id], text: `${hero.def.name} honoured ${fallen.def.name} at the grave.`, major: true });
+            }
+          }
           this.clearAftermathObject(drop, `${drop.name} ${verb}`, action === 'burn' ? -4 : -3);
           this.applyDeltas({ morale: 1, trust: action === 'bury' ? 1 : 0 });
           this.saveGame(false);
@@ -11992,6 +12632,7 @@ export default class TownScene extends Phaser.Scene {
 
   defeatMonsterActor(actor, source = null) {
     if (!actor || [MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(actor.state)) return;
+    const threatenedHeroId = actor.targetRef?.kind === 'hero' ? actor.targetRef.id : null;
     actor.state = MONSTER_STATES.DYING;
     actor.targetRef = null;
     actor.target = null;
@@ -12005,6 +12646,19 @@ export default class TownScene extends Phaser.Scene {
     if (source?.def) {
       source.stats.fame = Phaser.Math.Clamp((source.stats.fame || 0) + actor.monster.threat * 2, 0, 100);
       this.addHeroHistory(source, `Defeated ${actor.monster.name} in visible combat.`);
+      this.getHeroProfile(source).career.kills += 1;
+      this.getHeroProfile(source).career.victories += 1;
+      if (actor.raidTargetRef?.kind === 'building') this.getHeroProfile(source).career.buildingsDefended += 1;
+      const rescued = threatenedHeroId ? this.getHeroById(threatenedHeroId) : null;
+      if (rescued && rescued !== source) {
+        this.getHeroProfile(source).career.rescues += 1;
+        this.recordHeroRelationshipEvent(rescued, source, 'rescue', {
+          location: actor.monster.name,
+          relatedId: actor.id,
+          text: `${source.def.name} rescued them from ${actor.monster.name}.`,
+          severity: 4,
+        });
+      }
     }
     this.stats.monsterVictories = (this.stats.monsterVictories || 0) + 1;
     this.applyDeltas({ threat: actor.monster.threatImpact || -Math.max(2, actor.monster.threat) });
@@ -12616,7 +13270,25 @@ export default class TownScene extends Phaser.Scene {
       lair.nextSpawnDay = this.day + duration + 1;
       lair.suppressionProgress = Phaser.Math.Clamp((lair.suppressionProgress || 0) + (operationType === 'clear' ? 35 : 24), 0, 100);
     }
+    const operationHeroes = (lair.operation?.heroIds || []).map((id) => this.getHeroById(id)).filter(Boolean);
     lair.operation = { ...(lair.operation || {}), status: 'complete', completedDay: this.day };
+    for (const hero of operationHeroes) {
+      const profile = this.getHeroProfile(hero);
+      profile.career.lairsCleared += lair.cleared ? 1 : 0;
+      profile.career.victories += 1;
+      profile.localReputation = Phaser.Math.Clamp(profile.localReputation + (lair.cleared ? 12 : 6), -100, 100);
+    }
+    for (let i = 0; i < operationHeroes.length; i += 1) {
+      for (let j = i + 1; j < operationHeroes.length; j += 1) {
+        this.recordHeroRelationshipEvent(operationHeroes[i], operationHeroes[j], 'quest_success', {
+          relatedId: lair.id,
+          location: lair.name,
+          text: `${lair.cleared ? 'Cleared' : 'Suppressed'} ${lair.name} together.`,
+          severity: lair.cleared ? 3 : 2,
+          reciprocal: true,
+        });
+      }
+    }
     lair.threatBudget = Math.max(0, lair.threatBudget - 18);
     lair.pressure = lair.cleared ? 0 : Math.max(0, (lair.pressure || 0) - 28);
     lair.pressureState = getLairPressureState(lair, this.day).id;
@@ -13452,6 +14124,17 @@ export default class TownScene extends Phaser.Scene {
       return;
     }
     quest.assignedHeroId = hero.def.id;
+    const assignedParty = this.getPartyForHero(hero);
+    if (assignedParty) {
+      quest.partyId = assignedParty.id;
+      assignedParty.currentAssignment = { type: 'quest', id: quest.noticeId, name: quest.name, day: this.day };
+      for (const memberId of assignedParty.memberIds) {
+        const member = this.getHeroById(memberId);
+        if (!member || member === hero || member.stats.active === false || this.isHeroInjured(member)) continue;
+        member.currentAction = `Preparing with ${assignedParty.name}: ${quest.name}`;
+        member.intent = { action: member.currentAction, destinationId: 'dungeon', destinationName: quest.name, reason: 'Persistent party assignment.', risk: quest.risk >= 3 ? 'High' : 'Medium' };
+      }
+    }
     this.availableQuests = this.availableQuests.map((item) => (
       item.noticeId === quest.noticeId ? quest : item
     ));
@@ -13527,10 +14210,13 @@ export default class TownScene extends Phaser.Scene {
     const corruptionBias = quest.type === 'fair' ? -R.corruption * 0.08 : R.corruption * 0.06;
     // a hero who volunteered ahead of time goes in prepared
     const assignedBonus = quest.assignedHeroId === hero.def.id ? 8 : 0;
+    const party = quest.partyId ? this.heroSocial.parties?.[quest.partyId] : this.getPartyForHero(hero);
+    const partyBonus = party ? getPartyBonus(this.refreshPartyCohesion(party) && party).quest : 0;
 
     return Phaser.Math.Clamp(
       34
       + assignedBonus
+      + partyBonus
       + hero.stats.power * 4
       + this.getHeroEquipmentBonus(hero).power * 3
       + this.getHeroEquipmentBonus(hero).readiness * 0.08
@@ -13574,6 +14260,10 @@ export default class TownScene extends Phaser.Scene {
     const guildBonus = this.getPlaceLevel(this.buildingById.guildhall) * 12;
     const dungeonBonus = this.getPlaceLevel(this.buildingById.dungeon) * 10;
     const heroRole = hero.stats.status || hero.def.personality;
+    const party = quest.partyId ? this.heroSocial.parties?.[quest.partyId] : null;
+    const partyMembers = party
+      ? party.memberIds.map((id) => this.getHeroById(id)).filter((member) => member?.stats.active !== false && !member.stats.deathDay)
+      : [hero];
     let text;
     let bubble;
     let deltas;
@@ -13601,6 +14291,7 @@ export default class TownScene extends Phaser.Scene {
         2 + this.getPlaceLevel(this.buildingById.whale),
       );
       this.addHeroHistory(hero, `Whale-cleared ${quest.name}.`);
+      this.getHeroProfile(hero).career.quests += 1;
       this.stats.whaleEvents += 1;
       this.stats.whaleTrustLosses += Math.abs(deltas.trust || 0);
       this.burstCoins(44);
@@ -13622,6 +14313,25 @@ export default class TownScene extends Phaser.Scene {
       hero.stats.fame = Phaser.Math.Clamp((hero.stats.fame || 0) + (honest ? 8 : 5), 0, 100);
       hero.stats.resentment = Phaser.Math.Clamp((hero.stats.resentment || 0) - (honest ? 3 : 1), 0, 100);
       this.addHeroHistory(hero, `Completed ${quest.name}.`);
+      for (const member of partyMembers) {
+        const memberProfile = this.getHeroProfile(member);
+        memberProfile.career.quests += 1;
+        memberProfile.career.victories += 1;
+        if (member !== hero) {
+          member.stats.fame = Phaser.Math.Clamp((member.stats.fame || 0) + 3, 0, 100);
+          this.addHeroHistory(member, `Completed ${quest.name} with ${party?.name || hero.def.name}.`);
+        }
+      }
+      for (let i = 0; i < partyMembers.length; i += 1) {
+        for (let j = i + 1; j < partyMembers.length; j += 1) {
+          this.recordHeroRelationshipEvent(partyMembers[i], partyMembers[j], 'quest_success', { relatedId: quest.noticeId, location: quest.name, reciprocal: true });
+        }
+      }
+      if (party) {
+        party.victories += 1;
+        party.reputation = Phaser.Math.Clamp((party.reputation || 0) + quest.difficulty * 3, 0, 100);
+        party.history = [...party.history, `Day ${this.day}: completed ${quest.name}.`].slice(-16);
+      }
       this.stats.questsCompleted += 1;
       if (honest) this.stats.honestQuestSuccesses += 1;
       // prepared expeditions also haul goods back to the town stores
@@ -13646,6 +14356,19 @@ export default class TownScene extends Phaser.Scene {
       hero.stats.loyalty = Phaser.Math.Clamp(hero.stats.loyalty - quest.risk, 0, 100);
       hero.stats.resentment = Phaser.Math.Clamp((hero.stats.resentment || 0) + quest.risk * 4, 0, 100);
       this.addHeroHistory(hero, `Failed ${quest.name}.`);
+      for (const member of partyMembers) {
+        this.getHeroProfile(member).career.failures += 1;
+        if (member !== hero) this.addHeroHistory(member, `Survived the failure of ${quest.name}.`);
+      }
+      for (let i = 0; i < partyMembers.length; i += 1) {
+        for (let j = i + 1; j < partyMembers.length; j += 1) {
+          this.recordHeroRelationshipEvent(partyMembers[i], partyMembers[j], 'quest_failure', { relatedId: quest.noticeId, location: quest.name, reciprocal: true });
+        }
+      }
+      if (party) {
+        party.failures += 1;
+        party.history = [...party.history, `Day ${this.day}: failed ${quest.name}.`].slice(-16);
+      }
       this.stats.questFailures = (this.stats.questFailures || 0) + 1;
     }
 
@@ -13657,6 +14380,10 @@ export default class TownScene extends Phaser.Scene {
     this.updateHeroMood(hero);
     this.evaluateHeroEvolution(hero);
     this.refreshHeroStatusMarker(hero);
+    if (party) {
+      party.currentAssignment = null;
+      this.refreshPartyCohesion(party);
+    }
     this.checkObjectives();
     this.checkUnlocks();
     this.walkTo(hero, spot, () => {
@@ -13736,6 +14463,16 @@ export default class TownScene extends Phaser.Scene {
     this.applyDeltas({ trust: -3, corruption: 1, morale: -2 });
     this.addHeroHistory(instigator, text);
     this.addHeroHistory(target, `Lost ${item.name} during emergent gameplay.`);
+    this.recordHeroRelationshipEvent(target, instigator, 'loot_stolen', {
+      text: `${instigator.def.name} took or destroyed ${item.name}.`,
+      location: 'town',
+      severity: 5,
+    });
+    const sharedParty = this.getPartyForHero(instigator);
+    if (sharedParty && sharedParty.id === this.getPartyForHero(target)?.id) {
+      sharedParty.history = [...sharedParty.history, `Day ${this.day}: ${item.name} caused a loot dispute.`].slice(-16);
+      this.refreshPartyCohesion(sharedParty);
+    }
     this.game.events.emit('gwg-event', `${text} The guild called it emergent gameplay.`);
     this.addTownLog(text, 'npc');
     this.floatText(instigator.container.x, instigator.container.y - 44, 'ITEM CONFLICT', '#f0938f');
@@ -14789,6 +15526,9 @@ export default class TownScene extends Phaser.Scene {
     hero.stats.injuryState = severity;
     hero.stats.morale = Phaser.Math.Clamp((hero.stats.morale || 50) - (severity === 'badly injured' ? 9 : 5), 0, 100);
     this.stats.heroInjuries = (this.stats.heroInjuries || 0) + 1;
+    const profile = this.getHeroProfile(hero);
+    profile.career.injuries += 1;
+    if (severity === 'badly injured') profile.scars = [...new Set([...profile.scars, `Scar from ${source}`])].slice(-8);
     this.addHeroHistory(hero, `${severity} by ${source}.`);
     this.setHeroAnimationState(hero, 'hurt');
     this.refreshHeroStatusMarker(hero);
@@ -14831,6 +15571,7 @@ export default class TownScene extends Phaser.Scene {
     };
     hero.container.setAlpha(0.18);
     this.addHeroHistory(hero, `Died: ${reason}`);
+    this.handleHeroDeathLegacy(hero, reason);
     this.stats.heroesLeft = (this.stats.heroesLeft || 0) + 1;
     this.applyDeltas({ morale: -5, trust: -2 });
     this.setHeroAnimationState(hero, 'hurt');
@@ -16150,6 +16891,10 @@ export default class TownScene extends Phaser.Scene {
             witness.stats.resentment = Phaser.Math.Clamp((witness.stats.resentment || 0) + 4, 0, 100);
             witness.stats.envy = Phaser.Math.Clamp((witness.stats.envy || 0) + 8, 0, 100);
             witness.stats.resentmentTargetId = hero.def.id;
+            if (witness !== hero) this.recordHeroRelationshipEvent(witness, hero, 'premium_favoritism', {
+              text: `${hero.def.name} received a visible premium advantage.`,
+              location: 'Golden Whale',
+            });
           }
           this.buildRelationship(hero, 'whaleEvent');
         }
@@ -16307,6 +17052,7 @@ export default class TownScene extends Phaser.Scene {
 
     steps.push(() => {
       this.progressHeroStories();
+      this.updateHeroSocialSystems();
       this.cycleRunning = false;
       this.refreshQuestNotices();
       this.checkObjectives();

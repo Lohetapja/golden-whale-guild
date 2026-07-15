@@ -23,6 +23,7 @@ const sm = await import('../src/systems/saveManager.js');
 const mig = await import('../src/systems/saveMigrations.js');
 const aftermath = await import('../src/systems/aftermath.js');
 const defence = await import('../src/systems/townDefense.js');
+const social = await import('../src/systems/heroSocial.js');
 
 // --- tiny assert harness ----------------------------------------------------
 let passed = 0;
@@ -133,6 +134,14 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
     && Array.isArray(r.data.monsterState.defence.activeRaids));
 }
 {
+  const r = mig.migrateAndValidate({ saveVersion: 14, heroStats: { h1: { power: 7 } }, heroSocial: null });
+  check('v14 hero social defaults added',
+    r.data.saveVersion === mig.SAVE_VERSION
+    && r.data.heroSocial.nextPartyId === 1
+    && Object.keys(r.data.heroSocial.relationships).length === 0
+    && r.data.heroStats.h1.socialProfile === null);
+}
+{
   const r = mig.migrateAndValidate(FIXTURES.futureVersion);
   check('future version not downgraded', r.data.saveVersion === 99);
   check('unknown future field preserved', r.data.unknownFutureField && r.data.unknownFutureField.keep === true);
@@ -165,6 +174,38 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
   check('defence alerts deduplicate and escalate', escalated.length === 1 && escalated[0].level === 'building');
   check('lair pressure exposes raiding state', defence.getLairPressureState({ pressure: 82 }, 5).id === 'raiding');
   check('suppression overrides lair pressure', defence.getLairPressureState({ pressure: 82, suppressedUntilDay: 8 }, 5).id === 'suppressed');
+}
+{
+  const state = social.normalizeHeroSocialState({ relationships: null, parties: [], events: 'bad' });
+  const a = social.normalizeHeroProfile(null, { id: 'a', name: 'A', personality: 'Veteran', stats: { power: 9, gold: 20 } }, 3);
+  const b = social.normalizeHeroProfile(null, { id: 'b', name: 'B', personality: 'Recruit', stats: { power: 2 } }, 3);
+  check('social state repairs malformed containers', Object.keys(state.relationships).length === 0 && Object.keys(state.parties).length === 0 && state.events.length === 0);
+  social.applyRelationshipEvent(state, 'a', 'b', 'rescue', { day: 4, location: 'Market' });
+  check('rescue creates directed life debt memory', social.getRelationship(state, 'a', 'b').debt === 22 && social.getRelationship(state, 'a', 'b').memories[0].severity === 4);
+  social.applyRelationshipEvent(state, 'a', 'b', 'loot_stolen', { day: 5 });
+  social.fadeMinorRelationships(state, 30);
+  check('major betrayal survives relationship fading', social.getRelationship(state, 'a', 'b').memories.some((memory) => memory.eventId === 'loot_stolen'));
+  const party = social.createParty(state, 'a', ['b'], 5);
+  a.partyId = party.id;
+  b.partyId = party.id;
+  social.computePartyCohesion(state, party, { a, b });
+  check('party persists members and explained cohesion', party.memberIds.length === 2 && Number.isFinite(party.cohesion) && party.cohesionReasons.length > 0);
+  const previousPolicy = party.lootPolicy;
+  social.cyclePartyPolicy(party, 'lootPolicy', social.LOOT_POLICIES);
+  check('party loot policy cycles', party.lootPolicy !== previousPolicy);
+  const cohesiveState = social.normalizeHeroSocialState();
+  const cohesiveParty = social.createParty(cohesiveState, 'a', ['b'], 2);
+  for (let i = 0; i < 7; i += 1) social.applyRelationshipEvent(cohesiveState, 'a', 'b', 'quest_success', { day: 2 + i, reciprocal: true });
+  const friendlyCohesion = social.computePartyCohesion(cohesiveState, cohesiveParty, { a, b }).value;
+  check('shared victories create useful party bonus', friendlyCohesion >= 60 && social.getPartyBonus(cohesiveParty).quest > 0);
+  for (let i = 0; i < 4; i += 1) social.applyRelationshipEvent(cohesiveState, 'a', 'b', 'loot_stolen', { day: 10 + i });
+  const rivalCohesion = social.computePartyCohesion(cohesiveState, cohesiveParty, { a, b }).value;
+  check('rivalry lowers party cohesion', rivalCohesion < friendlyCohesion);
+  const promised = social.normalizeHeroProfile({ contract: { promises: [{ type: 'equipment', dueDay: 9, fulfilled: false }] } }, { id: 'p', stats: {} }, 2);
+  check('contract promises survive normalization', promised.contract.promises.length === 1 && promised.contract.promises[0].dueDay === 9);
+  a.career.quests = 8;
+  a.career.kills = 3;
+  check('career progression derives from achievements', social.getCareerStage(a).id !== 'recruit');
 }
 
 // --- 3. corrupted JSON opens the failure path -------------------------------

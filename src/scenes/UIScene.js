@@ -739,9 +739,14 @@ export default class UIScene extends Phaser.Scene {
     this.heroRosterCollapsed = savedPrefs.collapsed ?? window.matchMedia('(max-width: 760px)').matches;
     this.heroRosterGroups = {
       Favorites: true,
+      Parties: true,
       Assigned: true,
+      Defending: true,
       Injured: true,
       Idle: false,
+      Unhappy: true,
+      Leaving: true,
+      Retired: false,
       Dead: false,
       Reserve: false,
       ...(savedPrefs.groups || {}),
@@ -830,6 +835,7 @@ export default class UIScene extends Phaser.Scene {
     const intent = hero.destination && hero.status !== 'Idle'
       ? `${hero.action || 'Going'} -> ${hero.destination}`
       : (hero.action || 'Idle');
+    const meta = [hero.careerStage, hero.party, hero.urgent].filter(Boolean).join(' - ');
     const icon = hero.icon
       ? `<img class="gwg-hero-roster-icon" src="${this.escapeHtml(hero.icon)}" alt="" />`
       : `<span class="gwg-hero-roster-icon fallback">${this.escapeHtml((hero.name || '?').charAt(0))}</span>`;
@@ -838,8 +844,8 @@ export default class UIScene extends Phaser.Scene {
         <button class="gwg-hero-focus" type="button" data-hero-id="${this.escapeHtml(hero.id)}" title="${this.escapeHtml(intent)}">
           ${icon}
           <span class="gwg-hero-row-copy">
-            <strong>${this.escapeHtml(hero.name)} <em>${this.escapeHtml(hero.tier || '')}</em></strong>
-            <small>${this.escapeHtml(intent)}</small>
+            <strong>${this.escapeHtml(hero.name)} <em>${this.escapeHtml(hero.careerStage || hero.tier || '')}</em></strong>
+            <small>${this.escapeHtml(intent)}${meta ? `<br>${this.escapeHtml(meta)}` : ''}</small>
           </span>
           <span class="gwg-hero-status">${this.escapeHtml(hero.status || 'Idle')}</span>
         </button>
@@ -871,18 +877,36 @@ export default class UIScene extends Phaser.Scene {
     if (!this.heroRosterEl || !this.heroRosterBodyEl) return;
     this.lastHeroRosterPayload = payload || {};
     const heroes = Array.isArray(payload?.heroes) ? payload.heroes : [];
-    const activeCount = heroes.filter((hero) => !['Dead', 'Left', 'Reserve'].includes(hero.status)).length;
+    const activeCount = heroes.filter((hero) => !['Dead', 'Left', 'Reserve', 'Retired'].includes(hero.status)).length;
     if (this.heroRosterCountEl) this.heroRosterCountEl.textContent = `${activeCount}/${heroes.length || 0}`;
     const favoriteIds = new Set(heroes.filter((hero) => hero.favorite).map((hero) => hero.id));
     const remaining = heroes.filter((hero) => !favoriteIds.has(hero.id));
     const assignedStatuses = new Set(['Walking', 'Exploring', 'On Quest', 'Returning', 'Looting', 'Fighting', 'Resting', 'Away']);
+    const leaving = remaining.filter((hero) => hero.leaving);
+    const unhappy = remaining.filter((hero) => hero.unhappy && !hero.leaving);
+    const injured = remaining.filter((hero) => ['Injured', 'Missing'].includes(hero.status) && !hero.leaving);
+    const retired = remaining.filter((hero) => hero.status === 'Retired');
+    const dead = remaining.filter((hero) => ['Dead', 'Left'].includes(hero.status));
+    const reserve = remaining.filter((hero) => hero.status === 'Reserve');
+    const excluded = new Set([...leaving, ...unhappy, ...injured, ...retired, ...dead, ...reserve].map((hero) => hero.id));
+    const defending = remaining.filter((hero) => !excluded.has(hero.id) && (hero.status === 'Defending' || hero.status === 'Fighting'));
+    defending.forEach((hero) => excluded.add(hero.id));
+    const parties = remaining.filter((hero) => !excluded.has(hero.id) && hero.party);
+    parties.forEach((hero) => excluded.add(hero.id));
+    const assigned = remaining.filter((hero) => !excluded.has(hero.id) && assignedStatuses.has(hero.status));
+    assigned.forEach((hero) => excluded.add(hero.id));
     const groups = [
       ['Favorites', heroes.filter((hero) => hero.favorite)],
-      ['Assigned', remaining.filter((hero) => assignedStatuses.has(hero.status))],
-      ['Injured', remaining.filter((hero) => ['Injured', 'Missing'].includes(hero.status))],
-      ['Idle', remaining.filter((hero) => hero.status === 'Idle')],
-      ['Dead', remaining.filter((hero) => ['Dead', 'Left'].includes(hero.status))],
-      ['Reserve', remaining.filter((hero) => hero.status === 'Reserve')],
+      ['Parties', parties],
+      ['Assigned', assigned],
+      ['Defending', defending],
+      ['Injured', injured],
+      ['Leaving', leaving],
+      ['Unhappy', unhappy],
+      ['Idle', remaining.filter((hero) => !excluded.has(hero.id) && hero.status === 'Idle')],
+      ['Retired', retired],
+      ['Dead', dead],
+      ['Reserve', reserve],
     ];
     this.heroRosterBodyEl.innerHTML = groups.map(([name, items]) => this.renderHeroRosterGroup(name, items.slice(0, 28))).join('')
       || '<p class="gwg-hero-roster-empty">No heroes available. Even the volunteers read the terms.</p>';

@@ -12,7 +12,7 @@
 // explicit `null` reaching a `normalize(raw = {})` default. This pipeline closes
 // that class up front by sanitizing containers before the scene ever touches them.
 
-export const SAVE_VERSION = 14;
+export const SAVE_VERSION = 15;
 
 export function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -26,7 +26,7 @@ const OBJECT_FIELDS = ['resources', 'upgradeLevels', 'stats', 'heroStats', 'cris
 // pending policy"). Wrong-typed values collapse to null so downstream
 // normalizers apply their own defaults; valid null/object pass through.
 const NULLABLE_OBJECT_FIELDS = ['pendingPolicy', 'poiCooldowns', 'townInventory', 'tradeSettings',
-  'weeklyReport', 'weekTracker', 'monsterState', 'cityBuilder', 'resourceNodes'];
+  'weeklyReport', 'weekTracker', 'monsterState', 'cityBuilder', 'resourceNodes', 'heroSocial'];
 
 // Fields that must be arrays. A wrong-typed value becomes an empty array.
 const ARRAY_FIELDS = ['availableQuests', 'postedQuests', 'unlockedLocations', 'completedObjectives',
@@ -107,6 +107,25 @@ const MIGRATIONS = {
         summarizedIncidents: isPlainObject(save.monsterState?.defence?.summarizedIncidents) ? save.monsterState.defence.summarizedIncidents : {},
       },
     },
+  }),
+  14: (save) => ({
+    ...save,
+    heroSocial: {
+      relationships: isPlainObject(save.heroSocial?.relationships) ? save.heroSocial.relationships : {},
+      parties: isPlainObject(save.heroSocial?.parties) ? save.heroSocial.parties : {},
+      events: Array.isArray(save.heroSocial?.events) ? save.heroSocial.events : [],
+      memorials: isPlainObject(save.heroSocial?.memorials) ? save.heroSocial.memorials : {},
+      retirements: Array.isArray(save.heroSocial?.retirements) ? save.heroSocial.retirements : [],
+      lastSocialDay: Number(save.heroSocial?.lastSocialDay) || 0,
+      nextPartyId: Math.max(1, Number(save.heroSocial?.nextPartyId) || 1),
+    },
+    heroStats: Object.fromEntries(Object.entries(isPlainObject(save.heroStats) ? save.heroStats : {}).map(([id, stats]) => {
+      const safe = isPlainObject(stats) ? stats : {};
+      return [id, {
+        ...safe,
+        socialProfile: isPlainObject(safe.socialProfile) ? safe.socialProfile : null,
+      }];
+    })),
   }),
 };
 
