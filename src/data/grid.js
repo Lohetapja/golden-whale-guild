@@ -2,10 +2,10 @@ export const GRID_CONFIG = {
   tileSize: 48,
   originX: 48,
   originY: 48,
-  // 144x80 is exactly twice the previous 96x60 cell area. It gives the fog
-  // system real frontier room without multiplying every terrain pass by 9.
-  columns: 144,
-  rows: 80,
+  // v3 expands each axis by 1.5x (2.25x total area). Existing coordinates
+  // remain untouched; old towns gain black-shrouded wilderness around them.
+  columns: 216,
+  rows: 120,
   zones: {
     // west/east keep their original rectangles so existing saves stay valid.
     west: { minX: 0, maxX: 19, minY: 0, maxY: 14 },
@@ -14,9 +14,11 @@ export const GRID_CONFIG = {
     frontier: { minX: 28, maxX: 55, minY: 0, maxY: 14 },
     southeast: { minX: 28, maxX: 55, minY: 15, maxY: 31 },
     central: { minX: 32, maxX: 63, minY: 18, maxY: 41 },
-    wilds: { minX: 64, maxX: 95, minY: 0, maxY: 59 },
-    farlands: { minX: 96, maxX: 143, minY: 0, maxY: 79 },
-    deepSouth: { minX: 0, maxX: 95, minY: 60, maxY: 79 },
+    wilds: { minX: 64, maxX: 143, minY: 0, maxY: 79 },
+    farlands: { minX: 144, maxX: 215, minY: 0, maxY: 119 },
+    deepSouth: { minX: 0, maxX: 143, minY: 80, maxY: 119 },
+    outerNorth: { minX: 96, maxX: 215, minY: 0, maxY: 39 },
+    outerSouth: { minX: 144, maxX: 215, minY: 40, maxY: 119 },
   },
 };
 
@@ -173,7 +175,8 @@ export const ROAD_TYPES = {
 };
 
 export const DEFAULT_NEW_CITY = {
-  mapVersion: 2,
+  mapVersion: 3,
+  mapDimensions: { columns: GRID_CONFIG.columns, rows: GRID_CONFIG.rows },
   mode: 'builder',
   unlockedZones: ['west'],
   // empty array = fog-era save: the starting clearing is derived from the
@@ -190,6 +193,7 @@ export const DEFAULT_NEW_CITY = {
     { id: 'market', gridX: 12, gridY: 5 },
   ],
   placedDecor: [],
+  fortifications: [],
   buildingRuntime: {
     guildhall: {
       usageCount: 0,
@@ -212,12 +216,12 @@ export const DEFAULT_NEW_CITY = {
 // buildable space around the settlement. Old saves are untouched — anchors
 // only apply when a brand-new city state is created.
 export const START_ANCHORS = [
-  { dx: 62, dy: 31 },
-  { dx: 68, dy: 25 },
-  { dx: 74, dy: 32 },
-  { dx: 58, dy: 39 },
-  { dx: 72, dy: 42 },
-  { dx: 64, dy: 46 },
+  { dx: 98, dy: 51 },
+  { dx: 104, dy: 45 },
+  { dx: 110, dy: 52 },
+  { dx: 94, dy: 59 },
+  { dx: 108, dy: 62 },
+  { dx: 100, dy: 66 },
 ];
 
 export function createNewCityState(random = Math.random) {
@@ -338,6 +342,7 @@ export function normalizeCityState(raw, legacyFactory) {
   const incoming = raw.cityBuilder;
   return {
     mapVersion: Number(incoming.mapVersion) || 1,
+    mapDimensions: { columns: GRID_CONFIG.columns, rows: GRID_CONFIG.rows },
     mode: incoming.mode === 'legacy' ? 'legacy' : 'builder',
     unlockedZones: Array.isArray(incoming.unlockedZones) && incoming.unlockedZones.length
       ? [...incoming.unlockedZones]
@@ -360,6 +365,11 @@ export function normalizeCityState(raw, legacyFactory) {
       ? incoming.placedDecor
         .filter((decor) => decor?.id && decor?.catalogId && Number.isInteger(decor.gridX) && Number.isInteger(decor.gridY))
         .map((decor) => ({ ...decor }))
+      : [],
+    fortifications: Array.isArray(incoming.fortifications)
+      ? incoming.fortifications
+        .filter((entry) => entry?.type && Number.isInteger(entry.x) && Number.isInteger(entry.y) && isInsideGrid(entry.x, entry.y))
+        .map((entry) => ({ ...entry }))
       : [],
     buildingRuntime: incoming.buildingRuntime && typeof incoming.buildingRuntime === 'object'
       ? structuredClone(incoming.buildingRuntime)

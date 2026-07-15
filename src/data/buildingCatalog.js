@@ -403,6 +403,12 @@ export const BUILD_MENU_CATEGORIES = [
     buildingIds: ['watchtower', 'guard_post', 'guard_barracks', 'monster_hunter_lodge', 'arena'],
   },
   {
+    id: 'fortifications',
+    label: 'Fortifications',
+    description: 'Connected walls, traffic-controlled gates, and somewhere defensible to panic.',
+    buildingIds: [],
+  },
+  {
     id: 'premium',
     label: 'Premium Nonsense',
     description: 'Fast growth with complimentary moral distance.',

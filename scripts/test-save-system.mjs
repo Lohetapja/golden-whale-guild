@@ -24,6 +24,7 @@ const mig = await import('../src/systems/saveMigrations.js');
 const aftermath = await import('../src/systems/aftermath.js');
 const defence = await import('../src/systems/townDefense.js');
 const social = await import('../src/systems/heroSocial.js');
+const forts = await import('../src/systems/fortifications.js');
 
 // --- tiny assert harness ----------------------------------------------------
 let passed = 0;
@@ -142,6 +143,20 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
     && r.data.heroStats.h1.socialProfile === null);
 }
 {
+  const r = mig.migrateAndValidate({
+    saveVersion: 15,
+    cityBuilder: { placedBuildings: [], revealed: ['4,4'] },
+    monsterState: { activeAttacks: [{ id: 'raid-1', targetRef: { kind: 'building', id: 'hall' } }] },
+  });
+  check('v15 expanded-map defaults added',
+    r.data.saveVersion === mig.SAVE_VERSION
+    && r.data.cityBuilder.mapVersion === 3
+    && r.data.cityBuilder.mapDimensions.columns === 216
+    && r.data.cityBuilder.mapDimensions.rows === 120
+    && Array.isArray(r.data.cityBuilder.fortifications));
+  check('v15 siege destination defaults safely', r.data.monsterState.activeAttacks[0].siegeDestinationRef === null);
+}
+{
   const r = mig.migrateAndValidate(FIXTURES.futureVersion);
   check('future version not downgraded', r.data.saveVersion === 99);
   check('unknown future field preserved', r.data.unknownFutureField && r.data.unknownFutureField.keep === true);
@@ -206,6 +221,56 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
   a.career.quests = 8;
   a.career.kills = 3;
   check('career progression derives from achievements', social.getCareerStage(a).id !== 'recruit');
+}
+
+// --- connected fortification topology and siege rules ---------------------
+{
+  const malformed = forts.normalizeFortifications([
+    { id: 'a', type: 'unknown', x: -2, y: 3, health: -9 },
+    { id: 'duplicate', type: 'stone_wall', x: 0, y: 3 },
+    null,
+  ]);
+  check('fortification normalization repairs malformed entries and duplicate cells',
+    malformed.length === 2
+    && malformed[0].type === 'palisade'
+    && malformed[0].x === 0
+    && malformed[0].state === 'breached');
+
+  const line = Array.from({ length: 100 }, (_, x) => forts.normalizeFortification({ id: `wall-${x}`, type: 'palisade', x, y: 8 }));
+  const index = new Map(line.map((entry) => [forts.fortificationKey(entry.x, entry.y), entry]));
+  check('100 connected wall sections normalize within supported cap', line.length === 100);
+  check('wall adjacency identifies endpoint and straight variants',
+    forts.getFortificationVariant(forts.getFortificationMask(index, 0, 8)) === 'endpoint'
+    && forts.getFortificationVariant(forts.getFortificationMask(index, 50, 8)) === 'straight');
+
+  const ring = [];
+  for (let x = 1; x <= 5; x += 1) {
+    ring.push(forts.normalizeFortification({ id: `top-${x}`, type: 'stone_wall', x, y: 1 }));
+    ring.push(forts.normalizeFortification({ id: `bottom-${x}`, type: 'stone_wall', x, y: 5 }));
+  }
+  for (let y = 2; y <= 4; y += 1) {
+    ring.push(forts.normalizeFortification({ id: `left-${y}`, type: 'stone_wall', x: 1, y }));
+    ring.push(forts.normalizeFortification({ id: `right-${y}`, type: 'stone_wall', x: 5, y }));
+  }
+  const closed = forts.computePerimeter(8, 8, ring, [{ id: 'hall', gridX: 3, gridY: 3 }]);
+  check('closed wall ring identifies protected interior and building',
+    closed.complete && closed.inside.has('3,3') && closed.protectedBuildings[0]?.id === 'hall');
+
+  const gateRing = ring.map((entry) => entry.id === 'top-3'
+    ? forts.normalizeFortification({ ...entry, type: 'gate', open: true })
+    : entry);
+  const open = forts.computePerimeter(8, 8, gateRing, [{ id: 'hall', gridX: 3, gridY: 3 }]);
+  check('open gate makes the perimeter traversable and exposed', !open.complete && open.inside.size === 0);
+
+  const gate = forts.normalizeFortification({ id: 'gate', type: 'gate', x: 3, y: 1, open: false, health: 10 });
+  const hit = forts.damageFortification(gate, 40, 8, 'Goblin Raider');
+  check('siege damage creates a passable breach with capped history',
+    hit.breached && gate.state === 'breached' && !forts.isFortificationBlocking(gate) && gate.recentAttacks.length === 1);
+
+  const weakGate = forts.normalizeFortification({ id: 'weak-gate', type: 'gate', x: 4, y: 4, open: false, health: 20 });
+  const strongWall = forts.normalizeFortification({ id: 'strong-wall', type: 'stone_wall', x: 5, y: 4 });
+  check('siege target choice prefers a weak nearby gate',
+    forts.chooseFortificationTarget([strongWall, weakGate], { x: 3, y: 4 }, { x: 8, y: 4 }, 'goblin_raider')?.id === 'weak-gate');
 }
 
 // --- 3. corrupted JSON opens the failure path -------------------------------

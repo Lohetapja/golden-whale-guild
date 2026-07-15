@@ -998,6 +998,12 @@ export default class UIScene extends Phaser.Scene {
   }
 
   renderTownLedger(payload = {}) {
+    const sections = (payload.sections || []).map((section) => `
+      <section class="gwg-section">
+        ${section.title ? `<h3>${this.escapeHtml(section.title)}</h3>` : ''}
+        ${(section.lines || []).map((line) => this.renderLine(line)).join('')}
+      </section>
+    `).join('');
     const rows = (payload.rows || []).map((row) => {
       const preview = row.preview
         ? `<img class="gwg-ledger-preview" src="${this.escapeHtml(row.preview)}" alt="" />`
@@ -1038,6 +1044,7 @@ export default class UIScene extends Phaser.Scene {
           <span>Fast gold, premium glow, and invoices from ethics.</span>
         </div>
       </div>
+      ${sections}
       <div class="gwg-ledger-list">${rows}</div>
     `;
   }
@@ -1115,7 +1122,7 @@ export default class UIScene extends Phaser.Scene {
   updateBuildMode(state = {}) {
     if (!this.buildModeText || !this.cancelBuildButton) return;
     // active tool is always explicit: ROAD / BUILD / DELETE prefix
-    const kindPrefix = { road: 'ROAD: ', building: 'BUILD: ', delete: 'DELETE: ' }[state.kind] || '';
+    const kindPrefix = { road: 'ROAD: ', fortification: 'WALL: ', building: 'BUILD: ', delete: 'DELETE: ' }[state.kind] || '';
     const label = `${kindPrefix}${String(state.label || '')}`;
     const maxChars = this.rsp?.compact ? 20 : 24;
     const compactLabel = label.length > maxChars ? `${label.slice(0, maxChars - 1)}...` : label;
@@ -1126,7 +1133,7 @@ export default class UIScene extends Phaser.Scene {
       .setColor(state.valid === false ? '#f0938f' : '#7fdc93');
     this.cancelBuildButton.bg.setVisible(Boolean(state.active));
     this.cancelBuildButton.text.setVisible(Boolean(state.active));
-    const showConfirm = Boolean(state.active) && state.kind === 'road' && (state.planCount || 0) > 0;
+    const showConfirm = Boolean(state.active) && ['road', 'fortification'].includes(state.kind) && (state.planCount || 0) > 0;
     if (this.confirmBuildButton) {
       this.confirmBuildButton.bg.setVisible(showConfirm);
       this.confirmBuildButton.text

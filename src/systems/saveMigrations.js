@@ -12,7 +12,7 @@
 // explicit `null` reaching a `normalize(raw = {})` default. This pipeline closes
 // that class up front by sanitizing containers before the scene ever touches them.
 
-export const SAVE_VERSION = 15;
+export const SAVE_VERSION = 16;
 
 export function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -126,6 +126,21 @@ const MIGRATIONS = {
         socialProfile: isPlainObject(safe.socialProfile) ? safe.socialProfile : null,
       }];
     })),
+  }),
+  15: (save) => ({
+    ...save,
+    cityBuilder: isPlainObject(save.cityBuilder) ? {
+      ...save.cityBuilder,
+      mapVersion: 3,
+      mapDimensions: { columns: 216, rows: 120 },
+      fortifications: Array.isArray(save.cityBuilder.fortifications) ? save.cityBuilder.fortifications : [],
+    } : save.cityBuilder,
+    monsterState: {
+      ...(isPlainObject(save.monsterState) ? save.monsterState : {}),
+      activeAttacks: Array.isArray(save.monsterState?.activeAttacks)
+        ? save.monsterState.activeAttacks.map((attack) => isPlainObject(attack) ? { ...attack, siegeDestinationRef: isPlainObject(attack.siegeDestinationRef) ? attack.siegeDestinationRef : null } : attack)
+        : [],
+    },
   }),
 };
 
