@@ -12,7 +12,7 @@
 // explicit `null` reaching a `normalize(raw = {})` default. This pipeline closes
 // that class up front by sanitizing containers before the scene ever touches them.
 
-export const SAVE_VERSION = 13;
+export const SAVE_VERSION = 14;
 
 export function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -92,6 +92,20 @@ const MIGRATIONS = {
       ...(isPlainObject(save.monsterState) ? save.monsterState : {}),
       aftermathDrops: Array.isArray(save.monsterState?.aftermathDrops) ? save.monsterState.aftermathDrops : [],
       aftermathQuests: Array.isArray(save.monsterState?.aftermathQuests) ? save.monsterState.aftermathQuests : [],
+    },
+  }),
+  13: (save) => ({
+    ...save,
+    monsterState: {
+      ...(isPlainObject(save.monsterState) ? save.monsterState : {}),
+      defence: {
+        ...(isPlainObject(save.monsterState?.defence) ? save.monsterState.defence : {}),
+        priority: typeof save.monsterState?.defence?.priority === 'string' ? save.monsterState.defence.priority : 'balanced',
+        alerts: Array.isArray(save.monsterState?.defence?.alerts) ? save.monsterState.defence.alerts : [],
+        patrolAssignments: isPlainObject(save.monsterState?.defence?.patrolAssignments) ? save.monsterState.defence.patrolAssignments : {},
+        activeRaids: Array.isArray(save.monsterState?.defence?.activeRaids) ? save.monsterState.defence.activeRaids : [],
+        summarizedIncidents: isPlainObject(save.monsterState?.defence?.summarizedIncidents) ? save.monsterState.defence.summarizedIncidents : {},
+      },
     },
   }),
 };

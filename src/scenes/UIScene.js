@@ -1205,14 +1205,23 @@ export default class UIScene extends Phaser.Scene {
     };
     const policyBadge = makeBadge('policyNoticeBadge', 'gwg-open-policies', '#f0938f');
     const reportBadge = makeBadge('reportNoticeBadge', 'gwg-open-report', '#f6c945');
+    const threatBadge = makeBadge('threatNoticeBadge', 'gwg-open-defense-alerts', '#e76f51');
     const hasPolicy = notice.includes('Policy');
     const hasReport = notice.includes('Week Report');
+    const hasThreat = notice.includes('Threat Alert');
     let x = this.dayText.x - this.dayText.width - (M ? this.rsp.size(12) : 14);
     reportBadge.setVisible(hasReport);
     if (hasReport) {
       reportBadge.setText('! Week Report');
       reportBadge.setPosition(x, this.dayText.y);
       x -= reportBadge.width + (M ? this.rsp.size(6) : 8);
+    }
+    threatBadge.setVisible(hasThreat);
+    if (hasThreat) {
+      const count = notice.match(/Threat Alert (\d+)/)?.[1] || '';
+      threatBadge.setText(`! Threat${count ? ` ${count}` : ''}`);
+      threatBadge.setPosition(x, this.dayText.y);
+      x -= threatBadge.width + (M ? this.rsp.size(6) : 8);
     }
     policyBadge.setVisible(hasPolicy);
     if (hasPolicy) {

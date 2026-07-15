@@ -148,6 +148,17 @@ export const BUILDING_CATALOG = [
       action('subscription', 'Sell Safety Subscription', '+Gold, +Corruption.', 0, { gold: 140, corruption: 2, trust: -1 }),
     ],
   }),
+  core('guard_post', 'Guard Post', 'Defense / Patrols', 420, { w: 2, h: 2 }, 'A local barracks for guards willing to meet danger before it reaches storage.', {
+    assetKey: 'building_guard_post',
+    unlockKey: 'watchtower',
+    lockReason: 'Unlocks with the Watchtower after the town learns what an attack is.',
+    effect: 'Dispatches visible guards and shelters nearby civilians.',
+    flavor: 'One guard, one bell, and a response-time target nobody plans to measure honestly.',
+    actions: [
+      action('patrol', 'Patrol Local Roads', '-Threat, costs Gold.', 55, { threat: -5 }),
+      action('escort', 'Escort Cargo', '+Trust, +Morale.', 65, { trust: 1, morale: 1 }),
+    ],
+  }),
   core('arena', 'Arena', 'Defense / Missions', 800, { w: 3, h: 3 }, 'Combat training with banners, spectators, and waivers.', {
     unlockKey: 'arena',
     lockReason: 'Requires town stage 2 or average hero Power above 10.',
@@ -351,7 +362,7 @@ export const BUILD_MENU_CATEGORIES = [
     id: 'defense',
     label: 'Defense & Missions',
     description: 'Notice danger early. Bill it on arrival.',
-    buildingIds: ['watchtower', 'arena'],
+    buildingIds: ['watchtower', 'guard_post', 'arena'],
   },
   {
     id: 'premium',

@@ -153,3 +153,12 @@ works because it's fake.
 - Attack aftermath persists as evidence, loot, cleanup pressure, and small
   recovery tasks. This borrows the readable battlefield consequence of an RTS
   without turning the management game into a combat micromanagement screen.
+- Position-based detection now creates an early-warning loop: civilians panic,
+  Guard Posts dispatch visible responders, heroes accept explicit orders, and
+  Watchtowers trade construction cost for warning time and local assistance.
+- Lair pressure turns unexplored danger into a strategic source. Suppression
+  buys time; clearing makes territory safer; ignored high-pressure lairs launch
+  physically travelling raids instead of invisible damage rolls.
+- A town-level response priority provides Caesar-style policy weighting while
+  keeping individual RTS-like Intercept, Escort, Track, and Defend orders
+  available when the player wants direct control.

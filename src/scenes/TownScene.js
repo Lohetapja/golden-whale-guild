@@ -138,6 +138,17 @@ import {
   rollMonsterLoot,
 } from '../systems/aftermath.js';
 import {
+  ALERT_LEVELS,
+  DEFENCE_LIMITS,
+  DEFENCE_PRIORITIES,
+  DETECTOR_PROFILES,
+  estimateDangerLabel,
+  getLairPressureState,
+  getNextDefencePriority,
+  normalizeDefenceState,
+  upsertAlert,
+} from '../systems/townDefense.js';
+import {
   applyImportedSave,
   buildExportBundle,
   createBackup,
@@ -817,7 +828,9 @@ export default class TownScene extends Phaser.Scene {
       attackHistory: Array.isArray(saved?.monsterState?.attackHistory)
         ? saved.monsterState.attackHistory.slice(-WORLD_DANGER_LIMITS.attackHistoryLimit)
         : [],
+      defence: normalizeDefenceState(saved?.monsterState?.defence),
     };
+    this.defenceState = this.monsterState.defence;
     this.discoveredPois = new Set(saved?.discoveredPois || []);
     // POI visit cooldowns: poiId -> day it becomes available again
     this.poiCooldowns = saved?.poiCooldowns && typeof saved.poiCooldowns === 'object'
@@ -854,6 +867,7 @@ export default class TownScene extends Phaser.Scene {
     this.monsterLairs = {};
     this.worldDangerClockMs = 0;
     this.worldDangerAiElapsedMs = 0;
+    this.defenceScanElapsedMs = 0;
     this.aftermathDrops = this.normalizeAftermathDrops(this.monsterState.aftermathDrops);
     this.aftermathQuests = this.normalizeAftermathQuests(this.monsterState.aftermathQuests);
     this.autonomousExplorerLimit = 2;
@@ -925,6 +939,7 @@ export default class TownScene extends Phaser.Scene {
     this.buildTooltip();
     this.buildHeroes();
     this.restoreActiveMonsterActors();
+    this.restoreDefenceAssignments();
     this.buildQuestNotices();
     this.setupBuildInput();
     this.startIdleChatter();
@@ -998,6 +1013,9 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-aftermath-action', this.runAftermathActionFromUi, this);
     this.game.events.on('gwg-monster-action', this.runMonsterActionFromUi, this);
     this.game.events.on('gwg-lair-action', this.runLairActionFromUi, this);
+    this.game.events.on('gwg-open-defense-alerts', this.showDefenceAlerts, this);
+    this.game.events.on('gwg-defense-action', this.runDefenceActionFromUi, this);
+    this.game.events.on('gwg-defense-policy', this.cycleDefencePriorityFromUi, this);
     this.game.events.on('gwg-open-delete', this.openDeleteTool, this);
     this.game.events.on('gwg-assign-quest', this.assignQuestHeroFromUi, this);
     this.game.events.on('gwg-poi-action', this.runPoiAction, this);
@@ -1074,6 +1092,9 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-aftermath-action', this.runAftermathActionFromUi, this);
       this.game.events.off('gwg-monster-action', this.runMonsterActionFromUi, this);
       this.game.events.off('gwg-lair-action', this.runLairActionFromUi, this);
+      this.game.events.off('gwg-open-defense-alerts', this.showDefenceAlerts, this);
+      this.game.events.off('gwg-defense-action', this.runDefenceActionFromUi, this);
+      this.game.events.off('gwg-defense-policy', this.cycleDefencePriorityFromUi, this);
       this.game.events.off('gwg-open-delete', this.openDeleteTool, this);
       this.game.events.off('gwg-assign-quest', this.assignQuestHeroFromUi, this);
       this.game.events.off('gwg-poi-action', this.runPoiAction, this);
@@ -1698,6 +1719,25 @@ export default class TownScene extends Phaser.Scene {
     return problems;
   }
 
+  getDefenceBuildingInspectorLines(place) {
+    const baseId = getBaseBuildingId(place?.baseId || place?.id);
+    if (!['watchtower', 'guard_post', 'frontier_outpost', 'scout_post', 'training'].includes(baseId)) return null;
+    const runtime = this.getBuildingRuntime(place.id);
+    const level = this.getPlaceLevel(place);
+    const damageFactor = runtime.heavilyDamaged ? 0.4 : runtime.damaged ? 0.68 : 1;
+    const baseRanges = { watchtower: 430, guard_post: 270, frontier_outpost: 330, scout_post: 370, training: 190 };
+    const radius = Math.round(((baseRanges[baseId] || 0) + Math.max(0, level - 1) * 45) * damageFactor);
+    const assigned = this.defenceState.patrolAssignments?.[place.id];
+    const lines = {
+      watchtower: [`Detection radius: ${radius}px${runtime.damaged ? ' (reduced by damage)' : ''}`, 'Provides earlier alerts and approximate approach direction.', 'Higher levels extend warning time and reveal support.'],
+      guard_post: [`Response radius: ${radius}px${runtime.damaged ? ' (reduced by damage)' : ''}`, `Patrol: ${assigned?.zone || 'local automatic coverage'}`, 'Dispatches an emergency guard when confirmed threats enter coverage.'],
+      frontier_outpost: [`Frontier support radius: ${radius}px${runtime.damaged ? ' (reduced by damage)' : ''}`, `Patrol assignment: ${assigned?.zone || 'none'}`, 'Reduces nearby lair pressure and shelters explorers or workers.'],
+      scout_post: [`Scout detection radius: ${radius}px`, 'Improves wilderness sightings and lair estimates.'],
+      training: ['Improves honest-hero and guard readiness.', 'Does not detect threats directly; it makes the response less ceremonial.'],
+    }[baseId];
+    return lines || null;
+  }
+
   getUpgradeRequirement(place, info = this.getUpgradeInfo(place)) {
     const catalog = getBuildingCatalogEntry(place?.id);
     if (!catalog || !place?.isPlaced || info.maxed) return { met: true, text: 'No extra growth requirement.' };
@@ -2050,6 +2090,7 @@ export default class TownScene extends Phaser.Scene {
         aftermathQuests: this.aftermathQuests.slice(-24).map((quest) => ({ ...quest })),
         lairs: structuredClone(this.monsterLairs || {}),
         attackHistory: (this.monsterState?.attackHistory || []).slice(-WORLD_DANGER_LIMITS.attackHistoryLimit),
+        defence: normalizeDefenceState(this.defenceState),
       },
       tutorial: { ...this.tutorial },
       cityBuilder: {
@@ -2105,6 +2146,8 @@ export default class TownScene extends Phaser.Scene {
         premiumExposure: hero.stats.premiumExposure || 0,
         equipment: normalizeHeroEquipment(hero.stats.equipment),
         awayUntil: hero.awayUntil || 0,
+        combatTargetId: hero.combatTargetId || null,
+        defenceOrder: hero.defenceOrder || null,
       }])),
     };
   }
@@ -2998,6 +3041,16 @@ export default class TownScene extends Phaser.Scene {
         lines: ['No week report is ready yet. Reports arrive every 7 days and no longer interrupt the town.'],
       },
     ];
+    const defence = DEFENCE_PRIORITIES[this.defenceState?.priority] || DEFENCE_PRIORITIES.balanced;
+    sections.push({
+      title: 'Town Defence Priority',
+      lines: [
+        defence.name,
+        defence.id === 'premium'
+          ? 'Premium structures receive disproportionate protection. Resentment has been included at no extra charge.'
+          : 'Automatic responders use this priority when weighing civilians, storage, pursuit distance, and defensive positions.',
+      ],
+    });
 
     // live advisor + stores status, always current regardless of report week
     const lodging = this.getLodgingReport();
@@ -3088,7 +3141,11 @@ export default class TownScene extends Phaser.Scene {
       subtitle: pendingPolicy ? pendingPolicy.title : 'No active decisions',
       sections,
       rows,
-      actions: this.weeklyReport ? [{ label: 'Open Week Report', event: 'gwg-open-report' }] : [],
+      actions: [
+        { label: `Defence: ${defence.name}`, event: 'gwg-defense-policy', id: 'cycle' },
+        { label: 'Open Threat Alerts', event: 'gwg-open-defense-alerts' },
+        ...(this.weeklyReport ? [{ label: 'Open Week Report', event: 'gwg-open-report' }] : []),
+      ],
     };
   }
 
@@ -3126,6 +3183,8 @@ export default class TownScene extends Phaser.Scene {
     const parts = [];
     if (this.getPendingPolicy()) parts.push('Policy Pending');
     if (this.weekReportUnread) parts.push('Week Report Ready');
+    const activeAlerts = this.getActiveDefenceAlerts?.() || [];
+    if (activeAlerts.length) parts.push(`Threat Alert ${activeAlerts.length}`);
     const notice = parts.join(' / ');
     this.registry.set('townNotice', notice);
   }
@@ -7610,6 +7669,7 @@ export default class TownScene extends Phaser.Scene {
         ...(production ? [{ title: 'Production', lines: production.lines }] : []),
         ...(baseId === 'market' ? [{ title: 'External Trade', lines: this.getTradeInspectorLines() }] : []),
         ...(baseId === 'guildhall' ? [{ title: 'Hero Supply', lines: this.getTownHeroSupplyLines() }] : []),
+        ...(this.getDefenceBuildingInspectorLines(place) ? [{ title: 'Defence Coverage', lines: this.getDefenceBuildingInspectorLines(place) }] : []),
         {
           title: 'What This Solves',
           lines: this.getBuildingClarityLines(place, role, metrics, problems),
@@ -7737,6 +7797,7 @@ export default class TownScene extends Phaser.Scene {
       return;
     }
     this.drawExtractionRoute(place);
+    this.drawDefenceCoverage(place);
     let trackedObjectiveProgress = false;
     if (place.id === 'guildhall') {
       this.stats.guildHallInspected = (this.stats.guildHallInspected || 0) + 1;
@@ -8356,6 +8417,10 @@ export default class TownScene extends Phaser.Scene {
       this.extractionRouteLine.destroy();
       this.extractionRouteLine = null;
     }
+    if (this.defenceCoverageOverlay) {
+      this.defenceCoverageOverlay.destroy();
+      this.defenceCoverageOverlay = null;
+    }
     this.selectedPlaceId = null;
     this.selectedHeroId = null;
     this.resetAllPlaceLabels();
@@ -8382,6 +8447,23 @@ export default class TownScene extends Phaser.Scene {
     this.extractionRouteLine.lineBetween(place.x, place.y - 4, target.x, target.y - 4);
     this.extractionRouteLine.fillStyle(0x8fb7c9, 0.8);
     this.extractionRouteLine.fillCircle(target.x, target.y - 4, 4);
+  }
+
+  drawDefenceCoverage(place) {
+    if (this.defenceCoverageOverlay) this.defenceCoverageOverlay.destroy();
+    this.defenceCoverageOverlay = null;
+    const baseId = getBaseBuildingId(place?.baseId || place?.id);
+    const baseRanges = { watchtower: 430, guard_post: 270, frontier_outpost: 330, scout_post: 370 };
+    if (!baseRanges[baseId]) return;
+    const runtime = this.getBuildingRuntime(place.id);
+    const damageFactor = runtime.heavilyDamaged ? 0.4 : runtime.damaged ? 0.68 : 1;
+    const radius = (baseRanges[baseId] + Math.max(0, this.getPlaceLevel(place) - 1) * 45) * damageFactor;
+    const overlay = this.add.graphics().setDepth(Math.max(1, place.y - 20));
+    overlay.fillStyle(0x8fb7c9, 0.045);
+    overlay.fillCircle(place.x, place.y, radius);
+    overlay.lineStyle(2, runtime.damaged ? 0xe8a16f : 0x8fb7c9, 0.32);
+    overlay.strokeCircle(place.x, place.y, radius);
+    this.defenceCoverageOverlay = overlay;
   }
 
   getHeroIntentDestination(hero) {
@@ -10555,6 +10637,12 @@ export default class TownScene extends Phaser.Scene {
         priority: Boolean(actor.priority),
         kills: Number(actor.kills) || 0,
         stolenCargo: Number(actor.stolenCargo) || 0,
+        detectedAt: Number(actor.detectedAt) || 0,
+        detectedDay: Number(actor.detectedDay) || 0,
+        detectedBy: actor.detectedBy || null,
+        detectionKind: actor.detectionKind || null,
+        raidId: actor.raidId || null,
+        raidTargetRef: actor.raidTargetRef ? { ...actor.raidTargetRef } : null,
       }));
   }
 
@@ -11105,6 +11193,352 @@ export default class TownScene extends Phaser.Scene {
     this.saveGame(false);
   }
 
+  getActiveDefenceAlerts() {
+    const activeIds = new Set((this.activeMonsterActors || [])
+      .filter((actor) => actor?.container?.active && ![MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(actor.state))
+      .map((actor) => actor.id));
+    this.defenceState.alerts = (this.defenceState.alerts || [])
+      .filter((alert) => {
+        if (alert.dismissed) return false;
+        if (activeIds.has(alert.actorId)) return true;
+        if (!alert.lairId) return false;
+        const lair = this.monsterLairs?.[alert.lairId];
+        return lair && ['active', 'raiding'].includes(getLairPressureState(lair, this.day).id);
+      })
+      .slice(-DEFENCE_LIMITS.maxAlerts);
+    return this.defenceState.alerts;
+  }
+
+  getDefenceDetectors() {
+    const detectors = [];
+    const defensiveIds = new Set(['watchtower', 'guard_post', 'frontier_outpost', 'scout_post']);
+    for (const place of Object.values(this.buildingById || {})) {
+      const baseId = getBaseBuildingId(place?.baseId || place?.id);
+      if (!place?.isPlaced || !defensiveIds.has(baseId)) continue;
+      const runtime = this.getBuildingRuntime(place.id);
+      if (runtime.closed) continue;
+      const profile = DETECTOR_PROFILES[baseId] || DETECTOR_PROFILES.watchtower;
+      const levelBonus = Math.max(0, this.getPlaceLevel(place) - 1) * 45;
+      const damageFactor = runtime.heavilyDamaged ? 0.4 : runtime.damaged ? 0.68 : 1;
+      detectors.push({
+        id: `building:${place.id}`,
+        kind: baseId,
+        name: place.name,
+        x: place.x,
+        y: place.y,
+        radius: (profile.radius + levelBonus) * damageFactor,
+        reactionMs: profile.reactionMs,
+        reliability: profile.reliability * damageFactor,
+        place,
+      });
+    }
+    for (const hero of this.getActiveHeroes()) {
+      if (!hero.container?.active || hero.state === 'inside' || hero.stats.deathDay) continue;
+      detectors.push({ id: `hero:${hero.def.id}`, kind: 'hero', name: hero.def.name, x: hero.container.x, y: hero.container.y, ...DETECTOR_PROFILES.hero, unit: hero });
+    }
+    for (const walker of this.serviceWalkers || []) {
+      if (!walker.container?.active || walker.alertState === 'SHELTERING') continue;
+      const kind = walker.serviceRole === 'guard_patrol' ? 'guard' : 'worker';
+      detectors.push({ id: `walker:${walker.targetEntry?.id || walker.def.id}`, kind, name: walker.def.name, x: walker.container.x, y: walker.container.y, ...DETECTOR_PROFILES[kind], unit: walker });
+    }
+    for (const carrier of this.carriers || []) {
+      if (!carrier.container?.active || carrier.deliveryCompleted || carrier.alertState === 'SHELTERING') continue;
+      detectors.push({ id: `carrier:${carrier.def.id}`, kind: 'civilian', name: carrier.def.name, x: carrier.container.x, y: carrier.container.y, ...DETECTOR_PROFILES.civilian, unit: carrier });
+    }
+    return detectors;
+  }
+
+  getMonsterAlertLevel(actor) {
+    const target = this.resolveMonsterTarget(actor);
+    if (actor.state === MONSTER_STATES.ATTACKING && target?.kind === 'building') return 'building';
+    if (actor.state === MONSTER_STATES.ATTACKING) return 'attack';
+    return actor.detectedBy ? 'confirmed' : 'sighting';
+  }
+
+  scanMonsterDetection() {
+    const detectors = this.getDefenceDetectors();
+    for (const actor of this.activeMonsterActors || []) {
+      if (!actor?.container?.active || [MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(actor.state)) continue;
+      const cell = this.worldToBuildGrid(actor.container.x, actor.container.y);
+      if (this.isBuilderCity && !this.isRevealed(cell.x, cell.y)) continue;
+      const candidates = detectors
+        .map((detector) => ({ detector, distance: Phaser.Math.Distance.Between(detector.x, detector.y, actor.container.x, actor.container.y) }))
+        .filter(({ detector, distance }) => distance <= detector.radius)
+        .sort((a, b) => a.detector.reactionMs - b.detector.reactionMs || a.distance - b.distance);
+      const sighting = candidates[0];
+      if (!sighting) continue;
+      actor.detectionAttempts = actor.detectionAttempts || {};
+      const attempt = actor.detectionAttempts[sighting.detector.id];
+      if (!attempt) {
+        actor.detectionAttempts[sighting.detector.id] = this.worldDangerClockMs;
+        continue;
+      }
+      if (this.worldDangerClockMs - attempt < sighting.detector.reactionMs) continue;
+      if (actor.detectedAt || Math.random() <= sighting.detector.reliability) {
+        this.confirmMonsterDetection(actor, sighting.detector, sighting.distance);
+      } else {
+        actor.detectionAttempts[sighting.detector.id] = this.worldDangerClockMs + 1800;
+      }
+    }
+  }
+
+  confirmMonsterDetection(actor, detector, distance) {
+    const firstDetection = !actor.detectedAt;
+    actor.detectedAt = actor.detectedAt || this.worldDangerClockMs;
+    actor.detectedDay = actor.detectedDay || this.day;
+    actor.detectedBy = actor.detectedBy || detector.name;
+    actor.detectionKind = actor.detectionKind || detector.kind;
+    const level = this.getMonsterAlertLevel(actor);
+    const target = this.resolveMonsterTarget(actor) || actor.target;
+    const nearestBuilding = Object.values(this.buildingById || {})
+      .filter((place) => place?.isPlaced)
+      .map((place) => ({ place, distance: Phaser.Math.Distance.Between(place.x, place.y, actor.container.x, actor.container.y) }))
+      .sort((a, b) => a.distance - b.distance)[0]?.place;
+    const nearestHero = this.getActiveHeroes()
+      .filter((hero) => !this.isHeroInjured(hero) && hero.state !== 'away')
+      .map((hero) => ({ hero, distance: Phaser.Math.Distance.Between(hero.container.x, hero.container.y, actor.container.x, actor.container.y) }))
+      .sort((a, b) => a.distance - b.distance)[0]?.hero;
+    this.defenceState.alerts = upsertAlert(this.defenceState.alerts, {
+      id: `alert-${actor.id}`,
+      actorId: actor.id,
+      level,
+      monsterName: actor.monster.name,
+      detectorId: detector.id,
+      detectorName: detector.name,
+      detectorKind: detector.kind,
+      x: Math.round(actor.container.x),
+      y: Math.round(actor.container.y),
+      targetName: target?.name || 'Unknown',
+      nearestBuildingId: nearestBuilding?.id || null,
+      nearestBuildingName: nearestBuilding?.name || 'Town edge',
+      nearestDefenderId: nearestHero?.def.id || null,
+      nearestDefenderName: nearestHero?.def.name || 'None available',
+      danger: estimateDangerLabel((actor.monster.threat || 1) * 16 + (actor.homeLairId ? this.monsterLairs?.[actor.homeLairId]?.pressure || 0 : 0) * 0.25),
+      detectedAtMs: actor.detectedAt,
+      detectedDay: actor.detectedDay,
+      updatedAtMs: this.worldDangerClockMs,
+      distance: Math.round(distance),
+    });
+    if (firstDetection) {
+      this.defenceState.summarizedIncidents.sightings += 1;
+      const direction = actor.container.x < PLAZA.x ? 'west' : actor.container.x > PLAZA.x ? 'east' : actor.container.y < PLAZA.y ? 'north' : 'south';
+      const text = `${detector.name} detected ${actor.monster.name} ${direction} of town. ${nearestBuilding?.name || 'Municipal confidence'} is nearest.`;
+      this.addTownLog(text, 'monster');
+      this.addReportLine('monsters', text);
+      this.game.events.emit('gwg-event', text);
+      this.panicNearbyCivilians(actor, detector.kind);
+      if (['guard', 'guard_post'].includes(detector.kind)) this.dispatchGuardToMonster(actor, detector.place || null);
+    }
+    this.updateTownNotice();
+  }
+
+  getNearestShelter(unit, actor) {
+    const shelterIds = new Set(['tavern', 'inn', 'guildhall', 'guard_post', 'frontier_outpost']);
+    const shelters = Object.values(this.buildingById || {})
+      .filter((place) => place?.isPlaced && shelterIds.has(getBaseBuildingId(place.baseId || place.id)))
+      .map((place) => ({ place, door: this.doorById?.[place.id] || place }))
+      .filter(({ place }) => !this.getBuildingRuntime(place.id).closed)
+      .sort((a, b) => Phaser.Math.Distance.Between(unit.container.x, unit.container.y, a.door.x, a.door.y)
+        - Phaser.Math.Distance.Between(unit.container.x, unit.container.y, b.door.x, b.door.y));
+    const chosen = shelters[0]?.door || { id: 'town-square', name: 'Town Square', x: PLAZA.x, y: PLAZA.y };
+    const awayX = Math.sign(chosen.x - actor.container.x) * Phaser.Math.Between(5, 18);
+    return { ...chosen, x: chosen.x + awayX, y: chosen.y + Phaser.Math.Between(-10, 10) };
+  }
+
+  panicNearbyCivilians(actor) {
+    const policy = DEFENCE_PRIORITIES[this.defenceState.priority] || DEFENCE_PRIORITIES.balanced;
+    const panicRadius = 170 + (this.resources.morale < 35 ? 55 : 0);
+    const units = [...(this.serviceWalkers || []).filter((walker) => walker.serviceRole !== 'guard_patrol'), ...(this.carriers || [])];
+    for (const unit of units) {
+      if (!unit.container?.active || unit.alertState === 'FLEEING' || unit.alertState === 'SHELTERING') continue;
+      if (Phaser.Math.Distance.Between(unit.container.x, unit.container.y, actor.container.x, actor.container.y) > panicRadius) continue;
+      const brave = unit.serviceRole === 'carrier' && Math.random() < Math.max(0.06, 0.24 - (this.getAreaReputation('frontier') || 0) / 500);
+      const escorted = unit.serviceRole === 'carrier' && unit.escortHeroId && this.heroes.some((hero) => hero.def.id === unit.escortHeroId && hero.container?.active && !this.isHeroInjured(hero));
+      if ((brave || escorted) && policy.id !== 'civilians') {
+        unit.currentAction = `Braving route near ${actor.monster.name}`;
+        continue;
+      }
+      if (unit.serviceRole === 'carrier') this.dropCarrierCargoForDanger(unit, actor);
+      this.sendCivilianToShelter(unit, actor);
+    }
+  }
+
+  dropCarrierCargoForDanger(carrier, actor) {
+    const amount = Math.max(0, Number(carrier.cargo || carrier.assignedCargo) || 0);
+    if (!amount || carrier.cargoDropped) return;
+    carrier.cargoDropped = true;
+    carrier.deliveryCompleted = true;
+    const cell = this.worldToBuildGrid(carrier.container.x, carrier.container.y);
+    const drop = normalizeAftermathRecord({
+      id: `dropped-cargo-${carrier.def.id}-${this.day}`,
+      kind: 'loot',
+      name: `Dropped ${RESOURCE_BY_ID[carrier.resource]?.label || carrier.resource || 'Cargo'}`,
+      assetKey: 'prop_crate',
+      fallbackKey: 'crate',
+      x: carrier.container.x,
+      y: carrier.container.y,
+      gridX: cell.x,
+      gridY: cell.y,
+      monsterId: actor.monster.id,
+      monsterName: actor.monster.name,
+      deathDay: this.day,
+      decayDuration: 7,
+      lootContents: { [carrier.resource || 'loot']: amount },
+      areaId: `frontier-${Math.floor(cell.x / 8)}-${Math.floor(cell.y / 8)}`,
+      flavour: 'The carrier preserved their life by converting logistics into a map objective.',
+    }, this.day);
+    this.aftermathDrops.push(drop);
+    this.renderAftermathDrop(drop);
+    this.createAftermathQuest(drop, 'recover-cargo', `Recover ${drop.name}`);
+    carrier.cargo = 0;
+    carrier.assignedCargo = 0;
+    this.defenceState.summarizedIncidents.cargoDropped += amount;
+    this.addTownLog(`${carrier.def.name} dropped ${amount} ${carrier.resource} while fleeing ${actor.monster.name}.`, 'monster');
+  }
+
+  sendCivilianToShelter(unit, actor) {
+    const shelter = this.getNearestShelter(unit, actor);
+    unit.alertState = 'FLEEING';
+    unit.currentAction = `Fleeing ${actor.monster.name}`;
+    unit.shelterUntil = this.worldDangerClockMs + Phaser.Math.Between(5200, 9000) + Math.max(0, this.getAreaReputation('frontier')) * 18;
+    this.walkTo(unit, {
+      ...shelter,
+      intentAction: `Fleeing to ${shelter.name}`,
+      reason: 'Confirmed nearby monster.',
+      risk: 'High',
+    }, () => {
+      if (!unit.container?.active) return;
+      unit.alertState = 'SHELTERING';
+      unit.currentAction = `Sheltering at ${shelter.name}`;
+      unit.container.setAlpha(0.42);
+    });
+  }
+
+  releaseShelteredCivilians() {
+    const monsters = (this.activeMonsterActors || []).filter((actor) => actor.container?.active && ![MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(actor.state));
+    for (const unit of [...(this.serviceWalkers || []), ...(this.carriers || [])]) {
+      if (!unit.container?.active || unit.alertState !== 'SHELTERING' || this.worldDangerClockMs < (unit.shelterUntil || 0)) continue;
+      const dangerNear = monsters.some((actor) => Phaser.Math.Distance.Between(unit.container.x, unit.container.y, actor.container.x, actor.container.y) < 230);
+      if (dangerNear) continue;
+      unit.alertState = 'RETURNING_TO_WORK';
+      unit.container.setAlpha(1);
+      const home = this.doorById?.[unit.originId] || { id: 'town-square', name: 'Town Square', x: PLAZA.x, y: PLAZA.y };
+      this.walkTo(unit, { ...home, intentAction: 'Returning to work', reason: 'The immediate alert passed.', risk: 'Low' }, () => {
+        unit.alertState = 'IDLE';
+        unit.currentAction = 'Returned after emergency shelter';
+      });
+    }
+  }
+
+  showDefenceAlerts() {
+    const alerts = this.getActiveDefenceAlerts();
+    const priority = DEFENCE_PRIORITIES[this.defenceState.priority] || DEFENCE_PRIORITIES.balanced;
+    this.activeInspector = { type: 'defence-alerts' };
+    this.game.events.emit('gwg-inspector-open', {
+      panelType: 'defence-alerts',
+      title: 'Town Defence',
+      subtitle: `${alerts.length} active alert${alerts.length === 1 ? '' : 's'} - ${priority.name}`,
+      sections: [{
+        title: 'Response Policy',
+        lines: [`Current priority: ${priority.name}`, 'Alerts do not pause time. Ignoring them merely lets consequences retain initiative.'],
+      }],
+      rows: alerts.map((alert) => ({
+        title: `${ALERT_LEVELS[alert.level]?.name || 'Sighting'}: ${alert.monsterName}`,
+        meta: `Day ${alert.detectedDay} - ${alert.danger}`,
+        kind: alert.severity >= 4 ? 'danger' : 'warning',
+        lines: [
+          `Detected by ${alert.detectorName} near ${alert.nearestBuildingName}.`,
+          `Target: ${alert.targetName} | Nearest defender: ${alert.nearestDefenderName}`,
+          `Age: ${Math.max(0, Math.round((this.worldDangerClockMs - alert.detectedAtMs) / 1000))}s`,
+        ],
+        actions: [
+          { label: 'Focus Camera', event: 'gwg-defense-action', id: `${alert.actorId}|focus` },
+          { label: 'Assign Hero', event: 'gwg-defense-action', id: `${alert.actorId}|intercept` },
+          { label: 'Dispatch Guards', event: 'gwg-defense-action', id: `${alert.actorId}|guards` },
+          { label: 'Defend Building', event: 'gwg-defense-action', id: `${alert.actorId}|defend` },
+          { label: 'Escort Civilians', event: 'gwg-defense-action', id: `${alert.actorId}|escort` },
+          { label: 'Ignore', event: 'gwg-defense-action', id: `${alert.actorId}|ignore` },
+        ],
+      })),
+      actions: [
+        { label: `Priority: ${priority.name}`, event: 'gwg-defense-policy', id: 'cycle' },
+        { label: 'Open Threat Log', event: 'gwg-open-town-log' },
+      ],
+    });
+  }
+
+  cycleDefencePriorityFromUi() {
+    this.defenceState.priority = getNextDefencePriority(this.defenceState.priority);
+    const priority = DEFENCE_PRIORITIES[this.defenceState.priority];
+    if (priority.id === 'premium') this.applyDeltas({ corruption: 1, trust: -1 });
+    this.addTownLog(`Defence priority changed to ${priority.name}.`, priority.id === 'premium' ? 'golden_whale' : 'policy');
+    this.game.events.emit('gwg-event', `${priority.name}: automatic responders updated their list of things worth saving.`);
+    this.saveGame(false);
+    if (this.activeInspector?.type === 'policies') this.showPolicyPanel();
+    else this.showDefenceAlerts();
+  }
+
+  runDefenceActionFromUi(value) {
+    const [actorId, action = 'focus'] = String(value || '').split('|');
+    const actor = this.activeMonsterActors?.find((entry) => entry.id === actorId && entry.container?.active);
+    const alert = this.defenceState.alerts.find((entry) => entry.actorId === actorId);
+    if (!actor) {
+      if (alert?.lairId) {
+        const lair = this.monsterLairs?.[alert.lairId];
+        const point = lair ? this.explorationPointById?.[lair.poiId] : null;
+        if (action === 'focus' && point) this.cameras.main.centerOn(point.x, point.y);
+        else if (action === 'guards' && lair) this.runLairActionFromUi(`${lair.id}|patrol`);
+        else if (action === 'intercept' && lair) this.runLairActionFromUi(`${lair.id}|scout`);
+        else if (action === 'ignore') alert.ignored = true;
+        if (lair && action !== 'ignore') this.showLairInspector(lair);
+        this.saveGame(false);
+        return;
+      }
+      if (alert) alert.dismissed = true;
+      this.showDefenceAlerts();
+      return;
+    }
+    if (action === 'focus') this.cameras.main.centerOn(actor.container.x, actor.container.y);
+    else if (action === 'guards') this.dispatchGuardToMonster(actor);
+    else if (action === 'escort') {
+      const civilian = [...(this.carriers || []), ...(this.serviceWalkers || []).filter((walker) => walker.serviceRole !== 'guard_patrol')]
+        .filter((unit) => unit.container?.active)
+        .sort((a, b) => Phaser.Math.Distance.Between(a.container.x, a.container.y, actor.container.x, actor.container.y)
+          - Phaser.Math.Distance.Between(b.container.x, b.container.y, actor.container.x, actor.container.y))[0];
+      const hero = this.getBestDefenderForMonster(actor);
+      if (civilian && hero) {
+        civilian.escortHeroId = hero.def.id;
+        this.walkTo(hero, { id: civilian.def.id, name: civilian.def.name, x: civilian.container.x, y: civilian.container.y, h: 30,
+          intentAction: `Escorting ${civilian.def.name}`, reason: 'Protecting a vulnerable town worker.', risk: 'Moderate' });
+        this.addTownLog(`${hero.def.name} was assigned to escort ${civilian.def.name}.`, 'monster');
+      } else this.game.events.emit('gwg-event', 'No civilian and hero pair is available for escort. The clipboard remains optimistic.');
+    }
+    else if (action === 'ignore') {
+      if (alert) alert.ignored = true;
+      this.game.events.emit('gwg-event', `The town ignored ${actor.monster.name}. Somehow, this was also a defence decision.`);
+    } else {
+      const hero = this.getBestDefenderForMonster(actor);
+      if (hero) this.dispatchHeroToMonster(actor, hero, true, action === 'defend' ? 'Defending threatened town asset' : 'Player-assigned interception');
+      else this.game.events.emit('gwg-event', 'No suitable hero can respond. Courage is currently out of stock.');
+    }
+    this.saveGame(false);
+    this.showDefenceAlerts();
+  }
+
+  getBestDefenderForMonster(actor) {
+    const priority = DEFENCE_PRIORITIES[this.defenceState.priority] || DEFENCE_PRIORITIES.balanced;
+    return this.getActiveHeroes()
+      .filter((hero) => hero.state !== 'away' && !hero.stats.deathDay && !this.isHeroInjured(hero) && !hero.stats.gatheringNodeId && !hero.combatTargetId)
+      .map((hero) => {
+        const distance = Phaser.Math.Distance.Between(hero.container.x, hero.container.y, actor.container.x, actor.container.y);
+        const equipment = this.getHeroEquipmentBonus(hero);
+        const courage = (hero.stats.power || 0) + equipment.power + (this.isVeteranHero(hero.def) ? 8 : 0);
+        const riskGap = courage - (actor.monster.power || actor.monster.threat * 4);
+        return { hero, score: courage * 5 - distance / (18 * priority.chaseMultiplier) + Math.min(18, riskGap * 2) };
+      })
+      .sort((a, b) => b.score - a.score)[0]?.hero || null;
+  }
+
   spawnMonsterActor(monster, target, spawn = null, runtime = {}) {
     const start = spawn || target || { x: PLAZA.x, y: PLAZA.y };
     const textureKey = this.textures.exists(monster.assetKey)
@@ -11139,6 +11573,12 @@ export default class TownScene extends Phaser.Scene {
       moveTarget: null,
       lastHitAt: 0,
       defenderAssignedAt: 0,
+      detectedAt: Number(runtime.detectedAt) || 0,
+      detectedDay: Number(runtime.detectedDay) || 0,
+      detectedBy: runtime.detectedBy || null,
+      detectionKind: runtime.detectionKind || null,
+      raidId: runtime.raidId || null,
+      raidTargetRef: runtime.raidTargetRef && typeof runtime.raidTargetRef === 'object' ? { ...runtime.raidTargetRef } : null,
     };
     const container = this.add.container(start.x, start.y).setDepth(start.y + 75);
     const shadow = this.add.ellipse(0, -4, 34, 10, 0x10151d, 0.24);
@@ -11214,6 +11654,16 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
+  restoreDefenceAssignments() {
+    for (const hero of this.heroes || []) {
+      const saved = this.savedHeroStats?.[hero.def.id];
+      if (!saved?.combatTargetId || !saved.defenceOrder || this.isHeroInjured(hero) || hero.stats.deathDay) continue;
+      const actor = this.activeMonsterActors.find((entry) => entry.id === saved.combatTargetId && entry.container?.active);
+      if (!actor) continue;
+      this.time.delayedCall(450, () => this.dispatchHeroToMonster(actor, hero, saved.defenceOrder === 'manual', 'Restored defensive assignment.'));
+    }
+  }
+
   showMonsterInspector(actor) {
     if (!actor?.monster) return;
     const knownLair = this.monsterLairs?.[actor.homeLairId];
@@ -11249,7 +11699,13 @@ export default class TownScene extends Phaser.Scene {
         },
       ],
       actions: [
-        { label: 'Assign Best Hero', event: 'gwg-monster-action', id: `${actor.id}|intercept` },
+        { label: 'Intercept', event: 'gwg-monster-action', id: `${actor.id}|intercept` },
+        { label: 'Dispatch Guards', event: 'gwg-defense-action', id: `${actor.id}|guards` },
+        { label: 'Hunt', event: 'gwg-monster-action', id: `${actor.id}|hunt` },
+        { label: 'Follow Without Engaging', event: 'gwg-monster-action', id: `${actor.id}|shadow` },
+        { label: 'Drive Away', event: 'gwg-monster-action', id: `${actor.id}|drive` },
+        { label: 'Track to Lair', event: 'gwg-monster-action', id: `${actor.id}|track` },
+        { label: 'Cancel Response', event: 'gwg-monster-action', id: `${actor.id}|cancel` },
         { label: actor.priority ? 'Unmark Priority' : 'Mark Priority', event: 'gwg-monster-action', id: `${actor.id}|priority` },
         { label: 'Follow', event: 'gwg-monster-action', id: `${actor.id}|follow` },
         ...(actor.homeLairId && this.monsterLairs?.[actor.homeLairId]?.discovered
@@ -11268,29 +11724,42 @@ export default class TownScene extends Phaser.Scene {
     this.activeInspector = { type: 'lair', id: lair.id };
     const active = (this.activeMonsterActors || []).filter((actor) => actor.homeLairId === lair.id && actor.state !== MONSTER_STATES.DEAD);
     const areaDanger = this.getAreaReputation(point.id);
+    const pressureState = getLairPressureState(lair, this.day);
+    const coverage = this.getDefenceCoverageAt(point.x, point.y);
+    const recentHistory = (this.monsterState.attackHistory || []).filter((entry) => entry.lairId === lair.id).slice(-3);
     this.game.events.emit('gwg-inspector-open', {
       panelType: 'lair',
       title: lair.name,
-      subtitle: `${lair.type} - ${lair.cleared ? 'Cleared' : lair.suppressedUntilDay > this.day ? 'Suppressed' : 'Active'}`,
+      subtitle: `${lair.type} - ${pressureState.name}`,
       sections: [
         { title: 'Known Threat', lines: [
-          `Level ${lair.level} | Danger ${Math.round(lair.danger)}/100`,
-          `Family: ${lair.monsterFamily.map((id) => MONSTERS.find((monster) => monster.id === id)?.name || id).join(', ')}`,
-          `Spawn pressure: ${Math.round(lair.threatBudget)}/100`,
-          `Active monsters: ${active.length}/${lair.activeMonsterCap}`,
-          `Next activity: Day ${lair.nextSpawnDay}`,
+          `Pressure: ${pressureState.name}${lair.scouted ? ` (${Math.round(lair.pressure || 0)}/100)` : ''}`,
+          `Estimated strength: ${lair.scouted ? estimateDangerLabel(lair.danger + (lair.pressure || 0) * 0.35) : 'Unknown'}`,
+          `Family: ${lair.scouted ? lair.monsterFamily.map((id) => MONSTERS.find((monster) => monster.id === id)?.name || id).join(', ') : 'Unknown until scouted'}`,
+          `Active monsters: ${lair.scouted ? `${active.length}/${lair.activeMonsterCap}` : active.length ? 'Several suspected' : 'Unknown'}`,
+          `Next activity: ${lair.scouted ? `around Day ${lair.nextSpawnDay}` : 'Unknown'}`,
+          `Nearest town asset: ${this.getRaidTarget(lair)?.name || 'None'}`,
+          `Guard coverage: ${coverage >= 4 ? 'Strong' : coverage >= 2 ? 'Moderate' : coverage > 0 ? 'Weak' : 'None'}`,
           `Local danger reputation: ${areaDanger}/100`,
         ] },
         { title: 'Operation', lines: [
           lair.scouted ? 'Scouted: strength estimate is reliable.' : 'Not scouted: management is guessing professionally.',
+          `Suppression progress: ${Math.round(lair.suppressionProgress || 0)}%${lair.suppressedUntilDay > this.day ? ` - active until Day ${lair.suppressedUntilDay}` : ''}`,
+          `Operation: ${lair.operation?.status === 'active' ? `${lair.operation.type} in progress` : 'none'}`,
           `Potential loot: ${lair.lootTable}`,
           ...(lair.recentAttacks?.length ? [`Recent: ${lair.recentAttacks.slice(-2).join(' | ')}`] : ['No recorded attacks. This is not reassurance.']),
+          ...(recentHistory.length ? [`Outcomes: ${recentHistory.map((entry) => `Day ${entry.day} ${entry.outcome}`).join(' | ')}`] : []),
         ] },
       ],
       actions: [
-        { label: 'Scout', event: 'gwg-lair-action', id: `${lair.id}|scout`, disabled: lair.cleared },
-        { label: 'Assign Expedition', event: 'gwg-lair-action', id: `${lair.id}|expedition`, disabled: lair.cleared },
+        { label: 'Scout Lair', event: 'gwg-lair-action', id: `${lair.id}|scout`, disabled: lair.cleared },
+        { label: 'Assign Patrol', event: 'gwg-lair-action', id: `${lair.id}|patrol`, disabled: lair.cleared },
+        { label: 'Suppress Lair', event: 'gwg-lair-action', id: `${lair.id}|suppress`, disabled: lair.cleared || lair.operation?.status === 'active' },
+        { label: 'Clear Lair', event: 'gwg-lair-action', id: `${lair.id}|clear`, disabled: lair.cleared || lair.operation?.status === 'active' },
         { label: 'Establish Outpost', event: 'gwg-node-camp', id: point.id, action: 'frontier_outpost', disabled: lair.cleared },
+        { label: 'Track Active Monster', event: 'gwg-lair-action', id: `${lair.id}|track`, disabled: active.length === 0 },
+        { label: 'Withdraw', event: 'gwg-lair-action', id: `${lair.id}|withdraw`, disabled: lair.operation?.status !== 'active' },
+        { label: 'Open Attack History', event: 'gwg-open-town-log' },
       ],
     });
   }
@@ -11462,7 +11931,15 @@ export default class TownScene extends Phaser.Scene {
     const stopRange = actor.state === MONSTER_STATES.CHASING ? actor.stats.attackRange : 8;
     if (distance <= stopRange) {
       if (actor.state === MONSTER_STATES.CHASING) actor.state = MONSTER_STATES.ATTACKING;
-      else if (actor.state === MONSTER_STATES.RETURNING_TO_LAIR || actor.state === MONSTER_STATES.FLEEING) actor.state = MONSTER_STATES.IDLE;
+      else if (actor.state === MONSTER_STATES.RETURNING_TO_LAIR || actor.state === MONSTER_STATES.FLEEING) {
+        actor.state = MONSTER_STATES.IDLE;
+        const lair = this.monsterLairs?.[actor.homeLairId];
+        if (lair) {
+          lair.pressure = Phaser.Math.Clamp((lair.pressure || 0) + 4 + (actor.stolenCargo || 0), 0, 100);
+          lair.pressureState = getLairPressureState(lair, this.day).id;
+        }
+        if (actor.detectedAt) this.finalizeDefenceIncident(actor, 'escaped to lair', null);
+      }
       else actor.moveTarget = null;
       return;
     }
@@ -11532,6 +12009,7 @@ export default class TownScene extends Phaser.Scene {
     this.stats.monsterVictories = (this.stats.monsterVictories || 0) + 1;
     this.applyDeltas({ threat: actor.monster.threatImpact || -Math.max(2, actor.monster.threat) });
     this.addTownLog(`${source?.def?.name || 'Town defenders'} defeated ${actor.monster.name}. The loot table became briefly tangible.`, 'monster');
+    this.finalizeDefenceIncident(actor, 'defeated', source?.def?.name || 'Town defenders');
     const deathX = actor.container.x;
     const deathY = actor.container.y;
     const finishDeath = () => {
@@ -11565,6 +12043,17 @@ export default class TownScene extends Phaser.Scene {
   }
 
   applyBuildingMonsterDamage(actor, target) {
+    this.confirmMonsterDetection(actor, {
+      id: `attacked-building:${target.place.id}`,
+      kind: 'attacked_building',
+      name: target.name,
+      x: target.x,
+      y: target.y,
+      radius: 0,
+      reactionMs: 0,
+      reliability: 1,
+      place: target.place,
+    }, 0);
     const runtime = this.getBuildingRuntime(target.place.id);
     const damage = Math.max(2, actor.stats.damage - Math.floor(this.getDefenseBonus() / 4));
     runtime.health = Math.max(0, runtime.health - damage);
@@ -11666,6 +12155,8 @@ export default class TownScene extends Phaser.Scene {
         if (fatal) {
           this.createNamedDeathMarker(unit, actor, 'Hero');
           this.killHero(unit, `${actor.monster.name} ended the interception near ${target.name}.`);
+          this.raiseCivilianDownAlert(actor, unit.def.name, 'Hero killed');
+          this.failLairOperation(actor.homeLairId, `${unit.def.name} was killed during the operation.`);
           actor.kills += 1;
         } else {
           unit.stats.health = Math.ceil(unit.stats.maxHealth * 0.25);
@@ -11685,6 +12176,7 @@ export default class TownScene extends Phaser.Scene {
       this.worldInteractionTargets = this.worldInteractionTargets.filter((entry) => entry.id !== target.id);
       unit.container.destroy(true);
       actor.kills += 1;
+      this.raiseCivilianDownAlert(actor, target.name, `${target.kind === 'carrier' ? 'Carrier' : 'Worker'} killed`);
       actor.targetRef = null;
       actor.state = MONSTER_STATES.IDLE;
       this.recordWorldAttack(actor, target, `${actor.monster.name} killed ${target.name}.`);
@@ -11705,10 +12197,98 @@ export default class TownScene extends Phaser.Scene {
   }
 
   recordWorldAttack(actor, target, text) {
-    const entry = { day: this.day, monsterId: actor.monster.id, target: target.name, text };
+    const responders = [
+      ...this.getActiveHeroes().filter((hero) => hero.combatTargetId === actor.id).map((hero) => hero.def.name),
+      ...(this.serviceWalkers || []).filter((walker) => walker.combatTargetId === actor.id).map((walker) => walker.def.name),
+    ];
+    const existing = [...(this.monsterState.attackHistory || [])].reverse()
+      .find((entry) => entry.actorId === actor.id && entry.outcome === 'active');
+    if (existing) {
+      existing.target = target.name;
+      existing.targetKind = target.kind;
+      existing.responders = [...new Set([...(existing.responders || []), ...responders])];
+      existing.deaths += text.includes('killed') ? 1 : 0;
+      existing.buildingDamage += target.kind === 'building' ? 1 : 0;
+      existing.cargoLost = actor.stolenCargo || existing.cargoLost || 0;
+      existing.text = text;
+      return existing;
+    }
+    const entry = {
+      id: `attack-${actor.id}-${this.day}-${this.monsterState.attackHistory?.length || 0}`,
+      actorId: actor.id,
+      day: this.day,
+      monsterId: actor.monster.id,
+      monsterName: actor.monster.name,
+      lairId: actor.homeLairId || null,
+      detectionSource: actor.detectedBy || 'Impact report',
+      location: `${Math.round(actor.container.x)},${Math.round(actor.container.y)}`,
+      target: target.name,
+      targetKind: target.kind,
+      responders,
+      injuries: 0,
+      deaths: text.includes('killed') ? 1 : 0,
+      buildingDamage: target.kind === 'building' ? 1 : 0,
+      cargoLost: actor.stolenCargo || 0,
+      outcome: 'active',
+      responseTimeMs: actor.detectedAt ? Math.max(0, this.worldDangerClockMs - actor.detectedAt) : null,
+      text,
+    };
     this.monsterState.attackHistory = [...(this.monsterState.attackHistory || []), entry].slice(-WORLD_DANGER_LIMITS.attackHistoryLimit);
     const lair = this.monsterLairs?.[actor.homeLairId];
     if (lair) lair.recentAttacks = [...(lair.recentAttacks || []), `Day ${this.day}: ${target.name}`].slice(-8);
+    return entry;
+  }
+
+  raiseCivilianDownAlert(actor, name, outcome) {
+    const existing = this.defenceState.alerts.find((alert) => alert.actorId === actor.id);
+    this.defenceState.alerts = upsertAlert(this.defenceState.alerts, {
+      ...(existing || {}),
+      id: existing?.id || `alert-${actor.id}`,
+      actorId: actor.id,
+      level: 'civilian',
+      monsterName: actor.monster.name,
+      detectorName: existing?.detectorName || name,
+      targetName: name,
+      nearestBuildingName: existing?.nearestBuildingName || 'Town edge',
+      nearestDefenderName: existing?.nearestDefenderName || 'None',
+      danger: 'Severe',
+      detectedAtMs: actor.detectedAt || this.worldDangerClockMs,
+      detectedDay: actor.detectedDay || this.day,
+      updatedAtMs: this.worldDangerClockMs,
+    });
+    this.defenceState.lastSevereIncidentDay = this.day;
+    this.addReportLine('monsters', `${outcome}: ${name}, caused by ${actor.monster.name}.`);
+    this.updateTownNotice();
+  }
+
+  finalizeDefenceIncident(actor, outcome, responder = null) {
+    const alert = this.defenceState.alerts.find((entry) => entry.actorId === actor.id);
+    if (alert) {
+      alert.dismissed = true;
+      alert.outcome = outcome;
+      alert.responder = responder;
+    }
+    const history = [...(this.monsterState.attackHistory || [])].reverse().find((entry) => entry.actorId === actor.id && entry.outcome === 'active');
+    if (history) {
+      history.outcome = outcome;
+      history.responder = responder;
+      history.cargoLost = actor.stolenCargo || history.cargoLost || 0;
+    }
+    const lair = this.monsterLairs?.[actor.homeLairId];
+    if (lair && outcome === 'defeated') {
+      lair.pressure = Phaser.Math.Clamp((lair.pressure || lair.threatBudget || 0) - 5, 0, 100);
+      lair.pressureState = getLairPressureState(lair, this.day).id;
+    }
+    if (actor.raidId) {
+      const raid = this.defenceState.activeRaids.find((entry) => entry.id === actor.raidId);
+      const otherRaiders = (this.activeMonsterActors || []).some((entry) => entry !== actor && entry.raidId === actor.raidId && entry.container?.active && ![MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(entry.state));
+      if (raid && !otherRaiders) {
+        raid.status = 'complete';
+        raid.completedDay = this.day;
+        raid.outcome = outcome;
+      }
+    }
+    this.updateTownNotice();
   }
 
   updateHeroMonsterCombat() {
@@ -11735,9 +12315,10 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
-  dispatchHeroToMonster(actor, hero, manual = false) {
+  dispatchHeroToMonster(actor, hero, manual = false, orderReason = null) {
     if (!actor?.container?.active || !hero?.container?.active || hero.stats.deathDay || this.isHeroInjured(hero)) return false;
     hero.combatTargetId = actor.id;
+    hero.defenceOrder = manual ? 'manual' : 'automatic';
     actor.detectedBy = manual ? hero.def.name : actor.detectedBy || 'Town watch';
     const spot = {
       id: actor.id,
@@ -11746,7 +12327,7 @@ export default class TownScene extends Phaser.Scene {
       y: actor.container.y,
       h: 40,
       intentAction: `Intercepting ${actor.monster.name}`,
-      reason: manual ? 'Player-assigned interception.' : 'Automatic danger response.',
+      reason: orderReason || (manual ? 'Player-assigned interception.' : 'Automatic danger response.'),
       risk: actor.monster.threat >= 5 ? 'High' : 'Moderate',
     };
     this.walkTo(hero, spot, () => {
@@ -11765,6 +12346,89 @@ export default class TownScene extends Phaser.Scene {
     return true;
   }
 
+  spawnEmergencyGuard(post, actor) {
+    const source = post || Object.values(this.buildingById || {}).find((place) => place?.isPlaced && getBaseBuildingId(place.baseId || place.id) === 'guard_post');
+    if (!source || this.getBuildingRuntime(source.id).closed) return null;
+    const config = SERVICE_WALKERS.watchtower;
+    const textureKey = this.textures.exists(config.assetKey) ? config.assetKey : resolveTexture(this, config.fallbackKey, 'hero_default');
+    if (!textureKey || !this.textures.exists(textureKey)) return null;
+    const door = this.doorById?.[source.id] || source;
+    const sprite = this.add.image(0, 0, textureKey).setOrigin(0.5, 1);
+    sprite.setScale(this.getTextureScaleForHeight(textureKey, 28, 1.2));
+    const label = this.add.text(0, 2, 'Emergency Guard', {
+      fontFamily: '"Courier New", monospace', fontSize: '8px', fontStyle: 'bold', color: '#ffd0cc', stroke: '#0c1118', strokeThickness: 2,
+    }).setOrigin(0.5, 0).setAlpha(0);
+    const container = this.add.container(door.x, door.y, [sprite, label]).setDepth(door.y + 4);
+    const guard = {
+      def: { id: `emergency-guard-${source.id}-${this.time.now}`, name: 'Emergency Guard', speed: 82, assetKey: textureKey },
+      sprite,
+      container,
+      stats: { health: 70 + this.getPlaceLevel(source) * 8, maxHealth: 70 + this.getPlaceLevel(source) * 8, active: true },
+      walker: true,
+      serviceRole: 'guard_patrol',
+      guardState: 'INTERCEPTING',
+      originId: source.id,
+      originName: source.name,
+      currentAction: `Intercepting ${actor.monster.name}`,
+      combatTargetId: actor.id,
+      patrolLeash: (DETECTOR_PROFILES.guard_post.radius + this.getPlaceLevel(source) * 45)
+        * (DEFENCE_PRIORITIES[this.defenceState.priority]?.chaseMultiplier || 1),
+    };
+    this.prepareHeroAnimation(guard);
+    this.serviceWalkers.push(guard);
+    guard.targetEntry = this.registerWorldInteractionTarget({
+      id: guard.def.id,
+      type: 'service', hit: container, img: container, walker: guard, width: 42, height: 54,
+      getCenter: () => ({ x: container.x, y: container.y - 24 }),
+      onHoverIn: () => { sprite.setTint(0xffd0cc); label.setAlpha(1); },
+      onHoverOut: () => { sprite.clearTint?.(); if (this.activeInspector?.id !== guard.def.id) label.setAlpha(0); },
+      onSelect: () => this.showServiceWalkerInspector(guard, config),
+    });
+    this.defenceState.patrolAssignments[source.id] = { zone: 'local-response', guardId: guard.def.id, actorId: actor.id, updatedDay: this.day };
+    return guard;
+  }
+
+  dispatchGuardToMonster(actor, preferredPost = null) {
+    if (!actor?.container?.active) return false;
+    const policy = DEFENCE_PRIORITIES[this.defenceState.priority] || DEFENCE_PRIORITIES.balanced;
+    let candidate = (this.serviceWalkers || [])
+      .filter((walker) => walker.serviceRole === 'guard_patrol' && walker.container?.active && (walker.stats?.health || 0) > 0 && !walker.combatTargetId)
+      .map((guard) => ({ guard, distance: Phaser.Math.Distance.Between(guard.container.x, guard.container.y, actor.container.x, actor.container.y) }))
+      .sort((a, b) => a.distance - b.distance)[0];
+    if (!candidate) {
+      const posts = Object.values(this.buildingById || {})
+        .filter((place) => place?.isPlaced && ['guard_post', 'frontier_outpost'].includes(getBaseBuildingId(place.baseId || place.id)))
+        .sort((a, b) => Phaser.Math.Distance.Between(a.x, a.y, actor.container.x, actor.container.y) - Phaser.Math.Distance.Between(b.x, b.y, actor.container.x, actor.container.y));
+      const guard = this.spawnEmergencyGuard(preferredPost || posts[0], actor);
+      if (guard) candidate = { guard, distance: Phaser.Math.Distance.Between(guard.container.x, guard.container.y, actor.container.x, actor.container.y) };
+    }
+    if (!candidate) {
+      this.game.events.emit('gwg-event', 'No Guard Post can dispatch. The warning bell has entered a solo career.');
+      return false;
+    }
+    const guard = candidate.guard;
+    const home = this.doorById?.[guard.originId] || this.buildingById?.[guard.originId] || guard.container;
+    const leash = guard.patrolLeash || DETECTOR_PROFILES.guard.radius * policy.chaseMultiplier;
+    if (Phaser.Math.Distance.Between(home.x, home.y, actor.container.x, actor.container.y) > leash) {
+      this.game.events.emit('gwg-event', `${guard.def.name} requested hero support; the target is beyond patrol leash.`);
+      return false;
+    }
+    guard.combatTargetId = actor.id;
+    guard.guardState = 'INTERCEPTING';
+    guard.currentAction = `Intercepting ${actor.monster.name}`;
+    actor.defenderAssignedAt = this.worldDangerClockMs;
+    this.walkTo(guard, {
+      id: actor.id, name: actor.monster.name, x: actor.container.x, y: actor.container.y, h: 40,
+      intentAction: `Intercepting ${actor.monster.name}`, reason: 'Guard Post emergency dispatch.', risk: 'Moderate',
+    }, () => {
+      if (!actor.container?.active || !guard.container?.active) return;
+      guard.guardState = 'FIGHTING';
+      actor.targetRef = this.getMonsterTargetRef('guard', guard.targetEntry?.id, guard.def.name);
+      actor.state = MONSTER_STATES.ATTACKING;
+    });
+    return true;
+  }
+
   maybeDispatchDefender(actor) {
     if (this.worldDangerClockMs - (actor.defenderAssignedAt || 0) < 3500) return;
     const guardRange = 260 + this.getPlaceLevel(this.buildingById.watchtower) * 70 + this.getPlaceLevel(this.buildingById.guard_post) * 85;
@@ -11774,23 +12438,15 @@ export default class TownScene extends Phaser.Scene {
       .filter((entry) => entry.distance <= guardRange)
       .sort((a, b) => a.distance - b.distance)[0];
     if (guard) {
-      actor.defenderAssignedAt = this.worldDangerClockMs;
-      guard.walker.currentAction = `Intercepting ${actor.monster.name}`;
-      this.walkTo(guard.walker, {
-        id: actor.id,
-        name: actor.monster.name,
-        x: actor.container.x,
-        y: actor.container.y,
-        intentAction: `Guarding against ${actor.monster.name}`,
-        reason: 'Automatic patrol response.',
-        risk: 'Moderate',
-      }, () => {
-        if (!actor.container?.active) return;
-        actor.targetRef = this.getMonsterTargetRef('guard', guard.walker.targetEntry?.id, guard.walker.def.name);
-        actor.state = MONSTER_STATES.ATTACKING;
-      });
+      this.dispatchGuardToMonster(actor);
       return;
     }
+    const guardPost = Object.values(this.buildingById || {}).find((place) => (
+      place?.isPlaced
+      && ['guard_post', 'frontier_outpost'].includes(getBaseBuildingId(place.baseId || place.id))
+      && !this.getBuildingRuntime(place.id).closed
+    ));
+    if (guardPost && this.dispatchGuardToMonster(actor, guardPost)) return;
     const defenders = this.getActiveHeroes()
       .filter((hero) => hero.state !== 'away' && !hero.stats.deathDay && !this.isHeroInjured(hero) && !hero.stats.gatheringNodeId)
       .map((hero) => ({ hero, distance: Phaser.Math.Distance.Between(hero.container.x, hero.container.y, actor.container.x, actor.container.y) }))
@@ -11810,11 +12466,33 @@ export default class TownScene extends Phaser.Scene {
       this.showMonsterInspector(actor);
     } else if (action === 'follow') {
       this.cameras.main.centerOn(actor.container.x, actor.container.y);
+    } else if (action === 'cancel') {
+      for (const hero of this.heroes || []) {
+        if (hero.combatTargetId !== actor.id) continue;
+        hero.combatTargetId = null;
+        hero.defenceOrder = null;
+        this.interruptHero(hero);
+        this.scheduleAmbient(hero, Phaser.Math.Between(700, 1600));
+      }
+      for (const guard of this.serviceWalkers || []) {
+        if (guard.combatTargetId !== actor.id) continue;
+        guard.combatTargetId = null;
+        guard.guardState = 'RETURNING_TO_POST';
+        const home = this.doorById?.[guard.originId] || this.buildingById?.[guard.originId];
+        if (home) this.walkTo(guard, { ...home, intentAction: 'Returning to post', reason: 'Response cancelled.', risk: 'Low' });
+      }
+    } else if (action === 'shadow' || action === 'track') {
+      const hero = this.getBestDefenderForMonster(actor);
+      if (hero) {
+        hero.combatTargetId = null;
+        const destination = action === 'track' && actor.homeLairId ? this.explorationPointById?.[actor.homeLairId] || actor.container : actor.container;
+        this.walkTo(hero, { id: actor.id, name: actor.monster.name, x: destination.x, y: destination.y, h: 40,
+          intentAction: action === 'track' ? `Tracking ${actor.monster.name} to lair` : `Following ${actor.monster.name}`,
+          reason: 'Observe without automatic engagement.', risk: 'Moderate' });
+      }
     } else {
-      const hero = this.getActiveHeroes()
-        .filter((entry) => entry.state !== 'away' && !this.isHeroInjured(entry) && !entry.stats.gatheringNodeId)
-        .sort((a, b) => (b.stats.power || 0) - (a.stats.power || 0))[0];
-      if (hero) this.dispatchHeroToMonster(actor, hero, true);
+      const hero = this.getBestDefenderForMonster(actor);
+      if (hero) this.dispatchHeroToMonster(actor, hero, true, action === 'hunt' ? 'Aggressive hunt order.' : action === 'drive' ? 'Drive the monster beyond town coverage.' : null);
       else this.game.events.emit('gwg-event', 'No healthy hero is free to intercept. The monster considers this premium service.');
     }
     this.saveGame(false);
@@ -11829,17 +12507,60 @@ export default class TownScene extends Phaser.Scene {
       this.showLairInspector(lair);
       return;
     }
-    const hero = this.getActiveHeroes()
+    if (action === 'track') {
+      const actor = this.activeMonsterActors.find((entry) => entry.homeLairId === lair.id && entry.container?.active);
+      if (actor) {
+        this.cameras.main.centerOn(actor.container.x, actor.container.y);
+        this.showMonsterInspector(actor);
+      }
+      return;
+    }
+    if (action === 'withdraw') {
+      for (const heroId of lair.operation?.heroIds || []) {
+        const hero = this.heroes.find((entry) => entry.def.id === heroId);
+        if (!hero) continue;
+        hero.combatTargetId = null;
+        this.interruptHero(hero);
+        this.scheduleAmbient(hero, Phaser.Math.Between(800, 1800));
+      }
+      lair.operation = null;
+      lair.expeditionActive = false;
+      this.addTownLog(`The operation at ${lair.name} withdrew. The lair billed this as customer retention.`, 'monster');
+      this.showLairInspector(lair);
+      this.saveGame(false);
+      return;
+    }
+    if (action === 'patrol') {
+      const outpost = Object.values(this.buildingById || {})
+        .filter((place) => place?.isPlaced && ['guard_post', 'frontier_outpost', 'watchtower'].includes(getBaseBuildingId(place.baseId || place.id)))
+        .sort((a, b) => Phaser.Math.Distance.Between(a.x, a.y, point.x, point.y) - Phaser.Math.Distance.Between(b.x, b.y, point.x, point.y))[0];
+      if (!outpost) {
+        this.game.events.emit('gwg-event', 'No defensive post can own that patrol route. Build one before assigning bravery by spreadsheet.');
+        return;
+      }
+      this.defenceState.patrolAssignments[outpost.id] = { zone: lair.id, lairId: lair.id, updatedDay: this.day };
+      lair.pressure = Math.max(0, (lair.pressure || 0) - 6);
+      this.addTownLog(`${outpost.name} assigned a patrol toward ${lair.name}.`, 'monster');
+      this.showLairInspector(lair);
+      this.saveGame(false);
+      return;
+    }
+    const available = this.getActiveHeroes()
       .filter((entry) => entry.state !== 'away' && !this.isHeroInjured(entry) && !entry.stats.gatheringNodeId)
-      .sort((a, b) => (b.stats.power || 0) - (a.stats.power || 0))[0];
-    if (!hero) {
+      .filter((entry) => !entry.combatTargetId)
+      .sort((a, b) => (b.stats.power || 0) - (a.stats.power || 0));
+    const teamSize = action === 'clear' ? Math.min(2, available.length) : 1;
+    const team = available.slice(0, teamSize);
+    if (!team.length) {
       this.game.events.emit('gwg-event', 'No healthy hero is free for lair work. Danger remains vertically integrated.');
       return;
     }
     if (action === 'scout') {
+      const hero = team[0];
       this.walkTo(hero, { ...point, intentAction: `Scouting ${lair.name}`, reason: 'Improves the threat estimate.', risk: 'Moderate' }, () => {
         lair.scouted = true;
         lair.discovered = true;
+        lair.pressure = Math.max(0, (lair.pressure || 0) - 4);
         this.revealArea(point.gridX, point.gridY, lair.revealRadius, `${hero.def.name}'s lair survey`);
         this.addTownLog(`${hero.def.name} scouted ${lair.name}. The danger estimate is now professionally alarming.`, 'monster');
         this.showLairInspector(lair);
@@ -11847,32 +12568,58 @@ export default class TownScene extends Phaser.Scene {
       });
       return;
     }
+    const operationType = action === 'clear' ? 'clear' : 'suppress';
     lair.expeditionActive = true;
     lair.discovered = true;
+    lair.operation = { type: operationType, heroIds: team.map((hero) => hero.def.id), startedDay: this.day, status: 'active' };
     let defenders = this.activeMonsterActors.filter((actor) => actor.homeLairId === lair.id && actor.container?.active);
-    if (!defenders.length) {
+    while (defenders.length < team.length) {
       const spawned = this.spawnMonsterFromLair(lair, true);
-      if (spawned) defenders = [spawned];
+      if (spawned) defenders.push(spawned);
+      else break;
     }
-    const target = defenders.sort((a, b) => (b.monster.threat || 0) - (a.monster.threat || 0))[0];
-    if (target) this.dispatchHeroToMonster(target, hero, true);
-    this.addTownLog(`${hero.def.name} began an expedition against ${lair.name}. Travel and combat remain visible on the map.`, 'monster');
+    defenders.sort((a, b) => (b.monster.threat || 0) - (a.monster.threat || 0));
+    team.forEach((hero, index) => {
+      const target = defenders[index % Math.max(1, defenders.length)];
+      if (target) this.dispatchHeroToMonster(target, hero, true, `${operationType === 'clear' ? 'Clearing' : 'Suppressing'} ${lair.name}.`);
+      else this.walkTo(hero, { ...point, intentAction: `${operationType === 'clear' ? 'Clearing' : 'Suppressing'} ${lair.name}`, reason: 'Lair operation.', risk: 'High' });
+    });
+    this.addTownLog(`${team.map((hero) => hero.def.name).join(' and ')} began a ${operationType} operation at ${lair.name}.`, 'monster');
     this.saveGame(false);
+  }
+
+  failLairOperation(lairId, reason) {
+    const lair = this.monsterLairs?.[lairId];
+    if (!lair?.operation || lair.operation.status !== 'active') return;
+    lair.operation.status = 'failed';
+    lair.expeditionActive = false;
+    lair.pressure = Phaser.Math.Clamp((lair.pressure || 0) + 14, 0, 100);
+    lair.pressureState = getLairPressureState(lair, this.day).id;
+    lair.raidCooldownUntilDay = Math.min(lair.raidCooldownUntilDay || this.day + 2, this.day + 2);
+    this.addTownLog(`${lair.name} repelled the operation. ${reason} Pressure rose to ${Math.round(lair.pressure)}.`, 'crisis');
+    this.addReportLine('monsters', `Failed operation at ${lair.name}: ${reason}`);
   }
 
   checkLairCleared(lair) {
     const remaining = this.activeMonsterActors.some((actor) => actor.homeLairId === lair.id && actor.container?.active && actor.state !== MONSTER_STATES.DEAD);
     if (remaining) return;
     lair.expeditionActive = false;
-    if (lair.level <= 2) {
+    const operationType = lair.operation?.type || 'suppress';
+    const canClear = operationType === 'clear' && (lair.level <= 2 || (lair.suppressionProgress || 0) >= 45 || (lair.pressure || 0) < 42);
+    if (canClear) {
       lair.cleared = true;
       lair.suppressedUntilDay = 0;
     } else {
-      lair.suppressedUntilDay = this.day + 7;
-      lair.recoveryDay = this.day + 7;
-      lair.nextSpawnDay = this.day + 8;
+      const duration = operationType === 'suppress' ? 6 : 4;
+      lair.suppressedUntilDay = this.day + duration;
+      lair.recoveryDay = this.day + duration;
+      lair.nextSpawnDay = this.day + duration + 1;
+      lair.suppressionProgress = Phaser.Math.Clamp((lair.suppressionProgress || 0) + (operationType === 'clear' ? 35 : 24), 0, 100);
     }
-    lair.threatBudget = Math.max(0, lair.threatBudget - 12);
+    lair.operation = { ...(lair.operation || {}), status: 'complete', completedDay: this.day };
+    lair.threatBudget = Math.max(0, lair.threatBudget - 18);
+    lair.pressure = lair.cleared ? 0 : Math.max(0, (lair.pressure || 0) - 28);
+    lair.pressureState = getLairPressureState(lair, this.day).id;
     this.changeAreaReputation(lair.poiId, -18, `${lair.name} cleared`);
     this.applyDeltas({ gold: 45 + lair.level * 35, trust: 2, threat: -(4 + lair.level * 2) });
     const text = lair.cleared
@@ -11883,10 +12630,37 @@ export default class TownScene extends Phaser.Scene {
     this.saveGame(false);
   }
 
+  applyWatchtowerAssistance(actor) {
+    if (!actor?.container?.active || !actor.detectedAt || this.worldDangerClockMs < (actor.nextTowerShotAt || 0)) return;
+    const towers = Object.values(this.buildingById || {})
+      .filter((place) => place?.isPlaced && getBaseBuildingId(place.baseId || place.id) === 'watchtower')
+      .filter((place) => !this.getBuildingRuntime(place.id).closed)
+      .map((place) => {
+        const runtime = this.getBuildingRuntime(place.id);
+        const healthRatio = runtime.maxHealth > 0 ? Phaser.Math.Clamp(runtime.health / runtime.maxHealth, 0.35, 1) : 1;
+        const radius = (430 + this.getPlaceLevel(place) * 55) * healthRatio;
+        return { place, radius, distance: Phaser.Math.Distance.Between(place.x, place.y, actor.container.x, actor.container.y) };
+      })
+      .filter((entry) => entry.distance <= entry.radius)
+      .sort((a, b) => a.distance - b.distance);
+    if (!towers.length) return;
+    const tower = towers[0].place;
+    actor.nextTowerShotAt = this.worldDangerClockMs + 2600;
+    const damage = 2 + Math.max(0, this.getPlaceLevel(tower) - 1);
+    this.damageMonster(actor, damage, null);
+  }
+
   updateWorldDanger(deltaMs) {
     if (this.simulationSpeed <= 0 || this.buildMode) return;
     const scaled = deltaMs * this.simulationSpeed;
     this.worldDangerClockMs += scaled;
+    this.defenceScanElapsedMs += scaled;
+    if (this.defenceScanElapsedMs >= 420) {
+      this.defenceScanElapsedMs = 0;
+      this.scanMonsterDetection();
+      this.releaseShelteredCivilians();
+      for (const actor of this.activeMonsterActors || []) this.applyWatchtowerAssistance(actor);
+    }
     const deltaSeconds = scaled / 1000;
     for (const actor of [...(this.activeMonsterActors || [])]) {
       if (!actor?.container?.active || [MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(actor.state)) continue;
@@ -11947,6 +12721,31 @@ export default class TownScene extends Phaser.Scene {
         hero.currentAction = 'Recovering after combat';
         this.scheduleAmbient(hero, Phaser.Math.Between(900, 2200));
       }
+    }
+    for (const guard of this.serviceWalkers || []) {
+      if (guard.combatTargetId !== actor.id) continue;
+      guard.combatTargetId = null;
+      guard.guardState = 'RETURNING_TO_POST';
+      guard.currentAction = 'Returning to patrol';
+      const home = this.doorById?.[guard.originId] || this.buildingById?.[guard.originId];
+      if (!home || !guard.container?.active) {
+        guard.guardState = 'IDLE';
+        continue;
+      }
+      this.walkTo(guard, {
+        id: guard.originId,
+        name: guard.originName || 'Guard Post',
+        x: home.x,
+        y: home.y,
+        h: 36,
+        intentAction: 'Returning to patrol',
+        reason: 'The immediate threat has ended.',
+        risk: 'Low',
+      }, () => {
+        if (!guard.container?.active) return;
+        guard.guardState = 'PATROLLING';
+        guard.currentAction = `Patrolling near ${guard.originName || 'post'}`;
+      });
     }
     if (this.activeInspector?.type === 'monster' && this.activeInspector.id === actor.id) {
       this.activeInspector = null;
@@ -12047,6 +12846,142 @@ export default class TownScene extends Phaser.Scene {
     return Phaser.Math.Clamp(chance, 0.02, this.resources.threat >= 90 ? 0.55 : 0.34);
   }
 
+  getDefenceCoverageAt(x, y) {
+    let coverage = 0;
+    const sources = Object.values(this.buildingById || {}).filter((place) => place?.isPlaced);
+    for (const place of sources) {
+      const baseId = getBaseBuildingId(place.baseId || place.id);
+      const ranges = { watchtower: 430, guard_post: 270, frontier_outpost: 330, scout_post: 370 };
+      if (!ranges[baseId]) continue;
+      const runtime = this.getBuildingRuntime(place.id);
+      if (runtime.closed) continue;
+      const damageFactor = runtime.heavilyDamaged ? 0.4 : runtime.damaged ? 0.68 : 1;
+      const range = (ranges[baseId] + Math.max(0, this.getPlaceLevel(place) - 1) * 45) * damageFactor;
+      const distance = Phaser.Math.Distance.Between(x, y, place.x, place.y);
+      if (distance <= range) coverage += (1 - distance / range) * (baseId === 'frontier_outpost' ? 3 : 2);
+    }
+    return Math.max(0, coverage);
+  }
+
+  updateLairPressureAndRaids() {
+    const activeMajorEmergency = (this.defenceState.activeRaids || []).some((raid) => raid.status === 'active');
+    for (const lair of Object.values(this.monsterLairs || {})) {
+      const point = this.explorationPointById?.[lair.poiId];
+      if (!point) continue;
+      if (lair.cleared) {
+        lair.pressure = 0;
+        lair.pressureState = 'cleared';
+        continue;
+      }
+      if (lair.suppressedUntilDay > this.day) {
+        lair.pressure = Math.max(0, (lair.pressure || 0) - 3);
+        lair.pressureState = 'suppressed';
+        continue;
+      }
+      const coverage = this.getDefenceCoverageAt(point.x, point.y);
+      const patrolSupport = Object.values(this.defenceState.patrolAssignments || {}).some((assignment) => assignment?.lairId === lair.id) ? 2.5 : 0;
+      const nearbyExpansion = (this.cityState?.placedBuildings || []).filter((building) => {
+        const place = this.buildingById?.[building.id];
+        return place && Phaser.Math.Distance.Between(place.x, place.y, point.x, point.y) < 520;
+      }).length;
+      const returned = (this.activeMonsterActors || []).filter((actor) => actor.homeLairId === lair.id && actor.state === MONSTER_STATES.RETURNING_TO_LAIR).length;
+      const increase = 1 + lair.level * 0.7 + Math.min(3, nearbyExpansion * 0.25) + Math.min(2, this.resources.corruption / 45) + returned * 1.5;
+      lair.pressure = Phaser.Math.Clamp((lair.pressure ?? lair.threatBudget ?? 0) + increase - coverage - patrolSupport, 0, 100);
+      const previous = lair.pressureState;
+      const state = getLairPressureState(lair, this.day);
+      lair.pressureState = state.id;
+      lair.threatBudget = Phaser.Math.Clamp(Math.max(lair.threatBudget || 0, lair.pressure * 0.7), 0, 100);
+      if (previous !== state.id && ['active', 'raiding'].includes(state.id)) {
+        const text = `${lair.name} is now ${state.name}. Pressure ${Math.round(lair.pressure)}/100.`;
+        this.addTownLog(text, 'monster');
+        this.addReportLine('warnings', text);
+        if (lair.discovered) this.createLairPressureAlert(lair, point);
+      }
+      const severeGrace = this.day - (this.defenceState.lastSevereIncidentDay || 0) <= DEFENCE_LIMITS.incidentGraceDays;
+      if (!activeMajorEmergency && !severeGrace && this.day > 2 && state.id === 'raiding' && (lair.raidCooldownUntilDay || 0) <= this.day) {
+        this.launchRaidFromLair(lair);
+      }
+    }
+    this.defenceState.activeRaids = (this.defenceState.activeRaids || [])
+      .filter((raid) => raid.status === 'active' && (this.activeMonsterActors || []).some((actor) => actor.raidId === raid.id && actor.container?.active))
+      .slice(-DEFENCE_LIMITS.maxActiveRaids);
+  }
+
+  createLairPressureAlert(lair, point) {
+    const actor = (this.activeMonsterActors || []).find((entry) => entry.homeLairId === lair.id && entry.container?.active);
+    this.defenceState.alerts = upsertAlert(this.defenceState.alerts, {
+      id: actor ? `alert-${actor.id}` : `alert-lair-${lair.id}`,
+      actorId: actor?.id || `lair:${lair.id}`,
+      lairId: lair.id,
+      level: 'pressure',
+      monsterName: actor?.monster.name || lair.type,
+      detectorName: lair.name,
+      detectorKind: 'lair',
+      x: point.x,
+      y: point.y,
+      targetName: 'Unknown',
+      nearestBuildingName: 'Frontier',
+      nearestDefenderName: 'Unassigned',
+      danger: estimateDangerLabel(lair.pressure),
+      detectedAtMs: this.worldDangerClockMs,
+      detectedDay: this.day,
+      updatedAtMs: this.worldDangerClockMs,
+    });
+    this.game.events.emit('gwg-event', `Lair Pressure Rising: ${lair.name}. ${actor ? `${actor.monster.name} is already active.` : 'No individual monster has signed the attack form yet.'}`);
+    this.updateTownNotice();
+  }
+
+  getRaidTarget(lair) {
+    const policy = DEFENCE_PRIORITIES[this.defenceState.priority] || DEFENCE_PRIORITIES.balanced;
+    const premiumIds = new Set(['whale', 'premium_temple', 'premium_fabricator', 'vip_lounge', 'lootbox_kiosk']);
+    const storageIds = new Set(['storehouse', 'warehouse', 'market', 'lumber_camp', 'mining_camp', 'salvage_camp']);
+    const candidates = Object.values(this.buildingById || {}).filter((place) => place?.isPlaced && getBuildingCatalogEntry(place.id));
+    return candidates.map((place) => {
+      const baseId = getBaseBuildingId(place.baseId || place.id);
+      const point = this.explorationPointById?.[lair.poiId];
+      const distance = point ? Phaser.Math.Distance.Between(point.x, point.y, place.x, place.y) : 0;
+      let score = 400 - distance / 4;
+      if (storageIds.has(baseId)) score += 45 - policy.storage * 0.2;
+      if (premiumIds.has(baseId)) score += 35 + (this.resources.corruption || 0) * 0.25 - policy.premium * 0.15;
+      if (['watchtower', 'guard_post'].includes(baseId)) score += 24;
+      return { place, score };
+    }).sort((a, b) => b.score - a.score)[0]?.place || this.getOperationalPlace('guildhall');
+  }
+
+  launchRaidFromLair(lair) {
+    if ((this.defenceState.activeRaids || []).length >= DEFENCE_LIMITS.maxActiveRaids) return false;
+    const target = this.getRaidTarget(lair);
+    if (!target) return false;
+    const raidId = `raid-${lair.id}-${this.day}-${Math.floor(Math.random() * 10000)}`;
+    const townScale = Math.max(1, Math.floor((this.cityState?.placedBuildings?.length || 1) / 10));
+    const size = Phaser.Math.Clamp(1 + Math.floor((lair.pressure - 70) / 18) + Math.min(1, townScale), 1, this.day < 15 ? 3 : 4);
+    const spawned = [];
+    for (let index = 0; index < size; index += 1) {
+      const actor = this.spawnMonsterFromLair(lair, true);
+      if (!actor) break;
+      actor.raidId = raidId;
+      actor.raidTargetRef = this.getMonsterTargetRef('building', target.id, target.name);
+      actor.targetRef = actor.raidTargetRef;
+      actor.target = target;
+      actor.moveTarget = target;
+      actor.intent = `Raiding ${target.name} from ${lair.name}.`;
+      spawned.push(actor.id);
+    }
+    if (!spawned.length) return false;
+    const raid = { id: raidId, lairId: lair.id, targetId: target.id, targetName: target.name, monsterIds: spawned, startedDay: this.day, status: 'active' };
+    this.defenceState.activeRaids = [...(this.defenceState.activeRaids || []), raid].slice(-DEFENCE_LIMITS.maxActiveRaids);
+    this.defenceState.summarizedIncidents.raids += 1;
+    this.defenceState.lastSevereIncidentDay = this.day;
+    lair.lastRaidDay = this.day;
+    lair.raidCooldownUntilDay = this.day + Phaser.Math.Between(4, 6);
+    lair.recentAttacks = [...(lair.recentAttacks || []), `Day ${this.day}: raid targeting ${target.name}`].slice(-8);
+    const text = `${lair.name} launched a visible raid on ${target.name}: ${spawned.length} attacker${spawned.length === 1 ? '' : 's'} departed on foot.`;
+    this.addTownLog(text, 'crisis');
+    this.addReportLine('monsters', text);
+    this.game.events.emit('gwg-event', text);
+    return true;
+  }
+
   maybeTriggerMonsterAttack(force = false) {
     const chance = this.getMonsterAttackChance();
     if (!force && Math.random() > chance) return false;
@@ -12105,6 +13040,8 @@ export default class TownScene extends Phaser.Scene {
     lair.activeMonsterIds = [...new Set([...(lair.activeMonsterIds || []), actor.id])].slice(-lair.activeMonsterCap);
     lair.nextSpawnDay = this.day + getSpawnIntervalDays(lair);
     lair.threatBudget = Phaser.Math.Clamp((lair.threatBudget || 0) + 2 + lair.level, 0, 100);
+    lair.pressure = Phaser.Math.Clamp((lair.pressure ?? lair.threatBudget) + 2 + lair.level, 0, 100);
+    lair.pressureState = getLairPressureState(lair, this.day).id;
     this.stats.monsterAttacks = (this.stats.monsterAttacks || 0) + 1;
     this.monsterState.lastAttackDay = this.day;
     this.monsterState.weekAttackCount = (this.monsterState.weekAttackCount || 0) + 1;
@@ -15345,6 +16282,7 @@ export default class TownScene extends Phaser.Scene {
         this.game.events.emit('gwg-event', 'A hero retired to become a tutorial warning.');
       }
       this.applyPendingPolicyNeglect();
+      this.updateLairPressureAndRaids();
       const forceAttack = R.threat >= 92 && this.day - (this.monsterState?.lastAttackDay || 0) > 1;
       const monsterAttackHappened = this.maybeTriggerMonsterAttack(forceAttack);
       if (monsterAttackHappened && R.threat >= 80) {

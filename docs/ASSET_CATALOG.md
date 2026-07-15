@@ -308,6 +308,9 @@ panel skinning.
 - **Future support building slots** (`public/assets/buildings/`):
   `building_scout_post`, `building_guard_post`, `building_loot_warehouse`,
   `building_quest_office`, `building_monster_warning_bell`.
+- `building_guard_post` is now an active repeatable Defense / Patrols catalog
+  entry. Existing manifest resolution and static fallback art remain in place;
+  this pass generated no new assets.
 - **UI icon slots** (`public/assets/icons/`): `icon_policy`,
   `icon_week_report`, `icon_monster_alert`, `icon_explore`, `icon_loot`,
   `icon_corpse`, `icon_danger`, `icon_fog`.

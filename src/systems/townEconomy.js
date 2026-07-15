@@ -109,6 +109,15 @@ export const SERVICE_WALKERS = {
     rangeTiles: 13,
     flavor: 'patrolling for unlicensed danger',
   },
+  guard_post: {
+    id: 'guard_patrol',
+    name: 'Guard Patrol',
+    assetKey: 'worker_guard_patrol',
+    fallbackKey: 'hero_veteran',
+    tint: 0xb8c4d8,
+    rangeTiles: 10,
+    flavor: 'holding a local response route',
+  },
   potion_shop: {
     id: 'potion_seller',
     name: 'Potion Seller',

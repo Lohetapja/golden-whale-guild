@@ -673,3 +673,34 @@ poison/slime ground effects, and a separate civilian population.
 
 Still planned: dedicated art for every remains family, worker/guard cleanup
 assignments, and terrain-cost routing for dedicated repair crews.
+
+## Proactive Town Defence (implemented 2026-07)
+
+- Detection is positional and fog-aware. Civilians, workers, heroes, guards,
+  Watchtowers, Guard Posts, Frontier Outposts, and Scout Posts have distinct
+  sight ranges, reaction delays, reliability, and alert cooldowns. Damaged
+  Watchtowers lose detection and assistance range.
+- Threat alerts are compact, non-blocking, deduplicated per hostile actor, and
+  escalate from sighting to active attack/building danger. Actions focus the
+  camera or dispatch heroes and guards without pausing the simulation.
+- Civilians and service workers flee to nearby shelters, spread across safe
+  destinations, and return gradually. Carriers can drop recoverable cargo;
+  escorts reduce that risk.
+- Guard Posts are repeatable defense buildings. Their visible guards patrol,
+  investigate, intercept within a leash, fight, and return to post. Watchtowers
+  provide early warning and light ranged assistance inside coverage.
+- Town defence priorities weight automatic responses toward civilians,
+  storage, premium property, aggressive pursuit, held positions, or a balanced
+  default. The setting lives in the existing Policy panel.
+- Lairs progress through Dormant, Stirring, Active, Raiding, Suppressed, and
+  Cleared pressure states. Scouting reveals estimates; patrols and map-level
+  suppression/clearing operations use existing hero travel and combat.
+- High-pressure lairs launch capped visible raids from the source to a chosen
+  target. Incident, per-lair, raid, and severe-attack cooldowns prevent combat
+  from becoming constant harassment.
+- Recent attack history is capped and shared by threat, lair, building, hero,
+  and weekly-report views. Save version 14 persists durable alert, patrol,
+  raid, pressure, policy, and summary state while rebuilding transient paths.
+
+Still planned: editable multi-point patrol routes, a dedicated guard roster,
+terrain line-of-sight occlusion, and multi-hero formation controls.

@@ -22,6 +22,7 @@ globalThis.localStorage = storage;
 const sm = await import('../src/systems/saveManager.js');
 const mig = await import('../src/systems/saveMigrations.js');
 const aftermath = await import('../src/systems/aftermath.js');
+const defence = await import('../src/systems/townDefense.js');
 
 // --- tiny assert harness ----------------------------------------------------
 let passed = 0;
@@ -124,6 +125,14 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
     && Array.isArray(r.data.monsterState.aftermathQuests));
 }
 {
+  const r = mig.migrateAndValidate({ saveVersion: 13, monsterState: { defence: null } });
+  check('v13 defence defaults added',
+    r.data.saveVersion === mig.SAVE_VERSION
+    && r.data.monsterState.defence.priority === 'balanced'
+    && Array.isArray(r.data.monsterState.defence.alerts)
+    && Array.isArray(r.data.monsterState.defence.activeRaids));
+}
+{
   const r = mig.migrateAndValidate(FIXTURES.futureVersion);
   check('future version not downgraded', r.data.saveVersion === 99);
   check('unknown future field preserved', r.data.unknownFutureField && r.data.unknownFutureField.keep === true);
@@ -147,6 +156,15 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
   check('aftermath eventually expires', aftermath.getDecayState(record, 8).expired === true);
   const premiumLoot = aftermath.rollMonsterLoot({ id: 'premium_goblin', threat: 4, reward: 40 }, 2, 0, () => 0.5);
   check('premium monster loot remains typed', premiumLoot.premiumSalvage >= 1 && premiumLoot.gold > 0);
+}
+{
+  const state = defence.normalizeDefenceState({ priority: 'invalid', alerts: null, activeRaids: 'raid' });
+  check('defence state repairs malformed containers', state.priority === 'balanced' && Array.isArray(state.alerts) && Array.isArray(state.activeRaids));
+  const alerts = defence.upsertAlert([], { actorId: 'm1', level: 'sighting', detectedDay: 2 });
+  const escalated = defence.upsertAlert(alerts, { actorId: 'm1', level: 'building', detectedDay: 2 });
+  check('defence alerts deduplicate and escalate', escalated.length === 1 && escalated[0].level === 'building');
+  check('lair pressure exposes raiding state', defence.getLairPressureState({ pressure: 82 }, 5).id === 'raiding');
+  check('suppression overrides lair pressure', defence.getLairPressureState({ pressure: 82, suppressedUntilDay: 8 }, 5).id === 'suppressed');
 }
 
 // --- 3. corrupted JSON opens the failure path -------------------------------
