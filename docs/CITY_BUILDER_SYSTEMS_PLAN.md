@@ -653,3 +653,23 @@ pass once local browser access is available.
 
 Still planned: terrain-cost pathfinding, multi-hero expedition composition,
 poison/slime ground effects, and a separate civilian population.
+
+## Persistent Attack Aftermath (implemented 2026-07)
+
+- Monsters enter a visible dying state before becoming typed remains and a
+  separate loot object. Goblins, skeletons, slimes, beasts, humanoids,
+  premium creatures, and large monsters have distinct decay/evidence rules.
+- Loot has explicit contents and claim ownership. Heroes physically travel to
+  collect it; full storage leaves leftovers on the map instead of deleting
+  value. Greedy and premium-exposed heroes compete more aggressively.
+- Remains expose Inspect, Loot, Burn, Bury, Follow Tracks, Mark Dangerous, and
+  Leave actions. Evidence can reveal a source lair; cleanup and recovery create
+  small event-driven world tasks rather than blocking the quest board.
+- Ignored toxic/corrupt remains worsen local conditions as they decay. Global
+  and per-area caps bound rendering and save growth; graves last longer.
+- Building attacks retain attacker history. Damage reduces capacity and service
+  quality, while repairs consume materials and require a hero to travel to the
+  building and perform the work.
+
+Still planned: dedicated art for every remains family, worker/guard cleanup
+assignments, and terrain-cost routing for dedicated repair crews.

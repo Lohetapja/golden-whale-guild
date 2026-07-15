@@ -381,3 +381,15 @@ No new PixelLab generations were needed. Persistent danger reuses the existing
 icons, workers, guards, and hero animation fallbacks. Health bars, selection
 feedback, graves, and building damage markers are runtime overlays; all static
 art remains replaceable through `assetManifest`.
+
+## 2026-07 Persistent Aftermath Asset Use
+
+No new PixelLab jobs were used. The checked-in `loot_bag_small` is used
+directly. Missing dedicated goblin, skeleton, slime, and premium remains art
+continues through manifest-safe substitutions (`poi_skeleton_ruins`, terrain
+decals, premium wreckage, contract piles, and existing coin/loot props).
+These substitutions are explicitly fallback/debug art, not final assets.
+
+Runtime ownership now separates monster actor, dying transition, remains,
+loot, grave, evidence, and building damage overlays. This lets each object
+decay, move, clear, save, and receive click priority independently.

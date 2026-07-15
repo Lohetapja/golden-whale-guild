@@ -9,6 +9,7 @@ export const MONSTER_STATES = Object.freeze({
   FLEEING: 'FLEEING',
   RETURNING_TO_LAIR: 'RETURNING_TO_LAIR',
   INJURED: 'INJURED',
+  DYING: 'DYING',
   DEAD: 'DEAD',
 });
 

@@ -150,3 +150,6 @@ works because it's fake.
   inferred when a monster enters revealed land, then located by scouting.
 - Death locations and attack history feed area reputation, making unsafe
   routes a lasting planning problem rather than a single log line.
+- Attack aftermath persists as evidence, loot, cleanup pressure, and small
+  recovery tasks. This borrows the readable battlefield consequence of an RTS
+  without turning the management game into a combat micromanagement screen.

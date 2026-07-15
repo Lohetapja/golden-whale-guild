@@ -21,6 +21,7 @@ globalThis.localStorage = storage;
 
 const sm = await import('../src/systems/saveManager.js');
 const mig = await import('../src/systems/saveMigrations.js');
+const aftermath = await import('../src/systems/aftermath.js');
 
 // --- tiny assert harness ----------------------------------------------------
 let passed = 0;
@@ -116,6 +117,13 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
   check('v11 hero health defaults added', r.data.heroStats.mira.health === 100 && r.data.heroStats.mira.maxHealth === 100);
 }
 {
+  const r = mig.migrateAndValidate({ saveVersion: 12, monsterState: { aftermathDrops: null, aftermathQuests: 'pending' } });
+  check('v12 aftermath defaults added',
+    r.data.saveVersion === mig.SAVE_VERSION
+    && Array.isArray(r.data.monsterState.aftermathDrops)
+    && Array.isArray(r.data.monsterState.aftermathQuests));
+}
+{
   const r = mig.migrateAndValidate(FIXTURES.futureVersion);
   check('future version not downgraded', r.data.saveVersion === 99);
   check('unknown future field preserved', r.data.unknownFutureField && r.data.unknownFutureField.keep === true);
@@ -123,6 +131,22 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
 {
   const r = mig.migrateAndValidate(FIXTURES.legacyV1);
   check('legacy v1 stamped to current version', r.data.saveVersion === mig.SAVE_VERSION);
+}
+
+// --- aftermath records remain deterministic and migration-safe -------------
+{
+  const record = aftermath.normalizeAftermathRecord({
+    id: 'old-corpse',
+    kind: 'corpse',
+    createdDay: 3,
+    expiresDay: 8,
+    gold: 12,
+  }, 5);
+  check('legacy corpse normalizes to typed remains', record.kind === 'remains' && record.lootContents.gold === 12);
+  check('aftermath fresh state', aftermath.getDecayState(record, 3).state === 'fresh');
+  check('aftermath eventually expires', aftermath.getDecayState(record, 8).expired === true);
+  const premiumLoot = aftermath.rollMonsterLoot({ id: 'premium_goblin', threat: 4, reward: 40 }, 2, 0, () => 0.5);
+  check('premium monster loot remains typed', premiumLoot.premiumSalvage >= 1 && premiumLoot.gold > 0);
 }
 
 // --- 3. corrupted JSON opens the failure path -------------------------------

@@ -129,6 +129,15 @@ import {
   WORLD_DANGER_LIMITS,
 } from '../systems/worldDanger.js';
 import {
+  AFTERMATH_LIMITS,
+  formatLootContents,
+  getAftermathFlavor,
+  getDecayState,
+  getRemainsProfile,
+  normalizeAftermathRecord,
+  rollMonsterLoot,
+} from '../systems/aftermath.js';
+import {
   applyImportedSave,
   buildExportBundle,
   createBackup,
@@ -798,7 +807,10 @@ export default class TownScene extends Phaser.Scene {
       activeAttacks: Array.isArray(saved?.monsterState?.activeAttacks)
         ? saved.monsterState.activeAttacks.slice(0, WORLD_DANGER_LIMITS.maxActiveMonsters)
         : [],
-      aftermathDrops: Array.isArray(saved?.monsterState?.aftermathDrops) ? saved.monsterState.aftermathDrops.slice(0, 16) : [],
+      aftermathDrops: Array.isArray(saved?.monsterState?.aftermathDrops)
+        ? saved.monsterState.aftermathDrops.slice(-(AFTERMATH_LIMITS.maxRemains + AFTERMATH_LIMITS.maxLoot))
+        : [],
+      aftermathQuests: Array.isArray(saved?.monsterState?.aftermathQuests) ? saved.monsterState.aftermathQuests.slice(-24) : [],
       lairs: saved?.monsterState?.lairs && typeof saved.monsterState.lairs === 'object'
         ? structuredClone(saved.monsterState.lairs)
         : {},
@@ -843,6 +855,7 @@ export default class TownScene extends Phaser.Scene {
     this.worldDangerClockMs = 0;
     this.worldDangerAiElapsedMs = 0;
     this.aftermathDrops = this.normalizeAftermathDrops(this.monsterState.aftermathDrops);
+    this.aftermathQuests = this.normalizeAftermathQuests(this.monsterState.aftermathQuests);
     this.autonomousExplorerLimit = 2;
     this.tutorial = {
       step: Number(saved?.tutorial?.step) || 0,
@@ -982,6 +995,7 @@ export default class TownScene extends Phaser.Scene {
     this.game.events.on('gwg-delete-building', this.deleteBuildingFromUi, this);
     this.game.events.on('gwg-open-report', this.showCycleReport, this);
     this.game.events.on('gwg-collect-loot', this.collectLootDrop, this);
+    this.game.events.on('gwg-aftermath-action', this.runAftermathActionFromUi, this);
     this.game.events.on('gwg-monster-action', this.runMonsterActionFromUi, this);
     this.game.events.on('gwg-lair-action', this.runLairActionFromUi, this);
     this.game.events.on('gwg-open-delete', this.openDeleteTool, this);
@@ -1057,6 +1071,7 @@ export default class TownScene extends Phaser.Scene {
       this.game.events.off('gwg-delete-building', this.deleteBuildingFromUi, this);
       this.game.events.off('gwg-open-report', this.showCycleReport, this);
       this.game.events.off('gwg-collect-loot', this.collectLootDrop, this);
+      this.game.events.off('gwg-aftermath-action', this.runAftermathActionFromUi, this);
       this.game.events.off('gwg-monster-action', this.runMonsterActionFromUi, this);
       this.game.events.off('gwg-lair-action', this.runLairActionFromUi, this);
       this.game.events.off('gwg-open-delete', this.openDeleteTool, this);
@@ -1490,7 +1505,10 @@ export default class TownScene extends Phaser.Scene {
       health: 100 + Math.max(0, level - 1) * 20,
       maxHealth: 100 + Math.max(0, level - 1) * 20,
       damaged: false,
+      heavilyDamaged: false,
       repairCost: 0,
+      attackerHistory: [],
+      repairAssignment: null,
     };
     this.cityState.buildingRuntime[id] = {
       ...defaults,
@@ -1509,7 +1527,12 @@ export default class TownScene extends Phaser.Scene {
         Number.isFinite(Number(savedRuntime.health)) ? Number(savedRuntime.health) : defaults.health,
       )),
       damaged: Boolean(savedRuntime.damaged),
+      heavilyDamaged: Boolean(savedRuntime.heavilyDamaged),
       repairCost: Math.max(0, Number(savedRuntime.repairCost) || 0),
+      attackerHistory: Array.isArray(savedRuntime.attackerHistory) ? savedRuntime.attackerHistory.slice(-8) : [],
+      repairAssignment: savedRuntime.repairAssignment && typeof savedRuntime.repairAssignment === 'object'
+        ? { ...savedRuntime.repairAssignment }
+        : null,
       storage: {
         mode: savedRuntime.storage?.mode === 'restricted' ? 'restricted' : 'all',
         resource: STORED_RESOURCES.includes(savedRuntime.storage?.resource) ? savedRuntime.storage.resource : null,
@@ -1534,14 +1557,16 @@ export default class TownScene extends Phaser.Scene {
     if (!place?.id || !getBuildingCatalogEntry(place.id)) return 0;
     const runtime = this.getBuildingRuntime(place.id);
     const spec = this.getBuildingSpecializationEffects(place.id);
-    return Math.max(0, (Number(runtime.capacity) || 0) + (Number(spec.capacityBonus) || 0));
+    const damageFactor = runtime.heavilyDamaged ? 0.45 : runtime.damaged ? 0.75 : 1;
+    return Math.max(0, Math.floor(((Number(runtime.capacity) || 0) + (Number(spec.capacityBonus) || 0)) * damageFactor));
   }
 
   getBuildingServiceQuality(place) {
     if (!place?.id || !getBuildingCatalogEntry(place.id)) return 0;
     const runtime = this.getBuildingRuntime(place.id);
     const spec = this.getBuildingSpecializationEffects(place.id);
-    return Math.max(0, (Number(runtime.serviceQuality) || 0) + (Number(spec.serviceQualityBonus) || 0));
+    const damagePenalty = runtime.heavilyDamaged ? 2 : runtime.damaged ? 1 : 0;
+    return Math.max(0, (Number(runtime.serviceQuality) || 0) + (Number(spec.serviceQualityBonus) || 0) - damagePenalty);
   }
 
   getBuildingUpkeep(place) {
@@ -2022,6 +2047,7 @@ export default class TownScene extends Phaser.Scene {
         weekAttackCount: Number(this.monsterState?.weekAttackCount) || 0,
         activeAttacks: this.serializeMonsterActors(),
         aftermathDrops: this.serializeAftermathDrops(),
+        aftermathQuests: this.aftermathQuests.slice(-24).map((quest) => ({ ...quest })),
         lairs: structuredClone(this.monsterLairs || {}),
         attackHistory: (this.monsterState?.attackHistory || []).slice(-WORLD_DANGER_LIMITS.attackHistoryLimit),
       },
@@ -7607,6 +7633,8 @@ export default class TownScene extends Phaser.Scene {
             info.effect ? `Effect: ${info.effect}` : 'Effect: decorative morale hazard.',
             ...(runtime ? [
               `Structure health: ${Math.ceil(runtime.health)}/${runtime.maxHealth}${runtime.damaged ? ' - DAMAGED' : ''}`,
+              ...(runtime.repairAssignment?.status === 'working' ? [`Repair crew: ${runtime.repairAssignment.heroName} is en route or working.`] : []),
+              ...(runtime.attackerHistory?.length ? [`Last attacker: ${runtime.attackerHistory.at(-1).monsterName} on Day ${runtime.attackerHistory.at(-1).day} (${runtime.attackerHistory.at(-1).damage} damage)`] : []),
               `Use: ${runtime.usageCount} visits - growth ${Math.floor(runtime.upgradeProgress || 0)}%`,
               `Capacity: ${metrics.load}/${metrics.capacity} ${role?.capacityLabel || 'slots'} - quality ${metrics.quality}`,
               `Service range: ${Math.round(metrics.serviceRange / GRID_CONFIG.tileSize)} tiles - ${metrics.localHeroes} nearby hero${metrics.localHeroes === 1 ? '' : 'es'}`,
@@ -8141,21 +8169,64 @@ export default class TownScene extends Phaser.Scene {
     if (!place?.isPlaced) return;
     const runtime = this.getBuildingRuntime(id);
     if (runtime.health >= runtime.maxHealth && !runtime.damaged) return;
+    if (runtime.repairAssignment?.status === 'working') {
+      this.game.events.emit('gwg-event', `${place.name} already has a repair crew. Two heroes holding the same hammer did not improve throughput.`);
+      return;
+    }
     const cost = Math.max(1, runtime.repairCost || Math.ceil((runtime.maxHealth - runtime.health) * 0.65));
     if (this.resources.gold < cost) {
       this.game.events.emit('gwg-event', `${place.name} needs ${cost}g in repairs. Structural optimism is not legal tender.`);
       return;
     }
+    const hero = this.getActiveHeroes()
+      .filter((candidate) => candidate.state !== 'away' && candidate.state !== 'fighting' && !this.isHeroInjured(candidate))
+      .sort((a, b) => Phaser.Math.Distance.Between(a.container.x, a.container.y, place.x, place.y)
+        - Phaser.Math.Distance.Between(b.container.x, b.container.y, place.x, place.y))[0];
+    if (!hero) {
+      this.game.events.emit('gwg-event', `${place.name} needs a repair crew. Every available hero is currently monetizing a different emergency.`);
+      return;
+    }
+    const woodCost = runtime.heavilyDamaged ? 2 : 1;
+    const ironCost = runtime.heavilyDamaged ? 1 : 0;
+    if ((this.townInventory.wood || 0) < woodCost || (this.townInventory.iron || 0) < ironCost) {
+      this.game.events.emit('gwg-event', `${place.name} repair needs ${woodCost} wood${ironCost ? ` and ${ironCost} iron` : ''}. Structural optimism remains non-load-bearing.`);
+      return;
+    }
     this.applyDeltas({ gold: -cost });
-    runtime.health = runtime.maxHealth;
-    runtime.damaged = false;
-    runtime.repairCost = 0;
-    runtime.closed = false;
-    runtime.serviceQuality = Math.max(runtime.serviceQuality || 1, this.getPlaceLevel(place));
-    this.refreshBuildingDamageVisual(place);
-    const text = `${place.name} was repaired for ${cost}g. The walls have resumed pretending to be permanent.`;
-    this.addTownLog(text, 'economy');
-    this.game.events.emit('gwg-event', text);
+    this.townInventory.wood -= woodCost;
+    this.townInventory.iron -= ironCost;
+    runtime.repairAssignment = { heroId: hero.def.id, heroName: hero.def.name, status: 'working', startedDay: this.day };
+    this.addTownLog(`${hero.def.name} was assigned to repair ${place.name}. The invoice arrived before the hammer.`, 'economy');
+    this.walkTo(hero, {
+      ...place,
+      intentAction: `Repairing ${place.name}`,
+      reason: 'Monster damage reduced local capacity and service quality.',
+      risk: 'Low',
+    }, () => {
+      if (!place.isPlaced || runtime.repairAssignment?.heroId !== hero.def.id) return;
+      hero.state = 'interacting';
+      hero.currentAction = `Repairing ${place.name}`;
+      this.setHeroAnimationState(hero, 'interact');
+      this.time.delayedCall(1200, () => {
+        if (!place.isPlaced || runtime.repairAssignment?.heroId !== hero.def.id) return;
+        runtime.health = runtime.maxHealth;
+        runtime.damaged = false;
+        runtime.heavilyDamaged = false;
+        runtime.repairCost = 0;
+        runtime.closed = false;
+        runtime.repairAssignment = null;
+        runtime.serviceQuality = Math.max(runtime.serviceQuality || 1, this.getPlaceLevel(place));
+        this.refreshBuildingDamageVisual(place);
+        hero.state = 'idle';
+        hero.currentAction = 'Finished repairs';
+        this.setHeroAnimationState(hero, 'happy');
+        const text = `${hero.def.name} repaired ${place.name} for ${cost}g, ${woodCost} wood${ironCost ? `, and ${ironCost} iron` : ''}. The walls resumed pretending to be permanent.`;
+        this.addTownLog(text, 'economy');
+        this.game.events.emit('gwg-event', text);
+        this.saveGame(false);
+        this.showPlaceInspector(place);
+      });
+    });
     this.saveGame(false);
     this.showPlaceInspector(place);
   }
@@ -10386,60 +10457,71 @@ export default class TownScene extends Phaser.Scene {
   }
 
   normalizeAftermathDrops(drops = []) {
-    return (Array.isArray(drops) ? drops : [])
+    const normalized = (Array.isArray(drops) ? drops : [])
       .filter((drop) => drop?.id && Number.isFinite(Number(drop.x)) && Number.isFinite(Number(drop.y)))
-      .map((drop) => ({
-        id: String(drop.id),
-        kind: drop.kind || 'loot',
-        name: drop.name || 'Monster Drop',
-        assetKey: drop.assetKey || 'loot_bag_small',
-        fallbackKey: drop.fallbackKey || 'object_coin_pile',
+      .map((drop) => normalizeAftermathRecord({
+        ...drop,
         x: Number(drop.x),
         y: Number(drop.y),
         gridX: Number.isInteger(drop.gridX) ? drop.gridX : null,
         gridY: Number.isInteger(drop.gridY) ? drop.gridY : null,
-        gold: Math.max(0, Number(drop.gold) || 0),
-        monsterName: drop.monsterName || 'Monster',
+        name: drop.name || 'Monster Aftermath',
+        assetKey: drop.assetKey || 'loot_bag_small',
+        fallbackKey: drop.fallbackKey || 'object_coin_pile',
         heroName: drop.heroName || null,
         role: drop.role || null,
-        killer: drop.killer || null,
         epitaph: drop.epitaph || null,
         areaId: drop.areaId || null,
-        createdDay: Number(drop.createdDay) || this.day,
-        expiresDay: Number(drop.expiresDay) || this.day + 4,
-        collected: Boolean(drop.collected),
-      }))
-      .filter((drop) => !drop.collected && drop.expiresDay >= this.day - 1)
-      .slice(-16);
+      }, this.day))
+      .filter((drop) => !drop.cleared && getDecayState(drop, this.day).id !== 'gone');
+    const graves = normalized.filter((drop) => drop.kind === 'grave');
+    const remains = normalized.filter((drop) => drop.kind === 'remains').slice(-AFTERMATH_LIMITS.maxRemains);
+    const loot = normalized.filter((drop) => drop.kind === 'loot').slice(-AFTERMATH_LIMITS.maxLoot);
+    return [...graves, ...remains, ...loot].slice(-(AFTERMATH_LIMITS.maxRemains + AFTERMATH_LIMITS.maxLoot + 16));
   }
 
   serializeAftermathDrops() {
     return this.normalizeAftermathDrops(this.aftermathDrops).map((drop) => ({
-      id: drop.id,
-      kind: drop.kind,
-      name: drop.name,
-      assetKey: drop.assetKey,
-      fallbackKey: drop.fallbackKey,
+      ...drop,
       x: Math.round(drop.x),
       y: Math.round(drop.y),
-      gridX: drop.gridX,
-      gridY: drop.gridY,
-      gold: drop.gold,
-      monsterName: drop.monsterName,
-      heroName: drop.heroName,
-      role: drop.role,
-      killer: drop.killer,
-      epitaph: drop.epitaph,
-      areaId: drop.areaId,
-      createdDay: drop.createdDay,
-      expiresDay: drop.expiresDay,
-      collected: drop.collected,
     }));
+  }
+
+  normalizeAftermathQuests(quests = []) {
+    return (Array.isArray(quests) ? quests : [])
+      .filter((quest) => quest?.id && quest?.targetId)
+      .map((quest) => ({ ...quest, status: quest.status === 'complete' ? 'complete' : 'active' }))
+      .slice(-24);
+  }
+
+  createAftermathQuest(target, type, text) {
+    if (!target || this.aftermathQuests.some((quest) => quest.targetId === target.id && quest.status === 'active')) return null;
+    const quest = {
+      id: `aftermath-quest-${target.id}`,
+      targetId: target.id,
+      type,
+      title: text,
+      createdDay: this.day,
+      status: 'active',
+    };
+    this.aftermathQuests.push(quest);
+    target.relatedQuestId = quest.id;
+    this.addTownLog(`World task: ${text}`, 'quest');
+    return quest;
+  }
+
+  completeAftermathQuest(targetId, reason) {
+    const quest = this.aftermathQuests.find((entry) => entry.targetId === targetId && entry.status === 'active');
+    if (!quest) return;
+    quest.status = 'complete';
+    quest.completedDay = this.day;
+    this.addTownLog(`World task complete: ${quest.title}. ${reason}`, 'quest');
   }
 
   serializeMonsterActors() {
     return (this.activeMonsterActors || [])
-      .filter((actor) => actor?.container?.active)
+      .filter((actor) => actor?.container?.active && actor.state !== MONSTER_STATES.DYING && actor.state !== MONSTER_STATES.DEAD)
       .slice(0, WORLD_DANGER_LIMITS.maxActiveMonsters)
       .map((actor) => ({
         id: actor.id,
@@ -10498,8 +10580,8 @@ export default class TownScene extends Phaser.Scene {
     const container = this.add.container(drop.x, drop.y).setDepth(drop.y + 64);
     const shadow = this.add.ellipse(0, -4, 34, 9, 0x10151d, 0.22);
     const sprite = this.add.image(0, -8, textureKey).setOrigin(0.5, 1).setScale(scale);
-    const isRemains = drop.kind === 'corpse' || drop.kind === 'grave';
-    const label = this.add.text(0, -44, drop.kind === 'grave' ? drop.heroName || 'Grave' : drop.kind === 'corpse' ? 'Remains' : `${drop.gold}g`, {
+    const isRemains = drop.kind === 'remains' || drop.kind === 'grave';
+    const label = this.add.text(0, -44, drop.kind === 'grave' ? drop.heroName || 'Grave' : drop.kind === 'remains' ? drop.name : 'Loot', {
       fontFamily: '"Courier New", monospace',
       fontSize: '9px',
       fontStyle: 'bold',
@@ -10508,7 +10590,7 @@ export default class TownScene extends Phaser.Scene {
       strokeThickness: 2,
       backgroundColor: '#0f1521aa',
       padding: { x: 3, y: 1 },
-    }).setOrigin(0.5, 1).setAlpha(0.86);
+    }).setOrigin(0.5, 1).setAlpha(0);
     container.add([shadow, sprite, label]);
     container.setSize(54, 54);
     container.setInteractive(new Phaser.Geom.Rectangle(-27, -54, 54, 54), Phaser.Geom.Rectangle.Contains);
@@ -10518,15 +10600,15 @@ export default class TownScene extends Phaser.Scene {
     });
     const target = {
       id: drop.id,
-      type: 'loot',
+      type: 'aftermath',
       hit: container,
       img: container,
       width: 54,
       height: 54,
       loot: drop,
       getCenter: () => ({ x: container.x, y: container.y - 28 }),
-      onHoverIn: () => sprite.setTint(0xfff3c0),
-      onHoverOut: () => sprite.clearTint?.(),
+      onHoverIn: () => { sprite.setTint(0xfff3c0); label.setAlpha(0.9); },
+      onHoverOut: () => { sprite.clearTint?.(); if (this.activeInspector?.id !== drop.id) label.setAlpha(0); },
       onSelect: () => this.showLootInspector(drop),
     };
     this.registerWorldInteractionTarget(target);
@@ -10542,92 +10624,233 @@ export default class TownScene extends Phaser.Scene {
       const bundle = this.aftermathDropObjectsById[drop.id];
       if (!bundle?.container) continue;
       const alpha = this.getVisibleDropAlpha(drop);
+      const decayAlpha = getDecayState(drop, this.day).alpha;
       bundle.container.setVisible(alpha > 0);
-      bundle.container.setAlpha(alpha);
+      bundle.container.setAlpha(alpha * decayAlpha);
     }
   }
 
   showLootInspector(drop) {
-    if (!drop || drop.collected) return;
-    this.activeInspector = { type: 'loot', id: drop.id };
+    if (!drop || drop.cleared) return;
+    const isRemains = drop.kind === 'remains' || drop.kind === 'grave';
+    const decay = getDecayState(drop, this.day);
+    const lair = drop.homeLairId ? this.monsterLairs?.[drop.homeLairId] : null;
+    const claim = drop.claimedByHeroName || (drop.claimedByHeroId ? this.heroes.find((hero) => hero.def.id === drop.claimedByHeroId)?.def.name : null);
+    const localDanger = this.getAreaReputation(drop.areaId || 'frontier');
+    this.activeInspector = { type: 'aftermath', id: drop.id };
+    this.aftermathDropObjectsById?.[drop.id]?.label?.setAlpha(0.9);
     this.game.events.emit('gwg-inspector-open', {
-      panelType: 'loot',
+      panelType: 'aftermath',
       title: drop.name,
-      subtitle: `${drop.monsterName} aftermath`,
+      subtitle: drop.kind === 'grave' ? `${drop.role || 'Town worker'} memorial` : `${drop.monsterName} aftermath - ${decay.label}`,
       sections: [
         {
-          title: drop.kind === 'grave' ? 'Memorial' : drop.kind === 'corpse' ? 'Remains' : 'Loot',
+          title: drop.kind === 'grave' ? 'Memorial' : drop.kind === 'remains' ? 'Remains' : 'Loose Loot',
           lines: [
             drop.kind === 'grave'
-              ? `${drop.heroName || 'An unnamed worker'} (${drop.role || 'Town worker'}) died here on Day ${drop.createdDay}.`
-              : drop.kind === 'corpse'
-              ? 'Evidence that the town briefly defended itself.'
-              : `${drop.gold} gold is lying here with questionable legal ownership.`,
+              ? `${drop.heroName || 'An unnamed worker'} died here on Day ${drop.deathDay}.`
+              : `${drop.monsterName} died here on Day ${drop.deathDay}.`,
+            `Killed by: ${drop.killerName || drop.killer || 'unknown'} | Cause: ${drop.causeOfDeath}`,
+            `Age: ${decay.age} day${decay.age === 1 ? '' : 's'} | ${decay.remaining > 0 ? `${decay.remaining} until decay` : 'decayed'}`,
+            `Remaining loot: ${formatLootContents(drop.lootContents)}`,
+            `Claimed by: ${claim || 'Nobody'}`,
             drop.kind === 'grave'
-              ? `Killed by ${drop.killer || drop.monsterName}. ${drop.epitaph || 'The paperwork survived.'}`
-              : drop.kind === 'corpse'
-              ? 'Remains fade after a few days.'
-              : 'Heroes may grab it, or the player can collect it before the economy forms opinions.',
-            ...(drop.kind === 'grave' && drop.areaId ? [`Area danger reputation: ${this.getAreaReputation(drop.areaId)}/100.`] : []),
+              ? drop.epitaph || 'The paperwork survived.'
+              : drop.flavour || 'Loot rights remain disputed by everyone who arrived after the fighting stopped.',
+            `Danger effect: +${drop.dangerEffect || 0} | Corruption: +${drop.corruptionEffect || 0}`,
+            `Tracking evidence: ${drop.evidenceState === 'resolved' ? 'resolved' : drop.evidenceValue > 0 ? `${drop.evidenceValue}/5` : 'none'}`,
+            `Home lair: ${lair?.discovered ? lair.name : lair ? 'Unknown source; tracks may help' : 'Unknown'}`,
+            `Local danger reputation: ${localDanger}/100`,
+            ...(drop.relatedQuestId ? [`World task: ${this.aftermathQuests.find((quest) => quest.id === drop.relatedQuestId)?.title || 'Aftermath cleanup'}`] : []),
           ],
         },
       ],
-      actions: isRemains ? [] : [{
-        label: `Collect ${drop.gold}g`,
-        event: 'gwg-collect-loot',
-        id: drop.id,
-      }],
+      actions: [
+        ...(isRemains ? [{ label: 'Inspect Remains', event: 'gwg-aftermath-action', id: `${drop.id}|inspect` }] : []),
+        ...(Object.keys(drop.lootContents || {}).length ? [
+          { label: 'Loot Now', event: 'gwg-aftermath-action', id: `${drop.id}|loot` },
+          { label: 'Assign Hero to Loot', event: 'gwg-aftermath-action', id: `${drop.id}|assign-loot`, disabled: Boolean(drop.claimedByHeroId) },
+        ] : []),
+        ...(isRemains ? [
+          { label: 'Burn Remains', event: 'gwg-aftermath-action', id: `${drop.id}|burn`, disabled: (this.townInventory.wood || 0) < 1 },
+          { label: 'Bury Remains', event: 'gwg-aftermath-action', id: `${drop.id}|bury` },
+          { label: 'Follow Tracks', event: 'gwg-aftermath-action', id: `${drop.id}|tracks`, disabled: drop.evidenceState === 'resolved' || !drop.homeLairId },
+          { label: 'Mark Area Dangerous', event: 'gwg-aftermath-action', id: `${drop.id}|mark-danger` },
+          { label: 'Leave It', event: 'gwg-aftermath-action', id: `${drop.id}|leave` },
+        ] : []),
+        { label: 'Open Town Log', event: 'gwg-open-town-log' },
+      ],
     });
   }
 
   collectLootDrop(id, collector = null) {
-    const drop = this.aftermathDrops?.find((item) => item.id === id && !item.collected);
-    if (!drop || drop.kind === 'corpse' || drop.kind === 'grave') return false;
-    drop.collected = true;
-    const gold = Math.max(1, drop.gold || 12);
-    this.applyDeltas({ gold, morale: collector ? 1 : 0 });
+    const drop = this.aftermathDrops?.find((item) => item.id === id && !item.cleared);
+    if (!drop || drop.kind === 'grave') return false;
+    if (drop.claimedByHeroId && collector && drop.claimedByHeroId !== collector.def.id) return false;
+    const contents = { ...(drop.lootContents || {}) };
+    const delivered = {};
+    const leftovers = {};
+    for (const [resource, amount] of Object.entries(contents)) {
+      if (resource === 'gold') {
+        delivered.gold = amount;
+        this.applyDeltas({ gold: amount });
+        continue;
+      }
+      const gained = this.addTownResource(resource, amount, `${collector?.def?.name || 'Aftermath recovery'}`);
+      if (gained > 0) delivered[resource] = gained;
+      if (gained < amount) leftovers[resource] = amount - gained;
+    }
+    const deliveredValue = Object.values(delivered).reduce((sum, amount) => sum + amount, 0);
+    if (deliveredValue <= 0) {
+      drop.claimedByHeroId = null;
+      drop.claimedByHeroName = null;
+      this.game.events.emit('gwg-event', 'Storage is full. The loot remains exactly where the problem started.');
+      this.showLootInspector(drop);
+      return false;
+    }
+    drop.lootContents = leftovers;
+    drop.searched = true;
+    if (delivered.premiumSalvage) this.applyDeltas({ corruption: 1, morale: -1 });
     if (collector) {
-      collector.stats.gold = (collector.stats.gold || 0) + gold;
+      collector.stats.gold = (collector.stats.gold || 0) + (delivered.gold || 0);
       collector.stats.fame = Phaser.Math.Clamp((collector.stats.fame || 0) + 1, 0, 100);
+      collector.stats.envy = Phaser.Math.Clamp((collector.stats.envy || 0) + (delivered.premiumSalvage ? 3 : 0), 0, 100);
       this.addHeroHistory(collector, `Collected ${drop.name} after ${drop.monsterName}.`);
       this.say(collector, 'Loot secured.', true);
     }
-    this.addTownLog(`${collector ? `${collector.def.name} collected` : 'Collected'} ${drop.name}: +${gold}g.`, 'monster');
-    this.addReportLine('monsters', `${drop.name} collected for ${gold}g.`);
+    const summary = formatLootContents(delivered);
+    this.addTownLog(`${collector ? `${collector.def.name} collected` : 'Collected'} ${drop.name}: ${summary}.`, 'monster');
+    this.addReportLine('monsters', `${drop.name} recovered: ${summary}.`);
     this.game.events.emit('gwg-event', Phaser.Utils.Array.GetRandom(LOOT_PICKUP_LINES));
-    this.floatText(drop.x, drop.y - 48, `+${gold}g`, '#ffe08a');
+    this.floatText(drop.x, drop.y - 48, 'RECOVERED', '#ffe08a');
     this.stats.lootCollected = (this.stats.lootCollected || 0) + 1;
     this.checkObjectives();
     this.publishTownHint();
+    if (Object.keys(leftovers).length) {
+      drop.claimedByHeroId = null;
+      drop.claimedByHeroName = null;
+      this.game.events.emit('gwg-event', `Some loot remains because storage is full: ${formatLootContents(leftovers)}.`);
+      this.showLootInspector(drop);
+      this.saveGame(false);
+      return true;
+    }
+    drop.cleared = true;
+    this.completeAftermathQuest(drop.id, 'The recoverable goods reached town storage.');
     const bundle = this.aftermathDropObjectsById?.[drop.id];
     if (bundle?.container) bundle.container.destroy(true);
     this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== drop.id);
     delete this.aftermathDropObjectsById?.[drop.id];
     this.aftermathDrops = this.normalizeAftermathDrops(this.aftermathDrops).filter((item) => item.id !== drop.id);
     this.saveGame(false);
-    if (this.activeInspector?.type === 'loot') this.game.events.emit('gwg-inspector-close');
+    if (this.activeInspector?.type === 'aftermath') this.game.events.emit('gwg-inspector-close');
     return true;
   }
 
   cleanupAftermathDrops() {
     for (const drop of [...(this.aftermathDrops || [])]) {
-      if (drop.expiresDay >= this.day && !drop.collected) continue;
+      const decay = getDecayState(drop, this.day);
+      drop.decayState = decay.state;
       const bundle = this.aftermathDropObjectsById?.[drop.id];
-      if (bundle?.container) bundle.container.destroy(true);
-      this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== drop.id);
-      delete this.aftermathDropObjectsById?.[drop.id];
+      if (bundle?.container?.active) {
+        bundle.container.setAlpha(this.getVisibleDropAlpha(drop) * decay.alpha);
+        if (decay.state === 'decaying') bundle.sprite?.setTint?.(0xb6a987);
+      }
+      if (drop.kind === 'remains' && decay.state !== 'fresh' && drop.lastDecayEffectDay !== this.day) {
+        drop.lastDecayEffectDay = this.day;
+        if ((drop.dangerEffect || 0) > 0) this.changeAreaReputation(drop.areaId, 1, `ignored ${drop.monsterName || 'monster'} remains`);
+        if ((drop.corruptionEffect || 0) > 0) this.applyDeltas({ corruption: 1, morale: -1 });
+      }
+      if (!decay.expired && !drop.collected) continue;
+      this.completeAftermathQuest(drop.id, 'The evidence decayed before anyone finished the paperwork.');
+      this.clearAftermathObject(drop, 'Aftermath decayed naturally.', 0);
     }
-    this.aftermathDrops = this.normalizeAftermathDrops(this.aftermathDrops).filter((drop) => drop.expiresDay >= this.day && !drop.collected);
+    this.aftermathDrops = this.normalizeAftermathDrops(this.aftermathDrops).filter((drop) => !drop.cleared && !drop.collected);
   }
 
   createMonsterAftermath(monster, x, y, defeated = true, hero = null) {
+    if (defeated) {
+      const context = arguments[5] || {};
+      const profile = getRemainsProfile(monster.id);
+      const baseId = `${this.day}-${monster.id}-${Math.floor(Math.random() * 100000)}`;
+      const cell = this.worldToBuildGrid(x, y);
+      const areaId = context.areaId || `frontier-${Math.floor(cell.x / 8)}-${Math.floor(cell.y / 8)}`;
+      const lair = context.homeLairId ? this.monsterLairs?.[context.homeLairId] : null;
+      const remains = normalizeAftermathRecord({
+        id: `remains-${baseId}`,
+        kind: 'remains',
+        name: `${monster.name}: ${profile.name}`,
+        assetKey: profile.assetKey,
+        fallbackKey: profile.fallbackKey,
+        x: x - 10,
+        y: y + 5,
+        gridX: cell.x,
+        gridY: cell.y,
+        monsterId: monster.id,
+        monsterName: monster.name,
+        homeLairId: context.homeLairId || null,
+        killerId: hero?.def?.id || context.killerId || null,
+        killerName: hero?.def?.name || context.killerName || 'Town defenders',
+        deathDay: this.day,
+        causeOfDeath: context.causeOfDeath || 'Defeated in visible combat',
+        remainsType: profile.type,
+        decayDuration: profile.decayDays,
+        dangerEffect: profile.danger,
+        corruptionEffect: profile.corruption || 0,
+        evidenceValue: profile.evidence,
+        evidenceState: 'unread',
+        lootContents: {},
+        areaId,
+        flavour: getAftermathFlavor(profile.type),
+        large: Boolean(profile.large),
+      }, this.day);
+      this.aftermathDrops.push(remains);
+      this.renderAftermathDrop(remains);
+      this.changeAreaReputation(areaId, Math.max(1, profile.danger), `${monster.name} remains`);
+      if (profile.corruption) this.applyDeltas({ corruption: profile.corruption });
+
+      const contents = rollMonsterLoot(monster, lair?.level || 1, context.stolenCargo || 0);
+      if (Object.keys(contents).length) {
+        const premium = Boolean(contents.premiumSalvage);
+        const loot = normalizeAftermathRecord({
+          id: `loot-${baseId}`,
+          kind: 'loot',
+          name: premium ? 'Suspicious Premium Drop' : `${monster.name} Loot`,
+          assetKey: premium ? 'loot_bag_premium' : 'loot_bag_small',
+          fallbackKey: premium ? 'resource_premium_wreckage' : 'object_coin_pile',
+          x: x + 13,
+          y: y + 9,
+          gridX: cell.x,
+          gridY: cell.y,
+          monsterId: monster.id,
+          monsterName: monster.name,
+          homeLairId: context.homeLairId || null,
+          killerId: hero?.def?.id || null,
+          killerName: hero?.def?.name || 'Town defenders',
+          deathDay: this.day,
+          remainsType: 'loot',
+          decayDuration: premium ? 7 : 5,
+          lootContents: contents,
+          areaId,
+          flavour: 'Loot rights remain disputed by everyone who arrived after the fighting stopped.',
+        }, this.day);
+        this.aftermathDrops.push(loot);
+        this.renderAftermathDrop(loot);
+        this.createAftermathQuest(loot, 'recover-loot', `Recover ${loot.name} before it decays`);
+        this.floatText(loot.x, loot.y - 42, 'LOOT', '#ffe08a');
+        this.time.delayedCall(Phaser.Math.Between(900, 1900), () => this.sendHeroToLoot(loot, hero));
+      } else if (remains.evidenceValue > 0) {
+        this.createAftermathQuest(remains, 'follow-tracks', `Investigate ${monster.name} remains for its source`);
+      }
+      this.enforceAftermathCaps();
+      return;
+    }
     const baseId = `${this.day}-${monster.id}-${Math.floor(Math.random() * 100000)}`;
     const cell = this.worldToBuildGrid(x, y);
     if (!defeated) {
       const debrisKey = Phaser.Utils.Array.GetRandom(['broken_sword', 'broken_shield', 'suspicious_coupon_drop']);
       const debris = {
         id: `debris-${baseId}`,
-        kind: 'corpse',
+        kind: 'remains',
         name: 'Attack Debris',
         assetKey: debrisKey,
         fallbackKey: 'crate',
@@ -10688,19 +10911,54 @@ export default class TownScene extends Phaser.Scene {
     this.sendHeroToLoot(loot, hero);
   }
 
+  enforceAftermathCaps() {
+    const protectedIds = new Set(this.aftermathQuests.filter((quest) => quest.status === 'active').map((quest) => quest.targetId));
+    const removable = this.aftermathDrops
+      .filter((drop) => drop.kind !== 'grave' && !protectedIds.has(drop.id))
+      .sort((a, b) => a.deathDay - b.deathDay);
+    const excess = Math.max(0, this.aftermathDrops.filter((drop) => drop.kind !== 'grave').length - (AFTERMATH_LIMITS.maxRemains + AFTERMATH_LIMITS.maxLoot));
+    for (const drop of removable.slice(0, excess)) this.clearAftermathObject(drop, 'Old low-value aftermath decayed under the global cap.', 0);
+    for (const [kind, limit] of [['remains', AFTERMATH_LIMITS.maxRemains], ['loot', AFTERMATH_LIMITS.maxLoot]]) {
+      const kindOverflow = this.aftermathDrops
+        .filter((drop) => drop.kind === kind && !protectedIds.has(drop.id))
+        .sort((a, b) => a.deathDay - b.deathDay)
+        .slice(0, Math.max(0, this.aftermathDrops.filter((drop) => drop.kind === kind).length - limit));
+      for (const drop of kindOverflow) this.clearAftermathObject(drop, `Old ${kind} exceeded the bounded world cap.`, 0);
+    }
+    const areas = new Map();
+    for (const drop of this.aftermathDrops.filter((entry) => entry.kind !== 'grave')) {
+      const areaId = drop.areaId || 'town';
+      if (!areas.has(areaId)) areas.set(areaId, []);
+      areas.get(areaId).push(drop);
+    }
+    for (const drops of areas.values()) {
+      const overflow = drops
+        .filter((drop) => !protectedIds.has(drop.id))
+        .sort((a, b) => a.deathDay - b.deathDay)
+        .slice(0, Math.max(0, drops.length - AFTERMATH_LIMITS.maxPerArea));
+      for (const drop of overflow) this.clearAftermathObject(drop, 'Local aftermath density cap compacted old evidence.', 0);
+    }
+  }
+
   sendHeroToLoot(drop, preferredHero = null) {
-    if (!drop || drop.kind === 'corpse' || drop.kind === 'grave') return;
+    if (!drop || drop.kind === 'grave' || drop.cleared || drop.claimedByHeroId) return false;
     const candidates = this.getActiveHeroes()
-      .filter((hero) => hero.state !== 'inside' && hero.state !== 'away')
-      .sort((a, b) => (
-        Phaser.Math.Distance.Between(a.container.x, a.container.y, drop.x, drop.y)
-        - Phaser.Math.Distance.Between(b.container.x, b.container.y, drop.x, drop.y)
-      ));
-    const hero = preferredHero?.state !== 'away' ? preferredHero : candidates[0];
-    if (!hero) return;
+      .filter((hero) => hero.state !== 'inside' && hero.state !== 'away' && !this.isHeroInjured(hero) && !hero.combatTargetId)
+      .map((hero) => {
+        const distance = Phaser.Math.Distance.Between(hero.container.x, hero.container.y, drop.x, drop.y);
+        const premiumValue = Number(drop.lootContents?.premiumSalvage || 0);
+        const greed = (hero.stats.envy || 0) + (this.isWhaleHero(hero.def) ? 35 : 0) + (premiumValue && hero.stats.whaleAccess ? 45 : 0);
+        const killerBonus = drop.killerId === hero.def.id ? 80 : 0;
+        return { hero, score: killerBonus + greed - distance / 12 };
+      })
+      .sort((a, b) => b.score - a.score);
+    const hero = preferredHero?.state !== 'away' && !this.isHeroInjured(preferredHero) ? preferredHero : candidates[0]?.hero;
+    if (!hero) return false;
+    drop.claimedByHeroId = hero.def.id;
+    drop.claimedByHeroName = hero.def.name;
     const delay = Phaser.Math.Between(1100, 2600);
     this.time.delayedCall(delay, () => {
-      if (!this.aftermathDrops?.some((item) => item.id === drop.id && !item.collected)) return;
+      if (!this.aftermathDrops?.some((item) => item.id === drop.id && !item.cleared) || drop.claimedByHeroId !== hero.def.id) return;
       this.walkTo(hero, {
         id: drop.id,
         name: drop.name,
@@ -10711,10 +10969,140 @@ export default class TownScene extends Phaser.Scene {
         reason: 'Greedy opportunity with a finite despawn timer.',
         risk: 'Low',
       }, () => {
+        hero.state = 'looting';
+        hero.currentAction = `Looting ${drop.name}`;
+        this.setHeroAnimationState(hero, 'interact');
         this.collectLootDrop(drop.id, hero);
         this.scheduleAmbient(hero, Phaser.Math.Between(1800, 3800));
       });
     });
+    return true;
+  }
+
+  getAftermathWorker(drop, preferGuard = false) {
+    const heroes = this.getActiveHeroes()
+      .filter((hero) => hero.state !== 'away' && !this.isHeroInjured(hero) && !hero.combatTargetId && !hero.stats.gatheringNodeId)
+      .map((hero) => ({ hero, distance: Phaser.Math.Distance.Between(hero.container.x, hero.container.y, drop.x, drop.y) }))
+      .sort((a, b) => a.distance - b.distance);
+    if (preferGuard) {
+      const veteran = heroes.find(({ hero }) => this.isVeteranHero(hero.def));
+      if (veteran) return veteran.hero;
+    }
+    return heroes[0]?.hero || null;
+  }
+
+  clearAftermathObject(drop, reason, reputationDelta = -2) {
+    if (!drop) return;
+    drop.cleared = true;
+    const bundle = this.aftermathDropObjectsById?.[drop.id];
+    if (bundle?.container) bundle.container.destroy(true);
+    this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== drop.id);
+    delete this.aftermathDropObjectsById?.[drop.id];
+    this.aftermathDrops = this.aftermathDrops.filter((item) => item.id !== drop.id);
+    this.completeAftermathQuest(drop.id, reason);
+    if (drop.areaId && reputationDelta) this.changeAreaReputation(drop.areaId, reputationDelta, reason);
+    if (this.activeInspector?.id === drop.id) {
+      this.activeInspector = null;
+      this.game.events.emit('gwg-inspector-close');
+    }
+  }
+
+  runAftermathActionFromUi(value) {
+    const [id, action = 'inspect'] = String(value || '').split('|');
+    const drop = this.aftermathDrops.find((item) => item.id === id && !item.cleared);
+    if (!drop) return;
+    if (action === 'leave') {
+      this.game.events.emit('gwg-inspector-close');
+      return;
+    }
+    if (action === 'mark-danger') {
+      drop.markedDangerous = true;
+      this.changeAreaReputation(drop.areaId || 'frontier', 2, `${drop.name} marked dangerous`);
+      this.addTownLog(`${drop.name} was marked dangerous. The map now agrees with the smell.`, 'threat');
+      this.showLootInspector(drop);
+      return;
+    }
+    if (action === 'inspect') {
+      drop.searched = true;
+      drop.evidenceState = drop.evidenceValue > 0 ? 'ready' : 'none';
+      this.addTownLog(`${drop.name} was inspected. ${drop.flavour || 'The remains declined to clarify the encounter.'}`, 'monster');
+      this.showLootInspector(drop);
+      this.saveGame(false);
+      return;
+    }
+    if (action === 'loot' || action === 'assign-loot') {
+      if (!this.sendHeroToLoot(drop)) this.game.events.emit('gwg-event', 'No healthy unassigned hero can claim that loot right now.');
+      this.showLootInspector(drop);
+      this.saveGame(false);
+      return;
+    }
+    const hero = this.getAftermathWorker(drop, action === 'burn');
+    if (!hero) {
+      this.game.events.emit('gwg-event', 'No healthy hero is free for aftermath duty. The smell remains employed.');
+      return;
+    }
+    if (action === 'burn' && (this.townInventory.wood || 0) < 1) {
+      this.game.events.emit('gwg-event', 'Burning remains needs 1 wood. Fire has maintained its input requirements.');
+      return;
+    }
+    const intent = action === 'tracks' ? 'Following tracks' : action === 'burn' ? 'Burning remains' : 'Burying remains';
+    this.walkTo(hero, {
+      id: drop.id,
+      name: drop.name,
+      x: drop.x,
+      y: drop.y,
+      h: 28,
+      intentAction: intent,
+      reason: `${intent} near ${drop.monsterName}.`,
+      risk: drop.dangerEffect >= 5 ? 'Moderate' : 'Low',
+    }, () => {
+      hero.state = 'interacting';
+      hero.currentAction = intent;
+      this.setHeroAnimationState(hero, 'interact');
+      this.time.delayedCall(850, () => {
+        if (!this.aftermathDrops.some((item) => item.id === drop.id && !item.cleared)) return;
+        if (action === 'tracks') this.followAftermathTracks(drop, hero);
+        else {
+          if (action === 'burn') this.townInventory.wood = Math.max(0, (this.townInventory.wood || 0) - 1);
+          const verb = action === 'burn' ? 'burned' : 'buried';
+          this.addTownLog(`${hero.def.name} ${verb} ${drop.name}. Public health briefly received a budget.`, 'monster');
+          this.clearAftermathObject(drop, `${drop.name} ${verb}`, action === 'burn' ? -4 : -3);
+          this.applyDeltas({ morale: 1, trust: action === 'bury' ? 1 : 0 });
+          this.saveGame(false);
+        }
+        this.scheduleAmbient(hero, Phaser.Math.Between(1500, 3200));
+      });
+    });
+  }
+
+  followAftermathTracks(drop, hero) {
+    const lair = this.monsterLairs?.[drop.homeLairId];
+    if (!lair) return;
+    const point = this.explorationPointById?.[lair.poiId];
+    const decay = getDecayState(drop, this.day);
+    const chance = Phaser.Math.Clamp(0.28 + drop.evidenceValue * 0.1 + (hero.stats.power || 0) * 0.012 - decay.age * 0.08, 0.15, 0.9);
+    drop.searched = true;
+    drop.evidenceState = 'resolved';
+    if (Math.random() <= chance && point) {
+      const fromCell = this.worldToBuildGrid(drop.x, drop.y);
+      const steps = Math.max(2, Math.min(5, drop.evidenceValue || 2));
+      for (let i = 1; i <= steps; i += 1) {
+        const t = i / steps;
+        const gx = Math.round(Phaser.Math.Linear(fromCell.x, point.gridX, t * 0.72));
+        const gy = Math.round(Phaser.Math.Linear(fromCell.y, point.gridY, t * 0.72));
+        this.revealArea(gx, gy, 1, `${hero.def.name}'s tracks`);
+      }
+      if (chance >= 0.62 || this.isRevealed(point.gridX, point.gridY)) {
+        lair.discovered = true;
+        this.discoveredPois.add(point.id);
+        this.completeAftermathQuest(drop.id, `${lair.name} was identified from the evidence.`);
+      }
+      this.addTownLog(`${hero.def.name} followed evidence from ${drop.name} toward ${lair.name}.`, 'unlock');
+    } else {
+      this.addTownLog(`${hero.def.name} followed the tracks until they became legally inconclusive.`, 'monster');
+    }
+    this.showLootInspector(drop);
+    this.saveGame(false);
   }
 
   spawnMonsterActor(monster, target, spawn = null, runtime = {}) {
@@ -11101,7 +11489,7 @@ export default class TownScene extends Phaser.Scene {
   }
 
   damageMonster(actor, damage, source = null) {
-    if (!actor?.container?.active || actor.state === MONSTER_STATES.DEAD) return false;
+    if (!actor?.container?.active || [MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(actor.state)) return false;
     const dealt = Math.max(1, Math.round(damage - (actor.stats.armour || 0)));
     actor.health = Math.max(0, actor.health - dealt);
     actor.lastHitAt = this.worldDangerClockMs;
@@ -11126,8 +11514,15 @@ export default class TownScene extends Phaser.Scene {
   }
 
   defeatMonsterActor(actor, source = null) {
-    if (!actor || actor.state === MONSTER_STATES.DEAD) return;
-    actor.state = MONSTER_STATES.DEAD;
+    if (!actor || [MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(actor.state)) return;
+    actor.state = MONSTER_STATES.DYING;
+    actor.targetRef = null;
+    actor.target = null;
+    actor.moveTarget = null;
+    actor.nextDecisionAt = Number.POSITIVE_INFINITY;
+    actor.intent = 'Dying. The loot table is preparing a statement.';
+    this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== actor.id);
+    actor.healthBar?.setVisible?.(false);
     const lair = this.monsterLairs?.[actor.homeLairId];
     if (lair) lair.activeMonsterIds = lair.activeMonsterIds.filter((id) => id !== actor.id);
     if (source?.def) {
@@ -11136,10 +11531,37 @@ export default class TownScene extends Phaser.Scene {
     }
     this.stats.monsterVictories = (this.stats.monsterVictories || 0) + 1;
     this.applyDeltas({ threat: actor.monster.threatImpact || -Math.max(2, actor.monster.threat) });
-    this.createMonsterAftermath(actor.monster, actor.container.x, actor.container.y, true, source?.def ? source : null);
     this.addTownLog(`${source?.def?.name || 'Town defenders'} defeated ${actor.monster.name}. The loot table became briefly tangible.`, 'monster');
-    this.clearMonsterActor(actor);
-    if (lair?.expeditionActive) this.checkLairCleared(lair);
+    const deathX = actor.container.x;
+    const deathY = actor.container.y;
+    const finishDeath = () => {
+      this.createMonsterAftermath(actor.monster, deathX, deathY, true, source?.def ? source : null, {
+        homeLairId: actor.homeLairId,
+        stolenCargo: actor.stolenCargo,
+        killerId: source?.def?.id,
+        killerName: source?.def?.name,
+        causeOfDeath: source?.def ? `Defeated by ${source.def.name}` : 'Defeated by town defenses',
+      });
+      actor.state = MONSTER_STATES.DEAD;
+      this.clearMonsterActor(actor, false);
+      if (lair?.expeditionActive) this.checkLairCleared(lair);
+      this.saveGame(false);
+    };
+    if (!actor.container?.active) {
+      finishDeath();
+      return;
+    }
+    this.tweens.add({
+      targets: actor.container,
+      alpha: 0.18,
+      angle: Phaser.Math.Between(-18, 18),
+      scaleX: actor.container.scaleX * 0.88,
+      scaleY: actor.container.scaleY * 0.5,
+      y: deathY + 8,
+      duration: 480,
+      ease: 'Quad.easeIn',
+      onComplete: finishDeath,
+    });
   }
 
   applyBuildingMonsterDamage(actor, target) {
@@ -11147,7 +11569,14 @@ export default class TownScene extends Phaser.Scene {
     const damage = Math.max(2, actor.stats.damage - Math.floor(this.getDefenseBonus() / 4));
     runtime.health = Math.max(0, runtime.health - damage);
     runtime.damaged = runtime.health < runtime.maxHealth * 0.7;
+    runtime.heavilyDamaged = runtime.health < runtime.maxHealth * 0.35;
     runtime.repairCost = Math.max(runtime.repairCost || 0, Math.ceil((runtime.maxHealth - runtime.health) * 0.65));
+    runtime.attackerHistory = [...(runtime.attackerHistory || []), {
+      day: this.day,
+      monsterId: actor.monster.id,
+      monsterName: actor.monster.name,
+      damage,
+    }].slice(-8);
     if (runtime.damaged) runtime.serviceQuality = Math.max(1, (runtime.serviceQuality || 1) - 1);
     this.stats.monsterDamageEvents = (this.stats.monsterDamageEvents || 0) + 1;
     this.floatText(target.x, target.y - (target.place.h || 50), `-${damage} BUILDING`, '#f0938f');
@@ -11175,7 +11604,8 @@ export default class TownScene extends Phaser.Scene {
       'The premium resurrection trial had already expired.',
       'The town mourned for six seconds, then checked the loot table.',
     ];
-    const marker = {
+    const profileType = role === 'Hero' ? 'hero' : role === 'Carrier' ? 'carrier' : 'worker';
+    const marker = normalizeAftermathRecord({
       id: `grave-${unit.def?.id || role}-${this.day}-${Math.floor(Math.random() * 100000)}`,
       kind: 'grave',
       name: `${name}'s Grave`,
@@ -11187,15 +11617,24 @@ export default class TownScene extends Phaser.Scene {
       monsterName: actor.monster.name,
       heroName: name,
       role,
-      killer: actor.monster.name,
+      killerId: actor.id,
+      killerName: actor.monster.name,
+      deathDay: this.day,
+      causeOfDeath: `${actor.monster.name} attack`,
+      remainsType: profileType,
+      decayDuration: 30,
+      lootContents: role === 'Carrier' && unit.cargoResource ? { [unit.cargoResource]: Number(unit.cargo || unit.assignedCargo) || 1 } : {},
+      homeLairId: actor.homeLairId || null,
+      evidenceValue: 2,
+      evidenceState: 'unread',
+      dangerEffect: 4,
+      flavour: getAftermathFlavor(profileType),
       epitaph: Phaser.Utils.Array.GetRandom(epitaphs),
       areaId,
-      createdDay: this.day,
-      expiresDay: this.day + 30,
-      collected: false,
-    };
+    }, this.day);
     this.aftermathDrops.push(marker);
     this.renderAftermathDrop(marker);
+    this.createAftermathQuest(marker, role === 'Hero' ? 'bury-fallen' : 'recover-cargo', role === 'Hero' ? `Bury ${name}` : `Recover ${name}'s cargo`);
     this.changeAreaReputation(areaId, 10, `${name}'s death`);
   }
 
@@ -11450,7 +11889,7 @@ export default class TownScene extends Phaser.Scene {
     this.worldDangerClockMs += scaled;
     const deltaSeconds = scaled / 1000;
     for (const actor of [...(this.activeMonsterActors || [])]) {
-      if (!actor?.container?.active || actor.state === MONSTER_STATES.DEAD) continue;
+      if (!actor?.container?.active || [MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(actor.state)) continue;
       if (this.worldDangerClockMs >= actor.nextDecisionAt) {
         actor.nextDecisionAt = this.worldDangerClockMs + WORLD_DANGER_LIMITS.aiStepMs + Phaser.Math.Between(0, 220);
         this.decideMonsterAction(actor);
