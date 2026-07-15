@@ -172,6 +172,9 @@ import {
 } from '../systems/heroSocial.js';
 import {
   assessFortificationCost,
+  canCloseGateSafely,
+  canReplaceWallWithGate,
+  chooseFortificationPassage,
   chooseFortificationTarget,
   computePerimeter,
   damageFortification,
@@ -179,12 +182,17 @@ import {
   FORTIFICATION_SATIRE,
   FORTIFICATION_TYPES,
   fortificationKey,
+  getDominantAxisLine,
   getFortificationDefinition,
   getFortificationMask,
+  getFortificationMaskName,
   getFortificationVariant,
   isFortificationBlocking,
   isGate,
+  normalizeFortification,
   normalizeFortifications,
+  repairFortification,
+  replaceWallWithGate,
 } from '../systems/fortifications.js';
 import {
   applyImportedSave,
@@ -1217,6 +1225,9 @@ export default class TownScene extends Phaser.Scene {
       this.time.delayedCall(400, () => this.openRecoveryPanel());
     } else {
       this.time.delayedCall(650, () => this.maybeShowOnboarding());
+    }
+    if (isTestSaveMode() && new URLSearchParams(window.location.search).get('siegeTest') === '1') {
+      this.time.delayedCall(900, () => this.setupFortificationSiegeTest());
     }
   }
 
@@ -5144,6 +5155,100 @@ export default class TownScene extends Phaser.Scene {
     this.recalculatePerimeter();
   }
 
+  setupFortificationSiegeTest() {
+    const target = this.getOperationalPlace('guildhall') || this.getOperationalPlace('market');
+    const center = {
+      x: Math.round(Number(target?.gridX) || this.worldToBuildGrid(target?.x || PLAZA.x, target?.y || PLAZA.y).x),
+      y: Math.round(Number(target?.gridY) || this.worldToBuildGrid(target?.x || PLAZA.x, target?.y || PLAZA.y).y),
+    };
+    const radiusX = 8;
+    const radiusY = 6;
+    for (const source of Object.values(this.monsterLairs || {})) {
+      source.nextSpawnDay = this.day + 99;
+      source.suppressedUntilDay = this.day + 2;
+    }
+    this.monsterState.attackCooldownUntilDay = this.day + 99;
+    if ((this.cityState.fortifications || []).some((entry) => String(entry.id).startsWith('siege-test-'))) {
+      this.revealArea(center.x, center.y, radiusX + 5, 'restored controlled siege verification');
+      this.cameras.main.centerOn(target?.x || PLAZA.x, target?.y || PLAZA.y);
+      this.addTownLog('Controlled siege fixture restored from the isolated test save.', 'defense');
+      return;
+    }
+    for (const actor of [...(this.activeMonsterActors || [])]) this.clearMonsterActor(actor, false);
+    this.defenceState.alerts = [];
+    this.defenceState.activeRaids = [];
+    this.setSimulationSpeed(1);
+    const records = [];
+    const add = (x, y, type = 'palisade', extra = {}) => records.push(normalizeFortification({
+      id: `siege-test-${x}-${y}`,
+      type,
+      x,
+      y,
+      construction: 1,
+      ...extra,
+    }, records.length));
+    for (let x = center.x - radiusX; x <= center.x + radiusX; x += 1) {
+      add(x, center.y - radiusY, x === center.x ? 'gatehouse' : x < center.x ? 'stone_wall' : 'palisade', x === center.x ? { open: true } : {});
+      add(x, center.y + radiusY, x === center.x ? 'gate' : x > center.x ? 'stone_wall' : 'palisade', x === center.x ? { open: true } : {});
+    }
+    for (let y = center.y - radiusY + 1; y < center.y + radiusY; y += 1) {
+      add(center.x - radiusX, y, y === center.y ? 'guard_tower' : 'stone_wall');
+      add(center.x + radiusX, y, y === center.y ? 'guard_tower' : 'palisade');
+    }
+    this.cityState.fortifications = records;
+    this.townInventory.wood = Math.max(40, this.townInventory.wood || 0);
+    this.townInventory.iron = Math.max(30, this.townInventory.iron || 0);
+    this.townInventory.planks = Math.max(20, this.townInventory.planks || 0);
+    this.resources.gold = Math.max(2500, this.resources.gold || 0);
+    const repairHero = this.getActiveHeroes()[0];
+    if (repairHero) {
+      repairHero.stats.injuredUntilDay = 0;
+      repairHero.stats.injuryState = 'healthy';
+      repairHero.stats.deathDay = null;
+      repairHero.combatTargetId = null;
+      repairHero.defenceOrder = null;
+      repairHero.state = 'idle';
+      repairHero.currentAction = 'Available for controlled siege repair';
+    }
+    this.rebuildFortificationIndex();
+    this.renderAllFortifications();
+    this.recalculatePerimeter();
+    this.revealArea(center.x, center.y, radiusX + 5, 'controlled siege verification');
+
+    const tower = records.find((entry) => entry.type === 'guard_tower');
+    const towerWorld = this.gridTileVisualCenter(tower.x, tower.y);
+    const detector = { id: `fortification:${tower.id}`, kind: 'guard_tower', name: 'Test Perimeter Tower', x: towerWorld.x, y: towerWorld.y, radius: 420, reactionMs: 0, reliability: 1, fortification: tower };
+    const lair = Object.values(this.monsterLairs || {}).find((entry) => !entry.cleared) || null;
+    if (lair) {
+      lair.discovered = true;
+      lair.pressure = Math.max(82, lair.pressure || 0);
+      lair.pressureState = 'raiding';
+      lair.nextSpawnDay = this.day + 99;
+      lair.suppressedUntilDay = this.day + 2;
+    }
+    ['goblin_raider', 'skeleton_attacker', 'slime'].forEach((id, index) => {
+      const monster = MONSTERS.find((entry) => entry.id === id);
+      const spawnCell = { x: center.x - radiusX - 3 - index, y: center.y - 2 + index * 2 };
+      const spawn = this.gridTileVisualCenter(spawnCell.x, spawnCell.y);
+      this.revealArea(spawnCell.x, spawnCell.y, 2, 'controlled raid approach');
+      const actor = this.spawnMonsterActor(monster, target, spawn, {
+        state: MONSTER_STATES.CHASING,
+        targetRef: target ? this.getMonsterTargetRef('building', target.id, target.name) : null,
+        homeLairId: lair?.id || null,
+        raidId: 'controlled-siege-test',
+        raidTargetRef: target ? { kind: 'building', id: target.id } : null,
+        intent: `Controlled raid approaching ${target?.name || 'town'}.`,
+      });
+      actor.stats.damage = Math.max(actor.stats.damage, 22 + index * 3);
+      actor.health = actor.maxHealth = Math.max(actor.maxHealth, 52);
+      actor.nextDecisionAt = this.worldDangerClockMs + 100 + index * 120;
+      this.confirmMonsterDetection(actor, detector, Phaser.Math.Distance.Between(spawn.x, spawn.y, towerWorld.x, towerWorld.y));
+    });
+    this.cameras.main.centerOn(target?.x || PLAZA.x, target?.y || PLAZA.y);
+    this.addTownLog('Controlled siege fixture active in isolated test-save mode.', 'defense');
+    this.saveGame(false);
+  }
+
   rebuildFortificationIndex() {
     this.fortificationByCell = new Map((this.cityState.fortifications || []).map((entry) => [fortificationKey(entry.x, entry.y), entry]));
   }
@@ -5171,10 +5276,24 @@ export default class TownScene extends Phaser.Scene {
   getFortificationTexture(entry, mask) {
     const def = getFortificationDefinition(entry.type);
     const variant = getFortificationVariant(mask);
-    if (entry.state === 'breached') return resolveTexture(this, 'broken_shield', 'rock');
-    if (def.kind === 'tower') return resolveTexture(this, def.assetKey, 'building_watchtower');
-    if (def.kind === 'gatehouse') return resolveTexture(this, def.assetKey, 'building_dungeon_gate');
-    if (def.kind === 'gate') return resolveTexture(this, def.assetKey, 'object_fence_corner');
+    if (def.kind === 'gate') {
+      const state = entry.state === 'breached' ? 'breached' : entry.state === 'heavy' || entry.state === 'damaged' ? 'damaged' : entry.open ? 'open' : 'closed';
+      return resolveTexture(this, `fort_gate_wood_${state}`, state === 'breached' ? 'broken_shield' : def.assetKey);
+    }
+    if (def.kind === 'gatehouse') {
+      const state = entry.state === 'breached' ? 'breached' : entry.state === 'heavy' || entry.state === 'damaged' ? 'damaged' : entry.open ? 'open' : 'closed';
+      return resolveTexture(this, `fort_gatehouse_${state}`, state === 'breached' ? 'broken_shield' : def.assetKey);
+    }
+    if (def.kind === 'tower') {
+      const state = entry.state === 'heavy' || entry.state === 'damaged' ? '_damaged' : '';
+      return resolveTexture(this, `fort_tower_wood${state}`, def.assetKey);
+    }
+    const material = entry.type === 'stone_wall' ? 'stone' : 'palisade';
+    if (entry.state === 'breached') return resolveTexture(this, `fort_${material}_breached`, entry.type === 'stone_wall' ? 'rock' : 'broken_shield');
+    if (entry.state === 'heavy') return resolveTexture(this, `fort_${material}_heavy`, `fort_${material}_straight`);
+    if (entry.state === 'damaged') return resolveTexture(this, `fort_${material}_damaged`, `fort_${material}_straight`);
+    if (material === 'palisade' && variant === 'corner') return resolveTexture(this, 'fort_palisade_corner', 'fort_palisade_straight');
+    if (this.textures.exists(`fort_${material}_straight`)) return `fort_${material}_straight`;
     if (variant === 'corner' || variant === 't-junction' || variant === 'crossroad') {
       return resolveTexture(this, 'object_fence_corner', 'object_fence_wood');
     }
@@ -5212,7 +5331,31 @@ export default class TownScene extends Phaser.Scene {
       sprite.setFlipX(!northSouth);
     } else if (def.kind === 'wall' && (mask & 8) && !(mask & 2)) {
       sprite.setFlipX(true);
+    } else if (isGate(entry)) {
+      const northSouth = (mask & 5) || (this.getRoadAt(entry.x, entry.y - 1) && this.getRoadAt(entry.x, entry.y + 1));
+      sprite.setFlipX(!northSouth);
     }
+    const wallPieces = [sprite];
+    if (def.kind === 'wall' && entry.state === 'intact' && (variant === 't-junction' || variant === 'crossroad')) {
+      const crossing = this.add.image(0, 0, entry.type === 'stone_wall' ? 'fort_stone_straight' : 'fort_palisade_straight')
+        .setOrigin(0.5, 1)
+        .setScale(sprite.scaleX, sprite.scaleY)
+        .setFlipX(!sprite.flipX);
+      if (variant === 't-junction') {
+        const source = this.textures.get(crossing.texture.key).getSourceImage();
+        const missing = [1, 2, 4, 8].find((bit) => !(mask & bit));
+        const keepRightHalf = missing === 8 || missing === 4;
+        crossing.setCrop(keepRightHalf ? Math.floor(source.width / 2) : 0, 0, Math.ceil(source.width / 2), source.height);
+      }
+      wallPieces.push(crossing);
+    }
+    const constructing = entry.construction < 1;
+    if (constructing) wallPieces.forEach((piece) => piece.setAlpha(0.38).setTint(0xb9c6bd));
+    const construction = this.add.graphics().setVisible(constructing);
+    construction.lineStyle(2, 0xe4c58c, 0.9);
+    construction.lineBetween(-20, -4, -14, -30);
+    construction.lineBetween(20, -4, 14, -30);
+    construction.lineBetween(-18, -15, 18, -15);
     const healthBg = this.add.rectangle(0, -desiredHeight - 9, 42, 5, 0x10151d, 0.9).setOrigin(0.5).setVisible(false);
     const ratio = Phaser.Math.Clamp(entry.health / entry.maxHealth, 0, 1);
     const healthBar = this.add.rectangle(-21, -desiredHeight - 9, 42 * ratio, 4, ratio > 0.55 ? 0x7fdc93 : ratio > 0.25 ? 0xf6c945 : 0xe74c3c, 0.96)
@@ -5221,8 +5364,8 @@ export default class TownScene extends Phaser.Scene {
       fontFamily: '"Courier New", monospace', fontSize: '10px', fontStyle: 'bold', color: '#fff6dc',
       stroke: '#080c12', strokeThickness: 3, backgroundColor: '#0d131ee8', padding: { x: 5, y: 2 },
     }).setOrigin(0.5, 1).setVisible(false);
-    container.add([shadow, sprite, healthBg, healthBar, label]);
-    this.fortificationVisuals[entry.id] = { container, sprite, healthBg, healthBar, label, mask, variant };
+    container.add([shadow, ...wallPieces, construction, healthBg, healthBar, label]);
+    this.fortificationVisuals[entry.id] = { container, sprite, construction, healthBg, healthBar, label, mask, variant };
     this.registerWorldInteractionTarget({
       id: entry.id,
       type: 'fortification',
@@ -5293,6 +5436,17 @@ export default class TownScene extends Phaser.Scene {
     const weakest = this.getWeakestFortification();
     const repairQueue = this.getActiveHeroes().filter((hero) => hero.defenceOrder?.type === 'fortification' && /repair/i.test(hero.currentAction || '')).length;
     const stationed = entries.filter((entry) => entry.defenderId).length;
+    const civiliansOutside = [...(this.serviceWalkers || []), ...(this.carriers || [])].filter((unit) => {
+      if (!unit.container?.active || !this.perimeterSummary?.outside) return false;
+      const cell = this.worldToBuildGrid(unit.container.x, unit.container.y);
+      return this.perimeterSummary.outside.has(fortificationKey(cell.x, cell.y));
+    }).length;
+    const activeRaid = (this.activeMonsterActors || []).find((actor) => actor.container?.active && actor.detectedAt);
+    const raidDirection = activeRaid
+      ? Math.abs(activeRaid.container.x - PLAZA.x) > Math.abs(activeRaid.container.y - PLAZA.y)
+        ? activeRaid.container.x < PLAZA.x ? 'West' : 'East'
+        : activeRaid.container.y < PLAZA.y ? 'North' : 'South'
+      : 'None detected';
     const exposedImportant = (this.perimeterSummary?.exposedBuildings || [])
       .filter((building) => ['guildhall', 'market', 'storehouse', 'warehouse', 'whale'].includes(getBaseBuildingId(building.id)))
       .length;
@@ -5302,18 +5456,18 @@ export default class TownScene extends Phaser.Scene {
       `Gates: ${gates.filter((entry) => entry.open).length} open / ${gates.filter((entry) => !entry.open && entry.state !== 'breached').length} closed`,
       `Protected: ${this.perimeterSummary?.protectedBuildings?.length || 0} buildings | Important exposed: ${exposedImportant}`,
       `Stationed defenders: ${stationed} | Repair assignments: ${repairQueue}`,
+      `Civilians outside: ${civiliansOutside} | Raid approach: ${raidDirection}`,
       `Weakest section: ${weakest ? `${getFortificationDefinition(weakest.type).name} ${Math.round(weakest.health / weakest.maxHealth * 100)}%` : 'None'}`,
     ];
   }
 
   setAllFortificationGates(open) {
     const gates = (this.cityState.fortifications || []).filter((entry) => isGate(entry) && entry.state !== 'breached');
+    let changed = 0;
     for (const gate of gates) {
-      gate.open = open;
-      this.refreshFortificationVisuals(gate);
+      if (this.setGateState(gate, open)) changed += 1;
     }
-    this.recalculatePerimeter();
-    if (gates.length) this.addTownLog(`${gates.length} gate${gates.length === 1 ? '' : 's'} ${open ? 'opened for traffic' : 'sealed for defence'}.`, 'defense');
+    if (changed) this.addTownLog(`${changed} gate${changed === 1 ? '' : 's'} ${open ? 'opened for traffic' : 'sealed for defence'}.`, 'defense');
     else this.game.events.emit('gwg-event', 'No intact gates answered the town-wide hinge directive.');
     this.saveGame(false);
   }
@@ -5330,11 +5484,60 @@ export default class TownScene extends Phaser.Scene {
     this.cameras.main.centerOn(world.x, world.y);
   }
 
+  getCurrentRaidActor() {
+    return (this.activeMonsterActors || [])
+      .filter((actor) => actor.container?.active && actor.detectedAt && ![MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(actor.state))
+      .sort((a, b) => (b.monster?.threat || 0) - (a.monster?.threat || 0))[0] || null;
+  }
+
+  focusCurrentRaid() {
+    const actor = this.getCurrentRaidActor();
+    if (!actor) return this.game.events.emit('gwg-event', 'No detected raid is available to focus. The camera declines to speculate.');
+    this.cameras.main.centerOn(actor.container.x, actor.container.y);
+  }
+
+  rallyFortificationDefenders() {
+    const actor = this.getCurrentRaidActor();
+    if (!actor) return this.game.events.emit('gwg-event', 'No detected raid requires a rally. Defenders retain their scheduled posture.');
+    let assigned = 0;
+    while (assigned < 3) {
+      const hero = this.getBestDefenderForMonster(actor);
+      if (!hero) break;
+      this.dispatchHeroToMonster(actor, hero, true, 'Rallied to the active perimeter threat.');
+      assigned += 1;
+    }
+    this.dispatchGuardToMonster(actor);
+    this.addTownLog(`${assigned} hero${assigned === 1 ? '' : 'es'} rallied toward ${actor.monster.name}.`, 'defense');
+  }
+
+  repairMostUrgentBreach() {
+    const breach = (this.cityState.fortifications || [])
+      .filter((entry) => entry.state === 'breached' || entry.health < entry.maxHealth)
+      .sort((a, b) => (a.state === 'breached' ? -1 : 0) - (b.state === 'breached' ? -1 : 0)
+        || a.health / a.maxHealth - b.health / b.maxHealth)[0];
+    if (!breach) return this.game.events.emit('gwg-event', 'No damaged perimeter section needs repair. Maintenance celebrates quietly.');
+    this.assignFortificationRepair(breach);
+  }
+
+  evacuateExposedCivilians() {
+    const actor = this.getCurrentRaidActor();
+    if (!actor) return this.game.events.emit('gwg-event', 'No detected raid provides an evacuation direction.');
+    const civilians = [...(this.serviceWalkers || []), ...(this.carriers || [])]
+      .filter((unit) => unit.container?.active && unit.alertState !== 'SHELTERING')
+      .sort((a, b) => Phaser.Math.Distance.Between(a.container.x, a.container.y, actor.container.x, actor.container.y)
+        - Phaser.Math.Distance.Between(b.container.x, b.container.y, actor.container.x, actor.container.y))
+      .slice(0, 8);
+    civilians.forEach((unit) => this.sendCivilianToShelter(unit, actor));
+    this.addTownLog(`${civilians.length} civilian${civilians.length === 1 ? '' : 's'} received an evacuation order.`, 'defense');
+  }
+
   showFortificationInspector(entry) {
     if (!entry) return;
+    this.selectFortification(entry);
     const def = getFortificationDefinition(entry.type);
     const health = `${Math.round(entry.health)}/${entry.maxHealth}`;
-    const connections = getFortificationVariant(getFortificationMask(this.fortificationByCell, entry.x, entry.y));
+    const mask = getFortificationMask(this.fortificationByCell, entry.x, entry.y);
+    const connections = getFortificationMaskName(mask);
     const protectedCount = this.perimeterSummary?.protectedBuildings?.length || 0;
     const status = entry.state === 'breached' ? 'BREACHED - passable' : entry.state === 'heavy' ? 'Heavily damaged' : entry.state === 'damaged' ? 'Damaged' : 'Intact';
     this.activeInspector = { type: 'fortification', id: entry.id };
@@ -5359,10 +5562,58 @@ export default class TownScene extends Phaser.Scene {
     visual?.label?.setVisible(true); visual?.healthBg?.setVisible(true); visual?.healthBar?.setVisible(true);
   }
 
+  getConnectedFortificationStretch(entry) {
+    const connected = [];
+    const queue = [entry];
+    const seen = new Set();
+    while (queue.length && connected.length < 150) {
+      const current = queue.shift();
+      if (!current || seen.has(current.id) || current.state === 'breached') continue;
+      seen.add(current.id);
+      connected.push(current);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const neighbor = this.getFortificationAt(current.x + dx, current.y + dy);
+        if (neighbor && !seen.has(neighbor.id)) queue.push(neighbor);
+      }
+    }
+    return connected;
+  }
+
+  selectFortification(entry) {
+    this.clearSelection(false);
+    const marker = this.add.graphics().setDepth(4848);
+    const stretch = this.getConnectedFortificationStretch(entry);
+    for (const section of stretch) {
+      this.drawPolygon(marker, this.insetPoints(this.getVisualTilePoints(section.x, section.y), 0.82), 0x8fb7c9, 0.035, 0x8fb7c9, 0.16, 1);
+    }
+    this.drawPolygon(marker, this.insetPoints(this.getVisualTilePoints(entry.x, entry.y), 0.76), 0xf6c945, 0.12, 0xffe08a, 0.95, 2);
+    this.selectionMarker = marker;
+  }
+
+  getFriendlyActorsOnGate(entry) {
+    const point = this.gridTileVisualCenter(entry.x, entry.y);
+    return [...(this.heroes || []), ...(this.serviceWalkers || []), ...(this.carriers || [])]
+      .filter((unit) => unit.container?.active && Phaser.Math.Distance.Between(unit.container.x, unit.container.y, point.x, point.y) < 26);
+  }
+
+  setGateState(entry, open, retry = 0) {
+    if (!open && !canCloseGateSafely(this.getFriendlyActorsOnGate(entry).length)) {
+      if (retry < 3) this.time.delayedCall(500, () => {
+        if (this.setGateState(entry, false, retry + 1)) this.saveGame(false);
+      });
+      else this.game.events.emit('gwg-event', `${getFortificationDefinition(entry.type).name} stayed open because traffic remained inside the collision area.`);
+      return false;
+    }
+    entry.open = open;
+    this.refreshFortificationVisuals(entry);
+    this.recalculatePerimeter();
+    return true;
+  }
+
   getBestFortificationWorker(entry) {
     const world = this.gridTileVisualCenter(entry.x, entry.y);
     return this.getActiveHeroes()
-      .filter((hero) => hero.state !== 'away' && !hero.stats.deathDay && !this.isHeroInjured(hero) && !hero.combatTargetId)
+      .filter((hero) => hero.state !== 'away' && !hero.stats.deathDay && !this.isHeroInjured(hero) && !hero.combatTargetId && !hero.defenceOrder)
       .map((hero) => ({ hero, distance: Phaser.Math.Distance.Between(hero.container.x, hero.container.y, world.x, world.y) }))
       .sort((a, b) => a.distance - b.distance)[0]?.hero || null;
   }
@@ -5382,10 +5633,11 @@ export default class TownScene extends Phaser.Scene {
     this.applyDeltas({ gold: -goldCost });
     this.townInventory[material] -= materialCost;
     const world = this.gridTileVisualCenter(entry.x, entry.y);
+    hero.defenceOrder = { type: 'fortification', id: entry.id, action: 'repair' };
     this.walkTo(hero, { id: entry.id, name: def.name, x: world.x, y: world.y, h: 32, intentAction: `Repairing ${def.name}`, reason: 'Assigned perimeter repair.', risk: 'Moderate' }, () => {
-      entry.health = entry.maxHealth;
-      entry.state = 'intact';
-      entry.recentRepairs = [...(entry.recentRepairs || []), { day: this.day, heroId: hero.def.id, cost: goldCost }].slice(-FORTIFICATION_LIMITS.repairHistory);
+      repairFortification(entry, Infinity, this.day, hero.def.id);
+      entry.recentRepairs[entry.recentRepairs.length - 1].cost = goldCost;
+      hero.defenceOrder = null;
       hero.currentAction = `Repaired ${def.name}`;
       this.refreshFortificationVisuals(entry);
       this.recalculatePerimeter();
@@ -5426,9 +5678,7 @@ export default class TownScene extends Phaser.Scene {
     const entry = (this.cityState.fortifications || []).find((item) => item.id === id);
     if (!entry) return;
     if (action === 'open' || action === 'close') {
-      entry.open = action === 'open';
-      this.refreshFortificationVisuals(entry);
-      this.recalculatePerimeter();
+      if (!this.setGateState(entry, action === 'open')) return;
       this.addTownLog(`${getFortificationDefinition(entry.type).name} ${entry.open ? 'opened for traffic' : 'sealed against optimism'}.`, 'defense');
     } else if (action === 'repair') this.assignFortificationRepair(entry);
     else if (action === 'station') this.stationHeroAtFortification(entry);
@@ -5488,7 +5738,7 @@ export default class TownScene extends Phaser.Scene {
       ) {
         const cell = this.worldToBuildGrid(world.x, world.y);
         if (this.buildMode.kind === 'road') this.addRoadPlanCell(cell.x, cell.y);
-        else this.addFortificationPlanCell(cell.x, cell.y);
+        else this.updateFortificationDragPlan(cell.x, cell.y);
       }
     });
     this.buildInputZone.on('pointerdown', (pointer) => {
@@ -5497,7 +5747,13 @@ export default class TownScene extends Phaser.Scene {
         return;
       }
       if (this.buildMode?.kind === 'road') this.roadPaintSession = new Set();
-      if (this.isFortificationLineMode()) this.fortificationPaintSession = new Set();
+      if (this.isFortificationLineMode()) {
+        const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const cell = this.worldToBuildGrid(world.x, world.y);
+        this.fortificationPaintSession = new Set();
+        this.fortificationDragStart = cell;
+        this.fortificationDragBasePlan = new Map(this.fortificationPlan || []);
+      }
     });
     this.buildInputZone.on('pointerup', (pointer) => {
       if (!this.buildMode) return;
@@ -5521,6 +5777,8 @@ export default class TownScene extends Phaser.Scene {
       if (this.isFortificationLineMode()) {
         const painted = (this.fortificationPaintSession?.size || 0) > 0;
         this.fortificationPaintSession = null;
+        this.fortificationDragStart = null;
+        this.fortificationDragBasePlan = null;
         if (!painted && !this.wasDragGesture(pointer)) {
           const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
           const cell = this.worldToBuildGrid(world.x, world.y);
@@ -5774,10 +6032,23 @@ export default class TownScene extends Phaser.Scene {
       if ((this.cityState.fortifications || []).length >= FORTIFICATION_LIMITS.maxSegments) {
         return { valid: false, reason: 'Fortification cap reached. The map has enough opinions about borders.', footprint };
       }
-      if (this.getFortificationAt(gridX, gridY)) return { valid: false, reason: 'A fortification already occupies this section.', footprint };
+      const existingFortification = this.getFortificationAt(gridX, gridY);
+      if (existingFortification) {
+        if (canReplaceWallWithGate(existingFortification, def.id, Boolean(cell?.road))) {
+          const cost = this.getFortificationResourceStatus(def.id, 1);
+          return {
+            valid: cost.affordable,
+            reason: cost.affordable ? 'Replace wall with a road-aligned gate.' : `Missing ${cost.missing.join(', ')}.`,
+            cost: cost.gold,
+            footprint,
+            replaceFortification: existingFortification,
+          };
+        }
+        return { valid: false, reason: isGate({ type: def.id }) ? 'A gate can replace a wall only where a road already runs underneath.' : 'A fortification already occupies this section.', footprint };
+      }
       if (cell?.occupiedBy) return { valid: false, reason: 'A building already occupies this defensive argument.', footprint };
       if (def.requiresRoad && !cell?.road) return { valid: false, reason: `${def.name} must be placed across an existing road.`, footprint };
-      if (!def.requiresRoad && cell?.road) return { valid: false, reason: 'Use a Gate or Gatehouse where the perimeter crosses a road.', footprint };
+      if (!def.requiresRoad && def.kind !== 'wall' && cell?.road) return { valid: false, reason: 'Use a Gate or Gatehouse where the perimeter crosses a road.', footprint };
       const cost = this.getFortificationResourceStatus(def.id, 1);
       return {
         valid: cost.affordable,
@@ -6105,7 +6376,21 @@ export default class TownScene extends Phaser.Scene {
     const def = getFortificationDefinition(this.buildMode.id);
     const cell = this.gridCells.get(gridKey(x, y));
     if (!def || !cell || cell.occupiedBy || this.getFortificationAt(x, y)) return false;
-    return def.requiresRoad ? Boolean(cell.road) : !cell.road;
+    return def.requiresRoad ? Boolean(cell.road) : def.kind === 'wall' || !cell.road;
+  }
+
+  updateFortificationDragPlan(x, y) {
+    if (!this.isFortificationLineMode() || !this.fortificationDragStart) return;
+    const line = getDominantAxisLine(this.fortificationDragStart, { x, y });
+    this.fortificationPlan = new Map(this.fortificationDragBasePlan || []);
+    this.fortificationPaintSession.clear();
+    for (const spot of line) {
+      const key = fortificationKey(spot.x, spot.y);
+      const valid = this.isFortificationPlanCellValid(spot.x, spot.y);
+      this.fortificationPlan.set(key, { ...spot, valid });
+      this.fortificationPaintSession.add(key);
+    }
+    this.refreshFortificationPlanPreview();
   }
 
   addFortificationPlanCell(x, y) {
@@ -6127,7 +6412,9 @@ export default class TownScene extends Phaser.Scene {
   }
 
   getFortificationPlanCost() {
-    return this.getFortificationResourceStatus(this.buildMode?.id, this.fortificationPlan?.size || 0);
+    const validCount = [...(this.fortificationPlan?.values() || [])]
+      .filter((spot) => this.isFortificationPlanCellValid(spot.x, spot.y)).length;
+    return this.getFortificationResourceStatus(this.buildMode?.id, validCount);
   }
 
   refreshFortificationPlanPreview() {
@@ -6136,8 +6423,11 @@ export default class TownScene extends Phaser.Scene {
     graphics.clear();
     if (!this.fortificationPlan?.size || !this.isFortificationLineMode()) { this.emitBuildModeState(); return; }
     const assessment = this.getFortificationPlanCost();
+    let invalidCount = 0;
     for (const spot of this.fortificationPlan.values()) {
-      const valid = this.isFortificationPlanCellValid(spot.x, spot.y) && assessment.affordable;
+      const tileValid = this.isFortificationPlanCellValid(spot.x, spot.y);
+      invalidCount += tileValid ? 0 : 1;
+      const valid = tileValid && assessment.affordable;
       this.drawPolygon(
         graphics,
         this.insetPoints(this.getVisualTilePoints(spot.x, spot.y), 0.8),
@@ -6148,12 +6438,18 @@ export default class TownScene extends Phaser.Scene {
         2,
       );
     }
-    this.emitBuildModeState({ reason: assessment.affordable ? '' : `Missing ${assessment.missing.join(', ')}.` });
+    this.emitBuildModeState({
+      reason: invalidCount
+        ? `${invalidCount} invalid section${invalidCount === 1 ? '' : 's'} will not be built.`
+        : assessment.affordable ? '' : `Missing ${assessment.missing.join(', ')}.`,
+    });
   }
 
   clearFortificationPlan() {
     this.fortificationPlan?.clear();
     this.fortificationPaintSession = null;
+    this.fortificationDragStart = null;
+    this.fortificationDragBasePlan = null;
     this.fortificationPlanGraphics?.clear();
   }
 
@@ -6162,7 +6458,7 @@ export default class TownScene extends Phaser.Scene {
     return normalizeFortifications([{
       id: `fort-${type}-${x}-${y}-${this.day}-${Math.floor(Math.random() * 100000)}`,
       type, x, y, health: def.maxHealth, maxHealth: def.maxHealth, armour: def.armour,
-      open: isGate({ type }), construction: 1, state: 'intact', createdDay: this.day,
+      open: isGate({ type }), construction: 0.2, state: 'intact', createdDay: this.day,
     }])[0];
   }
 
@@ -6173,24 +6469,46 @@ export default class TownScene extends Phaser.Scene {
   }
 
   placeFortification(x, y, type) {
-    if (!this.isFortificationPlanCellValid(x, y)) {
-      const result = this.validateBuildPlacement(x, y);
-      if (!result.valid) this.game.events.emit('gwg-event', result.reason);
-      return false;
-    }
+    const result = this.validateBuildPlacement(x, y);
+    if (!result.valid) { this.game.events.emit('gwg-event', result.reason); return false; }
     if (!this.spendFortificationCost(type, 1)) {
       const assessment = this.getFortificationResourceStatus(type, 1);
       this.game.events.emit('gwg-event', `Cannot build ${getFortificationDefinition(type).name}: ${assessment.missing.join(', ')}.`);
       return false;
     }
-    const entry = this.createFortificationRecord(type, x, y);
-    this.addFortificationRecord(entry);
-    this.recalculatePerimeter();
+    let entry;
+    if (result.replaceFortification) {
+      entry = replaceWallWithGate(result.replaceFortification, type);
+      const index = this.cityState.fortifications.findIndex((item) => item.id === result.replaceFortification.id);
+      this.cityState.fortifications[index] = entry;
+      this.rebuildFortificationIndex();
+      this.refreshFortificationVisuals(entry);
+      this.addTownLog(`${getFortificationDefinition(type).name} inserted into the wall without deleting the road underneath.`, 'defense');
+    } else {
+      entry = this.createFortificationRecord(type, x, y);
+      this.addFortificationRecord(entry);
+    }
+    this.startFortificationConstruction([entry]);
     this.redrawWildernessDressing();
     this.addTownLog(`${getFortificationDefinition(type).name} placed. ${this.getFortificationFlavor(entry)}`, 'defense');
     this.saveGame(false);
     this.showFortificationInspector(entry);
     return true;
+  }
+
+  startFortificationConstruction(entries) {
+    if (!entries?.length) return;
+    entries.forEach((entry, index) => {
+      entry.construction = Math.min(entry.construction || 0.2, 0.2);
+      this.refreshFortificationVisuals(entry);
+      this.time.delayedCall(360 + index * 75, () => {
+        if (!this.getFortificationAt(entry.x, entry.y)) return;
+        entry.construction = 1;
+        this.refreshFortificationVisuals(entry);
+        if (index === entries.length - 1 || index % 12 === 0) this.recalculatePerimeter();
+        if (index === entries.length - 1) this.saveGame(false);
+      });
+    });
   }
 
   confirmFortificationPlan() {
@@ -6202,8 +6520,9 @@ export default class TownScene extends Phaser.Scene {
       return;
     }
     this.spendFortificationCost(this.buildMode.id, valid.length);
-    for (const spot of valid) this.addFortificationRecord(this.createFortificationRecord(this.buildMode.id, spot.x, spot.y));
-    this.recalculatePerimeter();
+    const entries = valid.map((spot) => this.createFortificationRecord(this.buildMode.id, spot.x, spot.y));
+    for (const entry of entries) this.addFortificationRecord(entry);
+    this.startFortificationConstruction(entries);
     this.redrawWildernessDressing();
     const def = getFortificationDefinition(this.buildMode.id);
     this.addTownLog(`${valid.length} ${def.name} section${valid.length === 1 ? '' : 's'} completed. Geography has acknowledged the boundary.`, 'defense');
@@ -6292,8 +6611,8 @@ export default class TownScene extends Phaser.Scene {
       kind: this.buildMode.kind,
       label: definition?.name || this.buildMode.id,
       cost: this.buildMode.kind === 'road' ? this.getRoadPlanCost() : this.isFortificationLineMode() ? this.getFortificationPlanCost().gold : definition?.cost || 0,
-      footprint: this.buildMode.kind === 'road' ? `${this.roadPlan?.size || 0} tiles` : this.isFortificationLineMode() ? `${this.fortificationPlan?.size || 0} sections` : undefined,
-      planCount: this.buildMode.kind === 'road' ? (this.roadPlan?.size || 0) : this.isFortificationLineMode() ? (this.fortificationPlan?.size || 0) : 0,
+      footprint: this.buildMode.kind === 'road' ? `${this.roadPlan?.size || 0} tiles` : this.isFortificationLineMode() ? `${[...(this.fortificationPlan?.values() || [])].filter((spot) => this.isFortificationPlanCellValid(spot.x, spot.y)).length} valid sections` : undefined,
+      planCount: this.buildMode.kind === 'road' ? (this.roadPlan?.size || 0) : this.isFortificationLineMode() ? [...(this.fortificationPlan?.values() || [])].filter((spot) => this.isFortificationPlanCellValid(spot.x, spot.y)).length : 0,
       planCost: this.buildMode.kind === 'road' ? this.getRoadPlanCost() : this.isFortificationLineMode() ? this.getFortificationPlanCost().gold : 0,
       ...extra,
     });
@@ -12847,6 +13166,23 @@ export default class TownScene extends Phaser.Scene {
         place,
       });
     }
+    for (const entry of this.cityState.fortifications || []) {
+      const def = getFortificationDefinition(entry.type);
+      if (!['tower', 'gatehouse'].includes(def?.kind) || entry.state === 'breached' || entry.construction < 1) continue;
+      const point = this.gridTileVisualCenter(entry.x, entry.y);
+      const damageFactor = entry.health / Math.max(1, entry.maxHealth) < 0.35 ? 0.42 : entry.health < entry.maxHealth ? 0.72 : 1;
+      detectors.push({
+        id: `fortification:${entry.id}`,
+        kind: def.kind === 'tower' ? 'guard_tower' : 'gatehouse',
+        name: def.name,
+        x: point.x,
+        y: point.y,
+        radius: (def.detectionRadius || 250) * damageFactor,
+        reactionMs: 280,
+        reliability: 0.94 * damageFactor,
+        fortification: entry,
+      });
+    }
     for (const hero of this.getActiveHeroes()) {
       if (!hero.container?.active || hero.state === 'inside' || hero.stats.deathDay) continue;
       detectors.push({ id: `hero:${hero.def.id}`, kind: 'hero', name: hero.def.name, x: hero.container.x, y: hero.container.y, ...DETECTOR_PROFILES.hero, unit: hero });
@@ -12963,12 +13299,11 @@ export default class TownScene extends Phaser.Scene {
     }
     this.time.delayedCall(1500, () => {
       if (!actor?.container?.active) return;
+      let closed = 0;
       for (const gate of openGates) {
-        gate.open = false;
-        this.refreshFortificationVisuals(gate);
+        if (this.setGateState(gate, false)) closed += 1;
       }
-      this.recalculatePerimeter();
-      this.addTownLog(`${openGates.length} gate${openGates.length === 1 ? '' : 's'} sealed after the raid warning. Commerce has been asked to wait outside.`, 'defense');
+      if (closed) this.addTownLog(`${closed} gate${closed === 1 ? '' : 's'} sealed after the raid warning. Commerce has been asked to wait outside.`, 'defense');
     });
   }
 
@@ -13107,9 +13442,13 @@ export default class TownScene extends Phaser.Scene {
       })),
       actions: [
         { label: `Priority: ${priority.name}`, event: 'gwg-defense-policy', id: 'cycle' },
+        { label: 'Focus Raid', event: 'gwg-defense-action', id: `fortifications|focus-raid` },
         { label: 'Close Gates', event: 'gwg-defense-action', id: `fortifications|close-gates` },
-        { label: 'Open Gates', event: 'gwg-defense-action', id: `fortifications|open-gates` },
+        { label: 'Rally Defenders', event: 'gwg-defense-action', id: `fortifications|rally` },
         { label: 'Defend Weakest', event: 'gwg-defense-action', id: `fortifications|defend-weakest` },
+        { label: 'Repair Breach', event: 'gwg-defense-action', id: `fortifications|repair-breach` },
+        { label: 'Evacuate Civilians', event: 'gwg-defense-action', id: `fortifications|evacuate` },
+        { label: 'Open Gates', event: 'gwg-defense-action', id: `fortifications|open-gates` },
         { label: 'Open Threat Log', event: 'gwg-open-town-log' },
       ],
     });
@@ -13132,7 +13471,11 @@ export default class TownScene extends Phaser.Scene {
       if (action === 'close-gates') this.setAllFortificationGates(false);
       else if (action === 'open-gates') this.setAllFortificationGates(true);
       else if (action === 'defend-weakest') this.defendWeakestFortification();
-      if (action !== 'defend-weakest') this.showDefenceAlerts();
+      else if (action === 'focus-raid') this.focusCurrentRaid();
+      else if (action === 'rally') this.rallyFortificationDefenders();
+      else if (action === 'repair-breach') this.repairMostUrgentBreach();
+      else if (action === 'evacuate') this.evacuateExposedCivilians();
+      if (!['defend-weakest', 'focus-raid'].includes(action)) this.showDefenceAlerts();
       return;
     }
     const actor = this.activeMonsterActors?.find((entry) => entry.id === actorId && entry.container?.active);
@@ -13183,7 +13526,7 @@ export default class TownScene extends Phaser.Scene {
   getBestDefenderForMonster(actor) {
     const priority = DEFENCE_PRIORITIES[this.defenceState.priority] || DEFENCE_PRIORITIES.balanced;
     return this.getActiveHeroes()
-      .filter((hero) => hero.state !== 'away' && !hero.stats.deathDay && !this.isHeroInjured(hero) && !hero.stats.gatheringNodeId && !hero.combatTargetId)
+      .filter((hero) => hero.state !== 'away' && !hero.stats.deathDay && !this.isHeroInjured(hero) && !hero.stats.gatheringNodeId && !hero.combatTargetId && !hero.defenceOrder)
       .map((hero) => {
         const distance = Phaser.Math.Distance.Between(hero.container.x, hero.container.y, actor.container.x, actor.container.y);
         const equipment = this.getHeroEquipmentBonus(hero);
@@ -13634,10 +13977,7 @@ export default class TownScene extends Phaser.Scene {
         const actorOutside = this.perimeterSummary.outside.has(fortificationKey(actorCell.x, actorCell.y));
         const targetInside = this.perimeterSummary.inside.has(fortificationKey(targetCell.x, targetCell.y));
         if (actorOutside && targetInside) {
-          const passage = (this.cityState.fortifications || [])
-            .filter((entry) => entry.state === 'breached' || (isGate(entry) && entry.open))
-            .map((entry) => ({ entry, score: Math.hypot(entry.x - actorCell.x, entry.y - actorCell.y) + Math.hypot(entry.x - targetCell.x, entry.y - targetCell.y) }))
-            .sort((a, b) => a.score - b.score)[0]?.entry;
+          const passage = chooseFortificationPassage(this.cityState.fortifications || [], actorCell, targetCell);
           if (passage) {
             const approach = this.gridTileVisualCenter(passage.x, passage.y);
             actor.approachPoint = { ...approach, x: approach.x, y: approach.y, fortificationId: passage.id, name: getFortificationDefinition(passage.type).name };

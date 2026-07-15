@@ -243,6 +243,52 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
     forts.getFortificationVariant(forts.getFortificationMask(index, 0, 8)) === 'endpoint'
     && forts.getFortificationVariant(forts.getFortificationMask(index, 50, 8)) === 'straight');
 
+  const center = forts.normalizeFortification({ id: 'center', type: 'palisade', x: 4, y: 4 });
+  const neighbors = [
+    forts.normalizeFortification({ id: 'n', type: 'palisade', x: 4, y: 3 }),
+    forts.normalizeFortification({ id: 'e', type: 'palisade', x: 5, y: 4 }),
+    forts.normalizeFortification({ id: 's', type: 'palisade', x: 4, y: 5 }),
+    forts.normalizeFortification({ id: 'w', type: 'palisade', x: 3, y: 4 }),
+  ];
+  const allMaskNames = new Set();
+  for (let expected = 0; expected < 16; expected += 1) {
+    const entries = [center, ...neighbors.filter((_, index) => expected & (1 << index))];
+    const maskIndex = new Map(entries.map((entry) => [forts.fortificationKey(entry.x, entry.y), entry]));
+    const actual = forts.getFortificationMask(maskIndex, 4, 4);
+    allMaskNames.add(forts.getFortificationMaskName(actual));
+    check(`fortification adjacency mask ${expected}`, actual === expected);
+  }
+  check('all 16 fortification mask names are distinct', allMaskNames.size === 16);
+
+  const horizontal = forts.getDominantAxisLine({ x: 2, y: 2 }, { x: 8, y: 5 });
+  const vertical = forts.getDominantAxisLine({ x: 8, y: 8 }, { x: 6, y: 2 });
+  check('dominant-axis drag produces clean horizontal line', horizontal.length === 7 && horizontal.every((spot) => spot.y === 2));
+  check('dominant-axis drag produces clean vertical line', vertical.length === 7 && vertical.every((spot) => spot.x === 8));
+
+  const roadWall = forts.normalizeFortification({ id: 'road-wall', type: 'palisade', x: 4, y: 1 });
+  check('gate replacement requires wall and preserved road',
+    forts.canReplaceWallWithGate(roadWall, 'gate', true)
+    && !forts.canReplaceWallWithGate(roadWall, 'gate', false));
+  const replacement = forts.replaceWallWithGate(roadWall, 'gate');
+  check('gate replacement retains identity and coordinates',
+    replacement.id === roadWall.id && replacement.x === roadWall.x && replacement.y === roadWall.y && replacement.open);
+  check('open and closed gates have distinct passability',
+    !forts.isFortificationBlocking(replacement)
+    && forts.isFortificationBlocking(forts.normalizeFortification({ ...replacement, open: false, construction: 1 })));
+  check('gate closure safety rejects an occupied collision cell',
+    forts.canCloseGateSafely(0) && !forts.canCloseGateSafely(1));
+
+  const replacementLine = [
+    forts.normalizeFortification({ id: 'replacement-left', type: 'palisade', x: 3, y: 1 }),
+    replacement,
+    forts.normalizeFortification({ id: 'replacement-right', type: 'palisade', x: 5, y: 1 }),
+  ];
+  const replacementIndex = new Map(replacementLine.map((entry) => [forts.fortificationKey(entry.x, entry.y), entry]));
+  replacementIndex.delete(forts.fortificationKey(replacement.x, replacement.y));
+  check('gate removal refreshes neighboring wall topology',
+    forts.getFortificationMask(replacementIndex, 3, 1) === 0
+    && forts.getFortificationMask(replacementIndex, 5, 1) === 0);
+
   const ring = [];
   for (let x = 1; x <= 5; x += 1) {
     ring.push(forts.normalizeFortification({ id: `top-${x}`, type: 'stone_wall', x, y: 1 }));
@@ -262,15 +308,36 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
   const open = forts.computePerimeter(8, 8, gateRing, [{ id: 'hall', gridX: 3, gridY: 3 }]);
   check('open gate makes the perimeter traversable and exposed', !open.complete && open.inside.size === 0);
 
+  const breachedRing = ring.map((entry) => entry.id === 'top-3'
+    ? forts.normalizeFortification({ ...entry, health: 0 })
+    : entry);
+  const breachedPerimeter = forts.computePerimeter(8, 8, breachedRing, [{ id: 'hall', gridX: 3, gridY: 3 }]);
+  check('breached wall recalculates perimeter as incomplete',
+    !breachedPerimeter.complete && breachedPerimeter.breached.length === 1 && breachedPerimeter.inside.size === 0);
+
   const gate = forts.normalizeFortification({ id: 'gate', type: 'gate', x: 3, y: 1, open: false, health: 10 });
   const hit = forts.damageFortification(gate, 40, 8, 'Goblin Raider');
   check('siege damage creates a passable breach with capped history',
     hit.breached && gate.state === 'breached' && !forts.isFortificationBlocking(gate) && gate.recentAttacks.length === 1);
+  forts.repairFortification(gate, Infinity, 9, 'repair-hero');
+  check('breach repair restores intact blocking state', gate.state === 'intact' && gate.health === gate.maxHealth && forts.isFortificationBlocking(gate));
+
+  const openPassage = forts.normalizeFortification({ id: 'open-passage', type: 'gate', x: 3, y: 4, open: true });
+  const breachedPassage = forts.normalizeFortification({ id: 'breach-passage', type: 'stone_wall', x: 7, y: 4, health: 0 });
+  check('monster passage choice prefers nearby open gate or breach',
+    forts.chooseFortificationPassage([openPassage, breachedPassage], { x: 1, y: 4 }, { x: 9, y: 4 })?.id === 'open-passage');
 
   const weakGate = forts.normalizeFortification({ id: 'weak-gate', type: 'gate', x: 4, y: 4, open: false, health: 20 });
   const strongWall = forts.normalizeFortification({ id: 'strong-wall', type: 'stone_wall', x: 5, y: 4 });
   check('siege target choice prefers a weak nearby gate',
     forts.chooseFortificationTarget([strongWall, weakGate], { x: 3, y: 4 }, { x: 8, y: 4 }, 'goblin_raider')?.id === 'weak-gate');
+
+  const stress = Array.from({ length: 150 }, (_, index) => forts.normalizeFortification({
+    id: `stress-${index}`, type: index % 3 ? 'palisade' : 'stone_wall', x: index % 50, y: 10 + Math.floor(index / 50),
+  }));
+  check('150-segment fixture stays normalized and indexed',
+    forts.normalizeFortifications(stress).length === 150
+    && new Map(stress.map((entry) => [forts.fortificationKey(entry.x, entry.y), entry])).size === 150);
 }
 
 // --- 3. corrupted JSON opens the failure path -------------------------------

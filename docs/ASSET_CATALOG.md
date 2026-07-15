@@ -448,3 +448,26 @@ Two generated building-preview candidates were rejected because the preview
 render was nearly black. The checked-in previews are separate 112x112
 nearest-neighbour derivatives of accepted world art, not enlarged preview art
 used as world sprites.
+
+## 2026-07 Dedicated Fortifications
+
+| Asset key | File | Use | Status |
+| --- | --- | --- | --- |
+| `fort_palisade_straight` | `assets/fortifications/palisade_straight_nw_se.png` | Palisade endpoints/straights and composited junctions | Final |
+| `fort_palisade_corner` | `assets/fortifications/palisade_corner_ne.png` | Palisade corner masks | Final |
+| `fort_palisade_damaged` / `_heavy` / `_breached` | matching PNGs | Palisade damage states | Final |
+| `fort_stone_straight` | `assets/fortifications/stone_wall_straight_nw_se.png` | Stone endpoints/straights and composited junctions | Final |
+| `fort_stone_damaged` / `_heavy` / `_breached` | matching PNGs | Stone damage states | Final |
+| `fort_gate_wood_open` / `_closed` / `_damaged` / `_breached` | matching PNGs | Wooden gate state family | Final |
+| `fort_gatehouse_open` / `_closed` | matching PNGs | Reinforced gatehouse traffic states | Final |
+| `fort_tower_wood` | `assets/fortifications/tower_wood.png` | Guard-tower world art | Final |
+| `fort_tower_stone` | `assets/fortifications/tower_stone.png` | Future stone-tower tier | Final, not yet selectable |
+
+All fortification art is transparent 96x64 low-top-down pixel art with stable
+bottom anchors and no terrain island. Exact masks are selected from the
+cardinal adjacency bitmask; T and cross masks compose dedicated straight art
+rather than falling back to unrelated fences. The rejected generated
+gatehouse-damage candidate resembled a generic wall, so damaged gatehouses and
+towers currently preserve their base architecture with runtime damage tint.
+PixelLab credits ended before coherent dedicated damaged variants could be
+rerolled; manifest fallbacks remain explicit and safe.

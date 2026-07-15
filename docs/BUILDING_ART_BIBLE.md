@@ -126,3 +126,19 @@ selection, build mode, accessibility mode, or relevant alerts. NPCs, monsters,
 loot/remains, and small props keep priority over buildings. Building selection
 uses the footprint diamond and visible lower silhouette so an NPC in front of a
 roof remains clickable.
+
+## Fortification Family
+
+Walls, gates, gatehouses, and towers use the same restrained timber/stone
+materials, top-left light, outline weight, and 64x32 world projection as the
+town buildings. Source canvases may be 96x64, but their bottom-centre ground
+anchor must stay fixed across open, damaged, and breached states. Wall pieces
+must touch at tile centre and tile-edge connection points without a baked
+grass square. Breached art must leave an obvious traversable gap and cannot
+retain an invisible blocking collider.
+
+Adjacency art follows the project's four-bit cardinal mask. Straights and
+junction branches may be composed from dedicated transparent pieces when this
+preserves exact connections better than generating 16 inconsistent canvases.
+Damage state art takes precedence over decorative junction detail so health
+changes never shift the ground contact or imply that a breach still blocks.

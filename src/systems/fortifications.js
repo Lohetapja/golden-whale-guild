@@ -4,27 +4,27 @@ export const FORTIFICATION_TYPES = Object.freeze({
   palisade: definition('palisade', 'Wooden Palisade', {
     kind: 'wall', cost: 12, resources: { wood: 1 }, maxHealth: 70, armour: 1,
     description: 'Cheap connected timber defence. Easy to repair and equally easy to regret.',
-    assetKey: 'object_fence_corner', previewAssetKey: 'object_fence_corner',
+    assetKey: 'fort_palisade_straight', previewAssetKey: 'fort_palisade_straight',
   }),
   stone_wall: definition('stone_wall', 'Stone Wall', {
     kind: 'wall', cost: 30, resources: { iron: 1, planks: 1 }, maxHealth: 170, armour: 5,
     description: 'A durable perimeter section built from masonry, iron braces, and municipal confidence.',
-    assetKey: 'object_fence_corner', previewAssetKey: 'object_fence_corner',
+    assetKey: 'fort_stone_straight', previewAssetKey: 'fort_stone_straight',
   }),
   gate: definition('gate', 'Gate', {
     kind: 'gate', cost: 64, resources: { wood: 2, iron: 1 }, maxHealth: 105, armour: 2,
     description: 'Road-compatible traffic control. Civilians pass; monsters require structural criticism.',
-    assetKey: 'poi_paywall_gate', previewAssetKey: 'poi_paywall_gate', requiresRoad: true,
+    assetKey: 'fort_gate_wood_closed', previewAssetKey: 'fort_gate_wood_closed', requiresRoad: true,
   }),
   guard_tower: definition('guard_tower', 'Guard Tower', {
     kind: 'tower', cost: 190, resources: { wood: 3, iron: 2 }, maxHealth: 145, armour: 4,
     description: 'Detects raids, supports nearby defenders, and provides a commanding view of the problem.',
-    assetKey: 'building_watchtower', previewAssetKey: 'building_watchtower', detectionRadius: 330,
+    assetKey: 'fort_tower_wood', previewAssetKey: 'fort_tower_wood', detectionRadius: 330,
   }),
   gatehouse: definition('gatehouse', 'Reinforced Gatehouse', {
     kind: 'gatehouse', cost: 285, resources: { planks: 3, iron: 4 }, maxHealth: 260, armour: 7,
     description: 'A fortified road entrance with guard capacity and much more expensive hinges.',
-    assetKey: 'building_dungeon_gate', previewAssetKey: 'building_dungeon_gate', requiresRoad: true, detectionRadius: 260,
+    assetKey: 'fort_gatehouse_closed', previewAssetKey: 'fort_gatehouse_closed', requiresRoad: true, detectionRadius: 260,
   }),
 });
 
@@ -111,18 +111,83 @@ export function isGate(fortification) {
 }
 
 export function isFortificationBlocking(fortification) {
-  if (!fortification || fortification.health <= 0 || fortification.state === 'breached') return false;
+  if (!fortification || fortification.construction < 1 || fortification.health <= 0 || fortification.state === 'breached') return false;
   if (isGate(fortification)) return !fortification.open;
   return true;
 }
 
+export function canCloseGateSafely(friendlyActorCount = 0) {
+  return Math.max(0, Number(friendlyActorCount) || 0) === 0;
+}
+
 export function getFortificationMask(index, x, y) {
+  const connects = (nx, ny) => {
+    const neighbor = index.get(fortificationKey(nx, ny));
+    return Boolean(neighbor && neighbor.state !== 'breached' && neighbor.health > 0);
+  };
   let mask = 0;
-  if (index.has(fortificationKey(x, y - 1))) mask |= 1;
-  if (index.has(fortificationKey(x + 1, y))) mask |= 2;
-  if (index.has(fortificationKey(x, y + 1))) mask |= 4;
-  if (index.has(fortificationKey(x - 1, y))) mask |= 8;
+  if (connects(x, y - 1)) mask |= 1;
+  if (connects(x + 1, y)) mask |= 2;
+  if (connects(x, y + 1)) mask |= 4;
+  if (connects(x - 1, y)) mask |= 8;
   return mask;
+}
+
+export const FORTIFICATION_MASK_NAMES = Object.freeze({
+  0: 'isolated', 1: 'endpoint-north', 2: 'endpoint-east', 3: 'corner-north-east',
+  4: 'endpoint-south', 5: 'straight-north-south', 6: 'corner-east-south', 7: 't-north-east-south',
+  8: 'endpoint-west', 9: 'corner-west-north', 10: 'straight-east-west', 11: 't-west-north-east',
+  12: 'corner-south-west', 13: 't-south-west-north', 14: 't-east-south-west', 15: 'crossroad',
+});
+
+export function getFortificationMaskName(mask) {
+  return FORTIFICATION_MASK_NAMES[mask & 15] || 'isolated';
+}
+
+export function getDominantAxisLine(start, end) {
+  if (!start || !end) return [];
+  const dx = Math.floor(Number(end.x) || 0) - Math.floor(Number(start.x) || 0);
+  const dy = Math.floor(Number(end.y) || 0) - Math.floor(Number(start.y) || 0);
+  const useX = Math.abs(dx) >= Math.abs(dy);
+  const distance = Math.abs(useX ? dx : dy);
+  const step = Math.sign(useX ? dx : dy) || 1;
+  return Array.from({ length: distance + 1 }, (_, index) => ({
+    x: Math.floor(Number(start.x) || 0) + (useX ? index * step : 0),
+    y: Math.floor(Number(start.y) || 0) + (useX ? 0 : index * step),
+  }));
+}
+
+export function canReplaceWallWithGate(existing, gateType, hasRoad) {
+  const existingDef = getFortificationDefinition(existing?.type);
+  const gateDef = getFortificationDefinition(gateType);
+  return Boolean(existing && existingDef?.kind === 'wall' && isGate({ type: gateType }) && gateDef?.requiresRoad && hasRoad);
+}
+
+export function replaceWallWithGate(existing, gateType) {
+  if (!canReplaceWallWithGate(existing, gateType, true)) return null;
+  const def = getFortificationDefinition(gateType);
+  return normalizeFortification({
+    ...existing,
+    type: gateType,
+    health: def.maxHealth,
+    maxHealth: def.maxHealth,
+    armour: def.armour,
+    state: 'intact',
+    open: true,
+    construction: 0.2,
+    defenderId: null,
+  });
+}
+
+export function repairFortification(fortification, amount = Infinity, day = 1, workerId = null) {
+  const before = fortification.health;
+  fortification.health = Math.min(fortification.maxHealth, fortification.health + Math.max(0, Number(amount) || 0));
+  fortification.state = fortification.health >= fortification.maxHealth
+    ? 'intact'
+    : fortification.health <= fortification.maxHealth * 0.32 ? 'heavy' : 'damaged';
+  fortification.recentRepairs = [...(fortification.recentRepairs || []), { day, workerId, amount: fortification.health - before }]
+    .slice(-FORTIFICATION_LIMITS.repairHistory);
+  return fortification.health - before;
 }
 
 export function getFortificationVariant(mask) {
@@ -222,4 +287,15 @@ export function chooseFortificationTarget(fortifications, actorCell, desiredCell
     const priorityBonus = entry.priority ? 8 : 0;
     return { entry, score: actorDistance + targetDistance * 0.22 + healthRatio * 9 + entry.armour * 0.8 + gateBonus + priorityBonus };
   }).sort((a, b) => a.score - b.score)[0]?.entry || null;
+}
+
+export function chooseFortificationPassage(fortifications, actorCell, desiredCell) {
+  return fortifications
+    .filter((entry) => entry.state === 'breached' || (isGate(entry) && entry.open))
+    .map((entry) => ({
+      entry,
+      score: Math.hypot(entry.x - actorCell.x, entry.y - actorCell.y)
+        + Math.hypot(entry.x - desiredCell.x, entry.y - desiredCell.y) * 0.18,
+    }))
+    .sort((a, b) => a.score - b.score)[0]?.entry || null;
 }
