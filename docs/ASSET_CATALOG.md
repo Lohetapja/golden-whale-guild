@@ -14,7 +14,7 @@ by `BUILDING_ART_BIBLE.md`. The current pass/fail inventory is maintained in
 | --- | --- | --- | --- |
 | `building_tavern` | `public/assets/buildings/building_tavern.png` | Tavern | PixelLab reference asset |
 | `building_blacksmith` | `public/assets/buildings/building_blacksmith.png` | Blacksmith | PixelLab reference asset |
-| `building_golden_whale` | `public/assets/buildings/building_golden_whale.png` | Golden Whale Milking Station | Unique functional fallback; too bright/icon-like to be a permanent style reference |
+| `building_golden_whale` | `public/assets/buildings/building_golden_whale.png` | Golden Whale Milking Station | Recovered grounded timber/stone PixelLab replacement; whale roof sign and restrained gold remain unique |
 | `building_guild_hall` | `public/assets/buildings/building_guild_hall.png` | Guild Hall | New PixelLab asset |
 | `building_market` | `public/assets/buildings/building_market.png` | Market | New PixelLab asset |
 | `building_training_yard` | `public/assets/buildings/building_training_yard.png` | Training Yard | Restored detailed fenced adult-combat yard |
@@ -36,8 +36,8 @@ by `BUILDING_ART_BIBLE.md`. The current pass/fail inventory is maintained in
 | `building_premium_fabricator` | `public/assets/buildings/building_premium_fabricator.png` | Premium Fabricator | Dedicated L1-L3 family; borderline excessive premium treatment |
 | `building_frontier_outpost` | `public/assets/buildings/building_frontier_outpost.png` | Frontier Outpost | Dedicated detailed world asset |
 | `building_whale_preview` | `public/assets/buildings/previews/building_whale_preview.png` | Golden Whale catalog preview | Separate preview role; copied from existing readable legacy art |
-| `building_vip_lounge_preview` | `public/assets/buildings/previews/building_vip_lounge_preview.png` | VIP Lounge catalog preview | Separate preview role; world replacement pending download |
-| `building_convenience_office_preview` | `public/assets/buildings/previews/building_convenience_office_preview.png` | Convenience Office catalog preview | Separate preview role; world replacement pending download |
+| `building_vip_lounge_preview` | `public/assets/buildings/previews/building_vip_lounge_preview.png` | VIP Lounge catalog preview | Separate preview role; grounded world replacement is integrated |
+| `building_convenience_office_preview` | `public/assets/buildings/previews/building_convenience_office_preview.png` | Convenience Office catalog preview | Separate preview role; grounded world replacement is integrated |
 | `building_gem_exchange_preview` | `public/assets/buildings/previews/building_gem_exchange_preview.png` | Gem Exchange catalog preview | Separate preview role; world replacement pending download |
 
 ### Building Mapping Audit (2026-07 Visual Pass)
@@ -404,3 +404,47 @@ These substitutions are explicitly fallback/debug art, not final assets.
 Runtime ownership now separates monster actor, dying transition, remains,
 loot, grave, evidence, and building damage overlays. This lets each object
 decay, move, clear, save, and receive click priority independently.
+
+## 2026-07 Content Expansion
+
+### Roads
+
+The world renderer now uses complete cardinal bitmask families at
+`public/assets/roads/{dirt,stone,premium}/road_<type>_00..15.png`. The Build
+Menu uses the same family (straight mask 5) for its preview. Square source art
+is nearest-neighbour affine-projected onto the live 64x32 isometric diamond;
+the old displaced lower diamond was removed so roads sit in the terrain plane.
+
+### Monster families
+
+| Family | Actor | Remains | Lair / source |
+| --- | --- | --- | --- |
+| Lootbox Mimic | `monster_loot_mimic` | `corpse_mimic_chest` | `poi_mimic_cache` |
+| Premium Slime | `monster_premium_slime` | `corpse_premium_slime` | `poi_premium_slime_pit` |
+| Paywall Troll | `monster_paywall_troll` | `corpse_paywall_troll` | `poi_paywall_gate` |
+| Daily Login Ghoul | `monster_daily_login_ghoul` | `corpse_login_ghoul` | `poi_login_crypt` |
+| Gacha Goblin | `monster_gacha_goblin` | `corpse_gacha_goblin` | `poi_gacha_camp` |
+| Subscription Wraith | `monster_subscription_wraith` | `corpse_subscription_residue` | `poi_contract_shrine` |
+| Patch-Note Necromancer | `monster_patch_note_necromancer` | `corpse_necromancer_archive` | `poi_patch_archive` |
+| Sponsored Bandit | `monster_sponsored_bandit` | `corpse_sponsored_bandit` | `poi_sponsored_bandit_camp` |
+
+Cardinal state sheets live at
+`public/assets/monsters/states/<family>/<state>_<direction>.png`. Missing sheets
+remain manifest-fallback-safe; the runtime never substitutes a fake tilt or bob
+when real frames exist.
+
+### Functional buildings
+
+| Building | Preview | World tiers | Gameplay role |
+| --- | --- | --- | --- |
+| Infirmary | `building_infirmary_preview` | `building_infirmary`, `_l2`, `_l3` | Treats injuries using potions |
+| Guard Barracks | `building_guard_barracks_preview` | `building_guard_barracks`, `_l2`, `_l3` | Local defence and patrol readiness |
+| Monster Hunter Lodge | `building_monster_hunter_lodge_preview` | `building_monster_hunter_lodge`, `_l2`, `_l3` | Lair pressure and bounty support |
+| Gravekeeper Hut | `building_gravekeeper_hut_preview` | `building_gravekeeper_hut`, `_l2`, `_l3` | Area-reputation recovery |
+| Caravan Depot | `building_caravan_depot_preview` | `building_caravan_depot`, `_l2`, `_l3` | Carrier capacity and logistics |
+| Loot Appraiser | `building_loot_appraiser_preview` | `building_loot_appraiser`, `_l2`, `_l3` | Loot appraisal into trade goods |
+
+Two generated building-preview candidates were rejected because the preview
+render was nearly black. The checked-in previews are separate 112x112
+nearest-neighbour derivatives of accepted world art, not enlarged preview art
+used as world sprites.

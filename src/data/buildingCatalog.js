@@ -315,6 +315,43 @@ export const BUILDING_CATALOG = [
     effect: 'Premium Salvage -> Premium Components, Corruption, and Envy.',
     flavor: 'The machine is powered by salvage and the phrase "best value".',
   }),
+  core('infirmary', 'Infirmary', 'Recovery / Support', 520, { w: 3, h: 2 }, 'Treats injured heroes and reduces recovery time.', {
+    capacity: 4,
+    effect: 'Consumes Potions to treat several injured heroes locally.',
+    flavor: 'The beds are clean. The injury waivers are cleaner.',
+  }),
+  core('guard_barracks', 'Guard Barracks', 'Defense / Missions', 640, { w: 3, h: 2 }, 'Houses guards and reinforces nearby patrol routes.', {
+    capacity: 5,
+    effect: 'Adds local guard capacity and faster defensive response.',
+    flavor: 'The guards sleep in shifts so danger can be disappointed around the clock.',
+  }),
+  core('monster_hunter_lodge', 'Monster Hunter Lodge', 'Defense / Missions', 760, { w: 3, h: 2 }, 'Organizes lair hunts, tracking, and ambitious scar collection.', {
+    capacity: 4,
+    unlockKey: 'rank2',
+    lockReason: 'Reach Recognized Settlement and discover a hostile lair.',
+    effect: 'Improves tracking, lair suppression, and monster loot recovery.',
+    flavor: 'Every mounted trophy is a former scheduling conflict.',
+  }),
+  core('gravekeeper_hut', 'Gravekeeper Hut', 'Public Order / Social', 360, { w: 2, h: 2 }, 'Maintains memorials and softens morale loss after hero deaths.', {
+    capacity: 6,
+    effect: 'Improves memorial care and reduces repeated-death reputation damage.',
+    flavor: 'The quietest customer service desk in town.',
+  }),
+  core('caravan_depot', 'Caravan Depot', 'Production', 820, { w: 3, h: 3 }, 'Coordinates long routes, cargo recovery, and frontier deliveries.', {
+    capacity: 8,
+    unlockKey: 'rank2',
+    lockReason: 'Reach Recognized Settlement and operate a frontier route.',
+    effect: 'Adds carrier capacity and improves long-distance route reliability.',
+    flavor: 'Every manifest is accurate within one bandit and two excuses.',
+  }),
+  core('loot_appraiser', 'Loot Appraiser', 'Economy / Shady', 580, { w: 3, h: 2 }, 'Sorts recovered loot into trade goods, equipment, and emotional damage.', {
+    capacity: 5,
+    kind: 'mixed',
+    unlockKey: 'rank1',
+    lockReason: 'Reach Garage Guild and recover loot.',
+    effect: 'Improves loot value and identifies salvage worth reserving.',
+    flavor: 'The cracked sword is priceless, after fees.',
+  }),
 ];
 
 export const CATALOG_BY_ID = Object.fromEntries(BUILDING_CATALOG.map((entry) => [entry.id, entry]));
@@ -357,13 +394,13 @@ export const BUILD_MENU_CATEGORIES = [
     id: 'economy',
     label: 'Shops & Supply',
     description: 'Honest commerce, dishonest margins.',
-    buildingIds: ['potion_shop', 'bank_debt_office', 'gem_exchange', 'convenience_office'],
+    buildingIds: ['potion_shop', 'infirmary', 'loot_appraiser', 'bank_debt_office', 'gem_exchange', 'convenience_office'],
   },
   {
     id: 'defense',
     label: 'Defense & Missions',
     description: 'Notice danger early. Bill it on arrival.',
-    buildingIds: ['watchtower', 'guard_post', 'arena'],
+    buildingIds: ['watchtower', 'guard_post', 'guard_barracks', 'monster_hunter_lodge', 'arena'],
   },
   {
     id: 'premium',
@@ -375,7 +412,7 @@ export const BUILD_MENU_CATEGORIES = [
     id: 'social',
     label: 'Public Order',
     description: 'Fair progress, mentoring, and licensed dissent.',
-    buildingIds: ['mentor_hall'],
+    buildingIds: ['mentor_hall', 'gravekeeper_hut'],
   },
   {
     id: 'frontier',
@@ -387,7 +424,7 @@ export const BUILD_MENU_CATEGORIES = [
     id: 'production',
     label: 'Production',
     description: 'Turn frontier stock into tools, supplies, exports, and stronger heroes.',
-    buildingIds: ['sawmill', 'workshop', 'salvage_yard', 'warehouse', 'premium_fabricator'],
+    buildingIds: ['sawmill', 'workshop', 'salvage_yard', 'warehouse', 'caravan_depot', 'premium_fabricator'],
   },
   {
     id: 'decorations',

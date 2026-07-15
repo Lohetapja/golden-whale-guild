@@ -67,6 +67,12 @@ export const ASSET_MANIFEST = [
   { key: 'building_guard_post', path: 'assets/buildings/building_guard_post.png', type: 'image', fallback: 'generated ph-guard_post' },
   { key: 'building_scout_post', path: 'assets/buildings/building_scout_post.png', type: 'image', fallback: 'generated ph-scout_post' },
   { key: 'building_premium_temple', path: 'assets/buildings/building_premium_temple.png', type: 'image', fallback: 'generated ph-premium_temple' },
+  { key: 'building_infirmary', path: 'assets/buildings/building_infirmary.png', type: 'image', fallback: 'generated ph-infirmary' },
+  { key: 'building_guard_barracks', path: 'assets/buildings/building_guard_barracks.png', type: 'image', fallback: 'generated ph-guard_barracks' },
+  { key: 'building_monster_hunter_lodge', path: 'assets/buildings/building_monster_hunter_lodge.png', type: 'image', fallback: 'generated ph-monster_hunter_lodge' },
+  { key: 'building_gravekeeper_hut', path: 'assets/buildings/building_gravekeeper_hut.png', type: 'image', fallback: 'generated ph-gravekeeper_hut' },
+  { key: 'building_caravan_depot', path: 'assets/buildings/building_caravan_depot.png', type: 'image', fallback: 'generated ph-caravan_depot' },
+  { key: 'building_loot_appraiser', path: 'assets/buildings/building_loot_appraiser.png', type: 'image', fallback: 'generated ph-loot_appraiser' },
   // future satire buildings (art ready, catalog wiring pending)
   { key: 'building_rngesus_shrine', path: 'assets/buildings/building_rngesus_shrine.png', type: 'image', fallback: 'not yet buildable' },
   { key: 'building_pity_chapel', path: 'assets/buildings/building_pity_chapel.png', type: 'image', fallback: 'not yet buildable' },
@@ -264,6 +270,21 @@ export const ASSET_MANIFEST = [
 
   // --- extra monster event sprites (PixelLab batch, 64px) --------------------
   { key: 'monster_loot_mimic', path: 'assets/monsters/monster_loot_mimic.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_premium_slime', path: 'assets/monsters/monster_premium_slime.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_paywall_troll', path: 'assets/monsters/monster_paywall_troll.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_daily_login_ghoul', path: 'assets/monsters/monster_daily_login_ghoul.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_gacha_goblin', path: 'assets/monsters/monster_gacha_goblin.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_subscription_wraith', path: 'assets/monsters/monster_subscription_wraith.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_patch_note_necromancer', path: 'assets/monsters/monster_patch_note_necromancer.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'monster_sponsored_bandit', path: 'assets/monsters/monster_sponsored_bandit.png', type: 'image', fallback: 'event text and warning marker' },
+  { key: 'corpse_mimic_chest', path: 'assets/monsters/remains/corpse_mimic_chest.png', type: 'image', fallback: 'monster_drop_chest' },
+  { key: 'corpse_premium_slime', path: 'assets/monsters/remains/corpse_premium_slime.png', type: 'image', fallback: 'corpse_slime_puddle' },
+  { key: 'corpse_paywall_troll', path: 'assets/monsters/remains/corpse_paywall_troll.png', type: 'image', fallback: 'broken_shield' },
+  { key: 'corpse_login_ghoul', path: 'assets/monsters/remains/corpse_login_ghoul.png', type: 'image', fallback: 'corpse_skeleton_bones' },
+  { key: 'corpse_gacha_goblin', path: 'assets/monsters/remains/corpse_gacha_goblin.png', type: 'image', fallback: 'corpse_goblin_remains' },
+  { key: 'corpse_subscription_residue', path: 'assets/monsters/remains/corpse_subscription_residue.png', type: 'image', fallback: 'object_contract_pile' },
+  { key: 'corpse_necromancer_archive', path: 'assets/monsters/remains/corpse_necromancer_archive.png', type: 'image', fallback: 'corpse_skeleton_bones' },
+  { key: 'corpse_sponsored_bandit', path: 'assets/monsters/remains/corpse_sponsored_bandit.png', type: 'image', fallback: 'loot_bag_small' },
   { key: 'monster_queue_demon', path: 'assets/monsters/monster_queue_demon.png', type: 'image', fallback: 'event text and warning marker' },
   { key: 'monster_audit_imp', path: 'assets/monsters/monster_audit_imp.png', type: 'image', fallback: 'event text and warning marker' },
   { key: 'monster_giant_rat', path: 'assets/monsters/monster_giant_rat.png', type: 'image', fallback: 'event text and warning marker' },
@@ -296,6 +317,14 @@ export const ASSET_MANIFEST = [
   { key: 'poi_premium_ruin', path: 'assets/pois/poi_premium_ruin.png', type: 'image', fallback: 'object_vip_sign' },
   { key: 'poi_dungeon_mouth', path: 'assets/pois/poi_dungeon_mouth.png', type: 'image', fallback: 'monster_cave_spider' },
   { key: 'poi_resource_grove', path: 'assets/pois/poi_resource_grove.png', type: 'image', fallback: 'object_tree_pine' },
+  { key: 'poi_mimic_cache', path: 'assets/pois/poi_mimic_cache.png', type: 'image', fallback: 'poi_loot_cave' },
+  { key: 'poi_premium_slime_pit', path: 'assets/pois/poi_premium_slime_pit.png', type: 'image', fallback: 'poi_slime_pit' },
+  { key: 'poi_paywall_gate', path: 'assets/pois/poi_paywall_gate.png', type: 'image', fallback: 'poi_old_watch_post' },
+  { key: 'poi_login_crypt', path: 'assets/pois/poi_login_crypt.png', type: 'image', fallback: 'poi_skeleton_ruins' },
+  { key: 'poi_gacha_camp', path: 'assets/pois/poi_gacha_camp.png', type: 'image', fallback: 'poi_goblin_camp' },
+  { key: 'poi_contract_shrine', path: 'assets/pois/poi_contract_shrine.png', type: 'image', fallback: 'poi_premium_ruin' },
+  { key: 'poi_patch_archive', path: 'assets/pois/poi_patch_archive.png', type: 'image', fallback: 'poi_skeleton_ruins' },
+  { key: 'poi_sponsored_bandit_camp', path: 'assets/pois/poi_sponsored_bandit_camp.png', type: 'image', fallback: 'poi_goblin_camp' },
 
   // --- city-builder support buildings / warning systems --------------------
   { key: 'building_scout_post', path: 'assets/buildings/building_scout_post.png', type: 'image', fallback: 'not yet buildable' },
@@ -373,6 +402,75 @@ export const ASSET_MANIFEST = [
   { key: 'decal_berry_bush', path: 'assets/objects/decal_berry_bush.png', type: 'image', fallback: 'terrain detail ellipses' },
   { key: 'decal_fern', path: 'assets/objects/decal_fern.png', type: 'image', fallback: 'terrain detail ellipses' },
 ];
+
+// Flat cardinal road-mask families. Each source is authored top-down and is
+// projected into the live isometric diamond at runtime. Missing masks fall
+// back to the existing procedural road renderer without affecting pathing.
+for (const roadType of ['dirt', 'stone', 'premium']) {
+  for (let mask = 0; mask < 16; mask += 1) {
+    ASSET_MANIFEST.push({
+      key: `road_mask_${roadType}_${mask}`,
+      path: `assets/roads/${roadType}/road_${roadType}_${String(mask).padStart(2, '0')}.png`,
+      type: 'image',
+      fallback: 'procedural connected road surface',
+    });
+  }
+}
+
+// Reviewed PixelLab monster animations are packed into one horizontal sheet
+// per state/direction during asset import. Four cardinal sets are enough for
+// clear map motion; the runtime safely falls back to each static monster art.
+const MONSTER_SHEET_SIZES = {
+  loot_mimic: 97,
+  premium_slime: 85,
+  paywall_troll: 124,
+  daily_login_ghoul: 124,
+  gacha_goblin: 124,
+  subscription_wraith: 120,
+  patch_note_necromancer: 92,
+  sponsored_bandit: 88,
+};
+for (const [monsterId, frameSize] of Object.entries(MONSTER_SHEET_SIZES)) {
+  const states = ['walk', 'attack'];
+  if (['loot_mimic', 'paywall_troll', 'daily_login_ghoul'].includes(monsterId)) states.push('hurt');
+  for (const state of states) {
+    const directions = state === 'walk' ? ['south', 'east', 'north', 'west'] : ['south'];
+    for (const direction of directions) {
+      ASSET_MANIFEST.push({
+        key: `monster_anim_${monsterId}_${state}_${direction}`,
+        path: `assets/monsters/states/${monsterId}/${state}_${direction}.png`,
+        type: 'spritesheet',
+        frameConfig: { frameWidth: frameSize, frameHeight: frameSize },
+        fallback: `monster_${monsterId}`,
+      });
+    }
+  }
+}
+
+const CONTENT_BUILDING_ASSETS = [
+  'infirmary',
+  'guard_barracks',
+  'monster_hunter_lodge',
+  'gravekeeper_hut',
+  'caravan_depot',
+  'loot_appraiser',
+];
+for (const buildingId of CONTENT_BUILDING_ASSETS) {
+  ASSET_MANIFEST.push({
+    key: `building_${buildingId}_preview`,
+    path: `assets/buildings/previews/building_${buildingId}_preview.png`,
+    type: 'image',
+    fallback: `building_${buildingId}`,
+  });
+  for (const level of [2, 3]) {
+    ASSET_MANIFEST.push({
+      key: `building_${buildingId}_l${level}`,
+      path: `assets/buildings/${buildingId}/${buildingId}_l${level}.png`,
+      type: 'image',
+      fallback: `building_${buildingId}`,
+    });
+  }
+}
 
 // --- PixelLab character state frames (downloaded 2026-07) -------------------
 // 4-direction idle rotations + 6-frame walk cycles per direction, exported

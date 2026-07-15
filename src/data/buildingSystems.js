@@ -428,6 +428,48 @@ export const BUILDING_ROLES = {
     capacityLabel: 'Fabrication batches', baseCapacity: 3, serviceRangeTiles: 10, upkeep: 6, inputResource: 'premiumSalvage', outputResource: 'premiumComponents',
     districtTags: ['industrial', 'premium'], progressCounter: 'productionDone',
   }),
+  infirmary: role('infirmary', {
+    type: 'Recovery', role: 'Treats raid and exploration injuries at local capacity.', usedBy: ['Injured heroes', 'Rescued workers'],
+    provides: ['Treatment beds', 'Faster recovery'], consumes: ['Potions'], improves: ['Hero survival', 'Recovery time'],
+    repeatValue: 'Several infirmaries treat separate districts instead of making wounded heroes cross the map.', lacking: 'Injured heroes are resting without treatment capacity.',
+    capacityLabel: 'Treatment beds', baseCapacity: 4, capacityPerLevel: 2, serviceRangeTiles: 9, upkeep: 4,
+    inputResource: 'potions', districtTags: ['recovery', 'civic'], progressCounter: 'servicesProvided',
+  }),
+  guard_barracks: role('guard_barracks', {
+    type: 'Defense', role: 'Houses guards and reinforces local emergency response.', usedBy: ['Guard patrols', 'Injured guards'],
+    provides: ['Guard capacity', 'Patrol readiness'], consumes: ['Gold upkeep'], improves: ['Response time', 'District safety'],
+    repeatValue: 'Each barracks anchors a different defensive district.', lacking: 'The patrol map has more routes than rested guards.',
+    capacityLabel: 'Guard bunks', baseCapacity: 5, capacityPerLevel: 2, serviceRangeTiles: 12, upkeep: 5,
+    districtTags: ['defense'], progressCounter: 'monstersStopped',
+  }),
+  monster_hunter_lodge: role('monster_hunter_lodge', {
+    type: 'Defense', role: 'Turns known lairs into scouting and suppression work.', usedBy: ['Veterans', 'Brave heroes', 'Monster hunters'],
+    provides: ['Tracking', 'Lair suppression', 'Loot recovery'], consumes: ['Gold upkeep'], improves: ['Lair intelligence', 'Frontier safety'],
+    repeatValue: 'More lodges cover separate hostile frontiers and active lairs.', lacking: 'Known tracks are becoming historical documents.',
+    capacityLabel: 'Active hunts', baseCapacity: 4, capacityPerLevel: 1, serviceRangeTiles: 14, upkeep: 5,
+    districtTags: ['defense', 'frontier'], progressCounter: 'monstersStopped',
+  }),
+  gravekeeper_hut: role('gravekeeper_hut', {
+    type: 'Civic Recovery', role: 'Maintains memorials and dangerous remains.', usedBy: ['Gravekeeper', 'Mourning heroes'],
+    provides: ['Memorial care', 'Remains cleanup'], consumes: ['Gold upkeep'], improves: ['Morale recovery', 'Area reputation'],
+    repeatValue: 'Separate huts support distant grave sites and dangerous frontiers.', lacking: 'Unattended memorials are becoming local landmarks for the wrong reason.',
+    capacityLabel: 'Memorial cases', baseCapacity: 6, capacityPerLevel: 2, serviceRangeTiles: 10, upkeep: 2,
+    districtTags: ['civic', 'social'], progressCounter: 'servicesProvided',
+  }),
+  caravan_depot: role('caravan_depot', {
+    type: 'Logistics', role: 'Coordinates long-distance carriers, escorts, and cargo recovery.', usedBy: ['Carriers', 'Traders', 'Escorts'],
+    provides: ['Carrier capacity', 'Route reliability'], consumes: ['Gold upkeep'], improves: ['Delivery throughput', 'Cargo recovery'],
+    repeatValue: 'Each depot supports another frontier route without sharing one cart.', lacking: 'Cargo is waiting for a carrier with an available calendar.',
+    capacityLabel: 'Carrier teams', baseCapacity: 8, capacityPerLevel: 2, serviceRangeTiles: 15, upkeep: 5,
+    districtTags: ['commercial', 'frontier'], progressCounter: 'servicesProvided',
+  }),
+  loot_appraiser: role('loot_appraiser', {
+    type: 'Economy', role: 'Identifies loot and separates useful gear from premium-shaped rubbish.', usedBy: ['Traders', 'Greedy heroes', 'Salvage runners'],
+    provides: ['Loot valuation', 'Recovered equipment'], consumes: ['Loot'], improves: ['Trade value', 'Gear recovery'],
+    repeatValue: 'More appraisers prevent separate loot routes from becoming unidentified stockpiles.', lacking: 'Loot remains unvalued and therefore emotionally priceless.',
+    capacityLabel: 'Appraisal lots', baseCapacity: 5, capacityPerLevel: 2, serviceRangeTiles: 11, upkeep: 3,
+    inputResource: 'loot', outputResource: 'tradeGoods', districtTags: ['commercial'], progressCounter: 'lootProcessed',
+  }),
 };
 
 const spec = (id, name, summary, effects = {}) => ({
@@ -585,7 +627,7 @@ export const DISTRICT_BONUSES = [
   {
     id: 'market',
     name: 'Commercial District',
-    buildingIds: ['market', 'warehouse', 'storehouse', 'salvage_yard', 'potion_shop', 'gem_exchange', 'bank_debt_office'],
+    buildingIds: ['market', 'warehouse', 'storehouse', 'salvage_yard', 'potion_shop', 'loot_appraiser', 'caravan_depot', 'gem_exchange', 'bank_debt_office'],
     radius: 300,
     required: 2,
     effect: '+Trade, gear, and potion throughput.',
@@ -615,7 +657,7 @@ export const DISTRICT_BONUSES = [
   {
     id: 'defense',
     name: 'Defense District',
-    buildingIds: ['watchtower', 'training', 'arena', 'dungeon'],
+    buildingIds: ['watchtower', 'guard_post', 'guard_barracks', 'monster_hunter_lodge', 'training', 'arena', 'dungeon'],
     radius: 320,
     required: 2,
     effect: '-Threat and better monster response.',
@@ -635,7 +677,7 @@ export const DISTRICT_BONUSES = [
   {
     id: 'civic',
     name: 'Civic District',
-    buildingIds: ['guildhall', 'mentor_hall', 'convenience_office', 'dungeon'],
+    buildingIds: ['guildhall', 'mentor_hall', 'infirmary', 'gravekeeper_hut', 'convenience_office', 'dungeon'],
     radius: 300,
     required: 2,
     effect: '+Quest handling and slower policy neglect.',

@@ -6,14 +6,26 @@ export const AFTERMATH_LIMITS = Object.freeze({
 });
 
 const PROFILES = Object.freeze({
-  goblin: { ids: ['goblin_raider'], type: 'goblin', name: 'Goblin Remains', assetKey: 'corpse_goblin_remains', fallbackKey: 'loot_bag_small', decayDays: 5, danger: 2, evidence: 3 },
+  goblin: { ids: ['goblin_raider', 'gacha_goblin'], type: 'goblin', name: 'Goblin Remains', assetKey: 'corpse_goblin_remains', fallbackKey: 'loot_bag_small', decayDays: 5, danger: 2, evidence: 3 },
   skeleton: { ids: ['skeleton_attacker'], type: 'skeleton', name: 'Bone Pile', assetKey: 'corpse_skeleton_bones', fallbackKey: 'poi_skeleton_ruins', decayDays: 9, danger: 2, evidence: 2 },
   slime: { ids: ['slime', 'grump_mushroom'], type: 'slime', name: 'Toxic Slime Residue', assetKey: 'corpse_slime_puddle', fallbackKey: 'decal_mud_puddle', decayDays: 4, danger: 5, evidence: 3 },
   spider: { ids: ['cave_spider'], type: 'spider', name: 'Curled Spider Carcass', assetKey: 'decal_leaf_litter', fallbackKey: 'decal_mud_puddle', decayDays: 5, danger: 4, evidence: 4 },
   animal: { ids: ['wolf', 'giant_rat', 'dungeon_bat'], type: 'animal', name: 'Animal Carcass', assetKey: 'decal_dirt_mound', fallbackKey: 'object_rock_mossy', decayDays: 5, danger: 3, evidence: 3 },
-  bandit: { ids: ['bandit'], type: 'humanoid', name: 'Bandit Remains', assetKey: 'corpse_goblin_remains', fallbackKey: 'loot_bag_small', decayDays: 6, danger: 4, evidence: 4 },
-  premium: { ids: ['premium_goblin', 'debt_wraith', 'refund_ghost', 'loot_mimic', 'queue_demon', 'audit_imp'], type: 'premium_residue', name: 'Corrupted Premium Residue', assetKey: 'resource_premium_wreckage', fallbackKey: 'object_contract_pile', decayDays: 7, danger: 6, corruption: 2, evidence: 5 },
+  bandit: { ids: ['bandit', 'sponsored_bandit', 'paywall_troll'], type: 'humanoid', name: 'Bandit Remains', assetKey: 'corpse_sponsored_bandit', fallbackKey: 'loot_bag_small', decayDays: 6, danger: 4, evidence: 4 },
+  ghoul: { ids: ['daily_login_ghoul', 'patch_note_necromancer'], type: 'ghoul', name: 'Patched Undead Remains', assetKey: 'corpse_necromancer_archive', fallbackKey: 'corpse_skeleton_bones', decayDays: 8, danger: 6, evidence: 5 },
+  premium: { ids: ['premium_goblin', 'premium_slime', 'subscription_wraith', 'debt_wraith', 'refund_ghost', 'loot_mimic', 'queue_demon', 'audit_imp'], type: 'premium_residue', name: 'Corrupted Premium Residue', assetKey: 'resource_premium_wreckage', fallbackKey: 'object_contract_pile', decayDays: 7, danger: 6, corruption: 2, evidence: 5 },
   large: { ids: ['coin_golem'], type: 'large_debris', name: 'Coin Golem Debris', assetKey: 'resource_premium_wreckage', fallbackKey: 'object_rock_02', decayDays: 10, danger: 7, corruption: 1, evidence: 4, large: true },
+});
+
+const SPECIFIC_PROFILES = Object.freeze({
+  loot_mimic: { type: 'mimic', name: 'Broken Mimic Chest', assetKey: 'corpse_mimic_chest', fallbackKey: 'monster_drop_chest', decayDays: 7, danger: 4, evidence: 5 },
+  premium_slime: { type: 'premium_residue', name: 'Premium Slime Puddle', assetKey: 'corpse_premium_slime', fallbackKey: 'corpse_slime_puddle', decayDays: 6, danger: 6, corruption: 2, evidence: 4 },
+  paywall_troll: { type: 'humanoid', name: 'Collapsed Toll Troll', assetKey: 'corpse_paywall_troll', fallbackKey: 'broken_shield', decayDays: 9, danger: 5, evidence: 5, large: true },
+  daily_login_ghoul: { type: 'ghoul', name: 'Expired Login Ghoul', assetKey: 'corpse_login_ghoul', fallbackKey: 'corpse_skeleton_bones', decayDays: 8, danger: 5, evidence: 4 },
+  gacha_goblin: { type: 'goblin', name: 'Gacha Goblin Remains', assetKey: 'corpse_gacha_goblin', fallbackKey: 'corpse_goblin_remains', decayDays: 6, danger: 3, evidence: 5 },
+  subscription_wraith: { type: 'premium_residue', name: 'Subscription Residue', assetKey: 'corpse_subscription_residue', fallbackKey: 'object_contract_pile', decayDays: 7, danger: 6, corruption: 2, evidence: 6 },
+  patch_note_necromancer: { type: 'ghoul', name: 'Necromancer Archive Remains', assetKey: 'corpse_necromancer_archive', fallbackKey: 'corpse_skeleton_bones', decayDays: 10, danger: 7, evidence: 7 },
+  sponsored_bandit: { type: 'humanoid', name: 'Sponsored Bandit Remains', assetKey: 'corpse_sponsored_bandit', fallbackKey: 'loot_bag_small', decayDays: 6, danger: 4, evidence: 5 },
 });
 
 const DEATH_LINES = Object.freeze({
@@ -23,6 +35,7 @@ const DEATH_LINES = Object.freeze({
   spider: ['Its subscription web has been cancelled with force.', 'Eight legs, no refund, one awkward cleanup rota.'],
   animal: ['It attempted to negotiate with civilization. Civilization brought armour.', 'The wilderness left a strongly worded carcass.'],
   humanoid: ['The stolen-goods warranty did not cover heroes.', 'Management classified the bandit as an unscheduled career transition.'],
+  ghoul: ['The update stopped moving. The release notes did not.', 'Attendance is no longer mandatory for the deceased.'],
   premium_residue: ['The premium resurrection trial expired six minutes earlier.', 'Luxury corruption now available in residue form.'],
   large_debris: ['The large monster stopped moving. Its maintenance footprint did not.', 'Municipal confidence survived beneath several tonnes of evidence.'],
   hero: ['Died while proving that armour was an optional purchase.', 'The resurrection package expired six minutes earlier.', 'The town mourned, then checked the loot table.'],
@@ -34,7 +47,9 @@ const pick = (items, random = Math.random) => items[Math.floor(random() * items.
 const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 
 export function getRemainsProfile(monsterId = '') {
-  return Object.values(PROFILES).find((profile) => profile.ids.includes(monsterId)) || PROFILES.goblin;
+  return SPECIFIC_PROFILES[monsterId]
+    || Object.values(PROFILES).find((profile) => profile.ids.includes(monsterId))
+    || PROFILES.goblin;
 }
 
 export function getAftermathFlavor(type, random = Math.random) {
@@ -65,11 +80,11 @@ export function rollMonsterLoot(monster, lairLevel = 1, stolenCargo = 0, random 
   const contents = {};
   const gold = Math.max(0, Math.floor((finite(monster?.reward, threat * 16)) * (0.18 + random() * 0.32)));
   if (gold > 0) contents.gold = gold;
-  if (['goblin_raider', 'bandit'].includes(id)) contents.loot = Math.max(1, Math.ceil(stolenCargo / 2) || (random() < 0.65 ? 1 : 0));
+  if (['goblin_raider', 'bandit', 'gacha_goblin', 'sponsored_bandit'].includes(id)) contents.loot = Math.max(1, Math.ceil(stolenCargo / 2) || (random() < 0.65 ? 1 : 0));
   if (id === 'skeleton_attacker' && random() < 0.65) contents.gear = 1;
   if (id === 'cave_spider') contents.herbs = random() < 0.8 ? 1 : 0;
   if (['slime', 'grump_mushroom'].includes(id) && random() < 0.55) contents.herbs = 1;
-  if (['premium_goblin', 'debt_wraith', 'refund_ghost', 'loot_mimic', 'queue_demon', 'audit_imp', 'coin_golem'].includes(id)) {
+  if (['premium_goblin', 'premium_slime', 'subscription_wraith', 'debt_wraith', 'refund_ghost', 'loot_mimic', 'queue_demon', 'audit_imp', 'coin_golem'].includes(id)) {
     contents.premiumSalvage = Math.max(1, Math.floor((threat + lairLevel) / 4));
   }
   return Object.fromEntries(Object.entries(contents).filter(([, amount]) => amount > 0));

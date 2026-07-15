@@ -14,7 +14,7 @@ export const MONSTER_STATES = Object.freeze({
 });
 
 export const WORLD_DANGER_LIMITS = Object.freeze({
-  maxActiveMonsters: 28,
+  maxActiveMonsters: 24,
   maxVisibleCombats: 8,
   aiStepMs: 260,
   corpseDays: 5,
@@ -22,16 +22,18 @@ export const WORLD_DANGER_LIMITS = Object.freeze({
 });
 
 const LAIR_BLUEPRINTS = Object.freeze({
-  poi_goblin_camp: { type: 'Goblin Camp', family: ['goblin_raider', 'bandit'], level: 1, cap: 3, interval: [1, 3], loot: 'coins and stolen cargo' },
-  poi_skeleton_ruins: { type: 'Skeleton Ruins', family: ['skeleton_attacker'], level: 2, cap: 3, interval: [1, 3], loot: 'bones and old equipment' },
-  poi_slime_pit: { type: 'Slime Pit', family: ['slime', 'grump_mushroom'], level: 1, cap: 3, interval: [1, 3], loot: 'slime residue and herbs' },
+  poi_goblin_camp: { type: 'Goblin Camp', family: ['goblin_raider', 'gacha_goblin', 'sponsored_bandit'], level: 1, cap: 3, interval: [1, 3], loot: 'coins, tokens, and stolen cargo' },
+  poi_skeleton_ruins: { type: 'Skeleton Ruins', family: ['skeleton_attacker', 'daily_login_ghoul', 'patch_note_necromancer'], level: 2, cap: 3, interval: [1, 3], loot: 'bones, old equipment, and broken patch scrolls' },
+  poi_slime_pit: { type: 'Slime Pit', family: ['slime', 'grump_mushroom', 'premium_slime'], level: 1, cap: 3, interval: [1, 3], loot: 'slime residue, herbs, and suspicious premium salvage' },
   suspicious_cave: { type: 'Spider Nest', family: ['cave_spider', 'giant_rat'], level: 2, cap: 3, interval: [1, 2], loot: 'webbed loot' },
   poi_dungeon_mouth: { type: 'Dungeon Mouth', family: ['cave_spider', 'skeleton_attacker', 'dungeon_bat'], level: 3, cap: 5, interval: [1, 2], loot: 'dungeon salvage' },
-  poi_loot_cave: { type: 'Loot Cave', family: ['loot_mimic', 'bandit'], level: 2, cap: 3, interval: [1, 3], loot: 'loot of disputed ownership' },
-  poi_premium_ruin: { type: 'Premium Ruin', family: ['premium_goblin', 'audit_imp', 'coin_golem'], level: 3, cap: 4, interval: [1, 2], loot: 'questionable premium components' },
+  poi_loot_cave: { type: 'Mimic Cache', family: ['loot_mimic', 'gacha_goblin', 'sponsored_bandit'], level: 2, cap: 3, interval: [1, 3], loot: 'loot of randomized ownership' },
+  poi_premium_ruin: { type: 'Contract Shrine', family: ['premium_goblin', 'premium_slime', 'subscription_wraith', 'audit_imp', 'coin_golem'], level: 3, cap: 4, interval: [1, 2], loot: 'questionable premium components and spectral terms' },
   old_balance_ruin: { type: 'Cursed Grove', family: ['debt_wraith', 'refund_ghost'], level: 2, cap: 3, interval: [2, 3], loot: 'cursed records and remedies' },
   resource_old_ruins_far: { type: 'Abandoned Mine', family: ['giant_rat', 'cave_spider', 'skeleton_attacker'], level: 2, cap: 4, interval: [1, 3], loot: 'ore and abandoned liability' },
-  broken_watch_post: { type: 'Bandit Camp', family: ['bandit', 'goblin_raider', 'wolf'], level: 2, cap: 4, interval: [1, 2], loot: 'stolen cargo and road tolls' },
+  broken_watch_post: { type: 'Paywall Camp', family: ['bandit', 'sponsored_bandit', 'paywall_troll', 'wolf'], level: 2, cap: 4, interval: [1, 2], loot: 'stolen cargo, road tolls, and branded debris' },
+  poi_login_crypt: { type: 'Login Crypt', family: ['daily_login_ghoul'], level: 2, cap: 4, interval: [1, 2], loot: 'streak stamps and expired attendance rewards' },
+  poi_sponsored_bandit_camp: { type: 'Sponsored Bandit Camp', family: ['sponsored_bandit'], level: 2, cap: 3, interval: [1, 3], loot: 'stolen cargo and branded junk' },
 });
 
 const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -136,7 +138,7 @@ export function getMonsterRuntimeStats(monster, lairLevel = 1) {
     attackRange: large ? 48 : 34,
     attackCooldownMs: Math.max(720, 1500 - threat * 80),
     reactionMs: Math.max(240, 760 - threat * 55),
-    fleeHealthRatio: ['wolf', 'goblin_raider', 'bandit'].includes(monster?.id) ? 0.24 : 0,
+    fleeHealthRatio: ['wolf', 'goblin_raider', 'bandit', 'gacha_goblin', 'sponsored_bandit'].includes(monster?.id) ? 0.28 : 0,
     speedPx: 48 * clamp(finite(monster?.speed, 0.9), 0.5, 1.5),
   };
 }
@@ -160,7 +162,7 @@ export function scoreAggroTarget(monsterId, candidate, distance) {
   const kind = candidate?.kind || 'hero';
   let score = Math.max(0, 300 - distance);
   if (kind === 'service') score += 48;
-  if (kind === 'carrier') score += ['goblin_raider', 'bandit', 'loot_mimic'].includes(monsterId) ? 130 : 56;
+  if (kind === 'carrier') score += ['goblin_raider', 'bandit', 'loot_mimic', 'gacha_goblin', 'sponsored_bandit'].includes(monsterId) ? 150 : 56;
   if (kind === 'hero') {
     score += candidate.injured ? 85 : 35;
     score -= candidate.power > 12 ? 24 : 0;
@@ -173,6 +175,13 @@ export function scoreAggroTarget(monsterId, candidate, distance) {
       goblin_raider: ['market', 'storehouse', 'warehouse', 'lootbox_kiosk'],
       bandit: ['market', 'storehouse', 'warehouse'],
       loot_mimic: ['market', 'warehouse', 'lootbox_kiosk'],
+      premium_slime: ['whale', 'premium_fabricator', 'premium_lodge'],
+      paywall_troll: ['guildhall', 'watchtower', 'market'],
+      daily_login_ghoul: ['guildhall', 'hero_hostel', 'tavern'],
+      gacha_goblin: ['market', 'storehouse', 'warehouse'],
+      subscription_wraith: ['whale', 'premium_lodge', 'premium_fabricator'],
+      patch_note_necromancer: ['guildhall', 'gravekeeper_hut', 'trophy_hall'],
+      sponsored_bandit: ['market', 'storehouse', 'warehouse', 'caravan_depot'],
       skeleton_attacker: ['tavern', 'inn', 'guildhall'],
       debt_wraith: ['bank_debt_office', 'guildhall', 'tavern'],
       premium_goblin: ['whale', 'premium_temple', 'premium_fabricator'],

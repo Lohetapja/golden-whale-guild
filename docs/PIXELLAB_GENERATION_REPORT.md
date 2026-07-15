@@ -1,5 +1,47 @@
 # PixelLab Generation Report
 
+## 2026-07 Roads, Monsters, Buildings, and Writing Pass
+
+Starting balance: **1266 used / 733 remaining**. Verified checkpoint after
+reviewed road, monster, lair, remains, building, and tier jobs:
+**1569 used / 430 remaining**, or **303 actual generations consumed**. Later
+animation completions may increase the final number; the final checkpoint below
+is authoritative.
+
+Completed and integrated:
+
+- 48 road masks: 16 dirt, 16 stone, 16 restrained premium stone.
+- 8 monster actors, 8 typed remains, and 8 family lair/source objects.
+- 6 functional L1 buildings, 6 separate catalog previews, 6 L2 states, and
+  6 L3 states.
+- Recovered Golden Whale, VIP Lounge, Convenience Office, and Gem Exchange
+  replacements from the prior unfinished PixelLab queue.
+- Real cardinal monster sheets are imported through
+  `scripts/pack-pixellab-monster-animations.ps1`; unfinished action jobs stay
+  documented instead of being represented by fake motion.
+
+Rejected:
+
+- 2 generated building-preview candidates: nearly black and unreadable.
+- 4 malformed stone-road candidates: exact missing masks were derived by
+  lossless mirror/rotation from accepted family members.
+- No unrelated decorative rerolls were accepted.
+
+Final balance after submissions: **1758 used / 241 remaining**, or **492 actual
+generations consumed** from the 1266 baseline. This is inside the requested
+preferred 350-500 range, so generation stopped.
+
+Approximate category attribution from job-returned costs (the 490 balance delta
+is authoritative): roads 60; functional buildings and L2/L3 states 122;
+monster actors, lairs, and remains 154; monster animation work 156. The final
+Paywall Troll attack retry completed and was packed; no selected PixelLab jobs
+remain in flight.
+
+Writing coverage is code-generated and separately verified: 38 functional
+building pools contain 735 contextual entries (minimum 19 per building), and
+the 8 new monster families contain 96 family-specific entries. A 40-roll check
+reported zero immediate repeats.
+
 Live accounting for the breadth-first isometric asset production pass.
 Generations are only counted as consumed when verified against `get_balance`.
 

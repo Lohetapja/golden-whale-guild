@@ -163,12 +163,12 @@ export const ROAD_TYPES = {
     id: 'premium',
     name: 'Premium Gold Road',
     cost: 55,
-    color: 0xf2c744,
-    edgeColor: 0xa66f18,
+    color: 0x625d57,
+    edgeColor: 0xb08b3f,
     speed: 1.3,
     trust: -1,
     corruption: 1,
-    description: 'Fast, shiny, and somehow a public policy.',
+    description: 'Fast dark stone with restrained gold inlay and suspicious maintenance fees.',
   },
 };
 

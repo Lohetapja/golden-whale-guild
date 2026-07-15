@@ -24,6 +24,7 @@ import {
 import { ASSET_MANIFEST } from '../data/assetManifest.js';
 import { getItemByName, getRandomPremiumItem } from '../data/itemCatalog.js';
 import { MONSTERS, rollMonster } from '../data/monsters.js';
+import { getSatireLine } from '../data/satireText.js';
 import {
   buildRevealedTiles,
   createGridState,
@@ -2981,6 +2982,21 @@ export default class TownScene extends Phaser.Scene {
     const headline = Phaser.Utils.Array.GetRandom(WEEKLY_REPORT_LINES);
     const pendingPolicy = this.getPendingPolicy();
     const pendingAge = this.getPendingPolicyAge();
+    const featuredBuilding = Object.values(this.buildingById || {})
+      .filter((place) => place?.isPlaced)
+      .sort((a, b) => {
+        const aRuntime = this.getBuildingRuntime(a.id);
+        const bRuntime = this.getBuildingRuntime(b.id);
+        const aUse = aRuntime.servicesProvided || aRuntime.visits || 0;
+        const bUse = bRuntime.servicesProvided || bRuntime.visits || 0;
+        return bUse - aUse;
+      })[0];
+    const featuredBuildingId = getBaseBuildingId(featuredBuilding?.baseId || featuredBuilding?.id || 'guildhall');
+    const buildingSummary = getSatireLine('building', featuredBuildingId, 'week_report', {
+      day: this.day,
+      stage: this.getStageIndex(),
+      fallback: 'Town services survived the week with only the usual interpretive accounting.',
+    });
     this.weeklyReport = {
       week,
       startDay,
@@ -2989,7 +3005,7 @@ export default class TownScene extends Phaser.Scene {
       startResources: { ...(tracker.startResources || this.resources) },
       endResources: { ...this.resources },
       statDelta,
-      lines: (tracker.lines || []).slice(-12),
+      lines: [...(tracker.lines || []), buildingSummary].slice(-12),
       importantLog,
       socialMilestones: (this.heroSocial.events || [])
         .filter((event) => event.day >= startDay && event.day <= endDay && event.major)
@@ -3003,6 +3019,7 @@ export default class TownScene extends Phaser.Scene {
     };
     this.weekReportUnread = true;
     this.addTownLog(`${headline} Week ${week} report is ready.`, 'report');
+    this.addTownLog(buildingSummary, 'economy');
     this.game.events.emit('gwg-event', `Week Report Ready: Week ${week}. The town survived, technically.`);
     this.resetWeekTracker(endDay + 1);
     return true;
@@ -4655,6 +4672,35 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
+  ensureRoadMaskTexture(type, mask) {
+    const key = `road_iso_mask_${type}_${mask}`;
+    if (this.textures.exists(key)) return key;
+    const srcKey = `road_mask_${type}_${mask}`;
+    if (!this.textures.exists(srcKey)) return null;
+    const src = this.textures.get(srcKey).getSourceImage();
+    if (!src?.width || !src?.height) return null;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = ISO_TILE_WIDTH;
+      canvas.height = ISO_TILE_HEIGHT;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+      // Affine-project the flat square source into the map's isometric
+      // parallelogram. The cardinal exits then meet the matching diamond edge.
+      ctx.setTransform(
+        ISO_TILE_WIDTH / (2 * src.width), ISO_TILE_HEIGHT / (2 * src.width),
+        -ISO_TILE_WIDTH / (2 * src.height), ISO_TILE_HEIGHT / (2 * src.height),
+        ISO_TILE_WIDTH / 2, 0,
+      );
+      ctx.drawImage(src, 0, 0);
+      ctx.resetTransform();
+      this.textures.addCanvas(key, canvas);
+      return key;
+    } catch {
+      return null;
+    }
+  }
+
   drawIsoRoadTile(graphics, overlay, road) {
     const type = ROAD_TYPES[road.type] || ROAD_TYPES.dirt;
     const plaza = isRoadPlazaTile(this.gridCells, road.x, road.y);
@@ -4662,23 +4708,19 @@ export default class TownScene extends Phaser.Scene {
     const tile = this.getVisualTilePoints(road.x, road.y);
     const center = this.gridTileVisualCenter(road.x, road.y);
     const hash = this.getTerrainHash(road.x, road.y, 19);
-    const shoulderColor = road.type === 'premium' ? 0xf0c94a : type.edgeColor;
+    const shoulderColor = road.type === 'premium' ? 0x6b6049 : type.edgeColor;
     const surfaceAlpha = road.type === 'premium' ? 0.96 : road.type === 'stone' ? 0.94 : 0.9;
     const inner = this.insetPoints(tile, plaza ? 0.96 : 0.78);
     const core = this.insetPoints(tile, plaza ? 0.82 : 0.62);
 
-    this.drawPolygon(
-      graphics,
-      tile.map((point) => ({ x: point.x, y: point.y + 4 })),
-      0x10151d,
-      0.18,
-      null,
-    );
-    this.drawPolygon(graphics, tile, shoulderColor, plaza ? 0.34 : 0.26, shoulderColor, 0.2, 1);
+    // Roads are painted into the terrain plane. A displaced lower diamond made
+    // the old version read as a raised trench at normal zoom.
+    this.drawPolygon(graphics, tile, shoulderColor, plaza ? 0.22 : 0.14, shoulderColor, 0.16, 1);
     this.drawIsoRoadConnectors(graphics, tile, mask, shoulderColor, plaza ? 0.33 : 0.28, plaza ? 0.94 : 0.76);
     this.drawPolygon(graphics, inner, type.edgeColor, road.type === 'premium' ? 0.68 : 0.52, type.edgeColor, 0.48, 1);
     this.drawIsoRoadConnectors(graphics, tile, mask, type.edgeColor, road.type === 'premium' ? 0.66 : 0.56, plaza ? 0.82 : 0.68);
-    const roadTexKey = this.ensureRoadDiamondTexture(road.type);
+    const roadTexKey = this.ensureRoadMaskTexture(road.type, mask)
+      || this.ensureRoadDiamondTexture(road.type);
     if (roadTexKey) {
       // Full-tile diamond stamp so connected road tiles share edges and merge
       // into one continuous surface (no gaps / "separate squares"), matching the
@@ -6033,7 +6075,7 @@ export default class TownScene extends Phaser.Scene {
       costLabel: `${road.cost}g / tile`,
       stateLabel: this.resources.gold >= road.cost ? 'READY' : 'SHORT',
       kind: road.id === 'premium' ? 'shady' : 'fair',
-      preview: this.getAssetPreviewUrl(`tile_road_${road.id}`),
+      preview: this.getAssetPreviewUrl(`road_mask_${road.id}_5`),
       swatch: `#${road.color.toString(16).padStart(6, '0')}`,
       description: road.description,
       footprintLabel: '1x1',
@@ -7815,6 +7857,13 @@ export default class TownScene extends Phaser.Scene {
           lines: problems.length
             ? problems
             : [{ text: 'No obvious building problems. The inspector distrusts this calm.', className: 'gwg-good' }],
+        },
+        {
+          title: 'Town Commentary',
+          lines: [getSatireLine('building', baseId, problems.length ? 'problem' : 'idle', {
+            day: this.day,
+            fallback: catalog?.flavor || place.upgradeFlavor || place.description,
+          })],
         },
         {
           title: info.maxed ? 'Upgrade' : 'Next Upgrade',
@@ -12152,6 +12201,58 @@ export default class TownScene extends Phaser.Scene {
       .sort((a, b) => b.score - a.score)[0]?.hero || null;
   }
 
+  getMonsterAnimationDirection(dx = 0, dy = 1) {
+    if (Math.abs(dx) > Math.abs(dy) * 0.72) return dx < 0 ? 'west' : 'east';
+    return dy < 0 ? 'north' : 'south';
+  }
+
+  getMonsterAnimationState(actor) {
+    if ([MONSTER_STATES.DYING, MONSTER_STATES.DEAD].includes(actor.state)) return 'death';
+    if (actor.state === MONSTER_STATES.ATTACKING) return 'attack';
+    if (actor.state === MONSTER_STATES.INJURED) return 'hurt';
+    if ([MONSTER_STATES.ROAMING, MONSTER_STATES.PATROLLING_LAIR, MONSTER_STATES.CHASING, MONSTER_STATES.RETURNING_TO_LAIR, MONSTER_STATES.FLEEING].includes(actor.state)) return 'walk';
+    return 'idle';
+  }
+
+  setMonsterAnimation(actor, state, direction = actor?.facing || 'south') {
+    if (!actor?.sprite) return false;
+    const directionalKey = `monster_anim_${actor.monster.id}_${state}_${direction}`;
+    const actionFallbackKey = `monster_anim_${actor.monster.id}_${state}_south`;
+    const key = this.textures.exists(directionalKey) ? directionalKey : actionFallbackKey;
+    if (actor.animationState === state && actor.facing === direction && actor.animationKey === key) return actor.hasAnimationFrames;
+    actor.animationTimer?.remove?.();
+    actor.animationTimer = null;
+    actor.animationState = state;
+    actor.facing = direction;
+    actor.animationKey = key;
+    actor.hasAnimationFrames = this.textures.exists(key);
+    if (!actor.hasAnimationFrames) {
+      actor.sprite.setTexture(this.textures.exists(actor.monster.assetKey) ? actor.monster.assetKey : resolveTexture(this, 'icon_warning', 'chevron'));
+      return false;
+    }
+    actor.ambientTween?.stop?.();
+    actor.ambientTween = null;
+    // Phaser includes the __BASE frame in frameTotal for spritesheets.
+    const frameTotal = Math.max(1, (this.textures.get(key)?.frameTotal || 2) - 1);
+    actor.animationFrame = 0;
+    actor.sprite.setTexture(key, 0).setFlipX(false);
+    actor.sprite.setScale(this.getTextureScaleForHeight(key, 44, 1));
+    if (frameTotal > 1) {
+      actor.animationTimer = this.time.addEvent({
+        delay: state === 'attack' ? 105 : state === 'hurt' ? 125 : state === 'death' ? 135 : 145,
+        loop: state !== 'death',
+        repeat: state === 'death' ? frameTotal - 2 : -1,
+        callback: () => {
+          if (!actor.sprite?.active) return;
+          actor.animationFrame = Math.min(frameTotal - 1, actor.animationFrame + 1);
+          if (state !== 'death') actor.animationFrame %= frameTotal;
+          actor.sprite.setFrame(actor.animationFrame);
+        },
+      });
+    }
+    return true;
+  }
+
   spawnMonsterActor(monster, target, spawn = null, runtime = {}) {
     const start = spawn || target || { x: PLAZA.x, y: PLAZA.y };
     const textureKey = this.textures.exists(monster.assetKey)
@@ -12162,6 +12263,22 @@ export default class TownScene extends Phaser.Scene {
     const homeLair = runtime.homeLairId ? this.monsterLairs?.[runtime.homeLairId] : null;
     const homePoint = homeLair ? this.explorationPointById?.[homeLair.poiId] : null;
     const stats = getMonsterRuntimeStats(monster, homeLair?.level || 1);
+    const behavior = monster.behavior || {};
+    const familyCount = (this.activeMonsterActors || []).filter((entry) => entry.homeLairId === runtime.homeLairId && entry.monster?.id === monster.id).length;
+    if (behavior.groupBonus && familyCount) {
+      stats.damage = Math.round(stats.damage * (1 + Math.min(0.7, familyCount * behavior.groupBonus)));
+      stats.maxHealth = Math.round(stats.maxHealth * (1 + Math.min(0.35, familyCount * behavior.groupBonus * 0.5)));
+    }
+    if (behavior.ignoredDayScaling && homeLair) {
+      const neglect = Phaser.Math.Clamp(((homeLair.pressure || 0) - 18) / 160, 0, 0.45);
+      stats.damage = Math.round(stats.damage * (1 + neglect));
+      stats.maxHealth = Math.round(stats.maxHealth * (1 + neglect * 0.6));
+    }
+    if (behavior.raisesRemains) {
+      const nearbyRemains = (this.aftermathDrops || []).filter((drop) => drop.kind !== 'loot' && !drop.cleared && Phaser.Math.Distance.Between(drop.x, drop.y, start.x, start.y) < 420).length;
+      stats.damage += Math.min(8, nearbyRemains * 2);
+      stats.maxHealth += Math.min(32, nearbyRemains * 6);
+    }
     const normalized = normalizeMonsterRecord({ ...runtime, maxHealth: runtime.maxHealth || stats.maxHealth });
     const actor = {
       id: runtime.id || `monster-${this.day}-${monster.id}-${Math.floor(Math.random() * 100000)}`,
@@ -12221,6 +12338,8 @@ export default class TownScene extends Phaser.Scene {
     actor.label = label;
     actor.healthBar = healthBar;
     actor.healthBg = healthBg;
+    actor.facing = 'south';
+    this.setMonsterAnimation(actor, 'idle', actor.facing);
     actor.targetEntry = this.registerWorldInteractionTarget({
       id: actor.id,
       type: 'monster',
@@ -12237,14 +12356,16 @@ export default class TownScene extends Phaser.Scene {
     this.applyInteractionDebugStyle(container, 0xe74c3c);
     this.activeMonsterActors.push(actor);
     if (homeLair && !homeLair.activeMonsterIds.includes(actor.id)) homeLair.activeMonsterIds.push(actor.id);
-    this.tweens.add({
-      targets: sprite,
-      y: -16,
-      duration: Phaser.Math.Between(520, 780),
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
-    });
+    if (!actor.hasAnimationFrames) {
+      actor.ambientTween = this.tweens.add({
+        targets: sprite,
+        y: -16,
+        duration: Phaser.Math.Between(520, 780),
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
     return actor;
   }
 
@@ -12299,7 +12420,7 @@ export default class TownScene extends Phaser.Scene {
             `Target: ${this.resolveMonsterTarget(actor)?.name || actor.target?.name || 'None'}`,
             `Home lair: ${lairKnown ? knownLair.name : knownLair?.inferred ? 'Suspected hidden lair' : 'Unknown wilderness'}`,
             `Distance from lair: ${lairKnown ? `${Math.round(Phaser.Math.Distance.Between(actor.container.x, actor.container.y, actor.homeX, actor.homeY))}px` : 'unknown'}`,
-            actor.monster.flavour,
+            getSatireLine('monster', actor.monster.id, 'inspector', { day: this.day, fallback: actor.monster.flavour }),
           ].filter(Boolean),
         },
         {
@@ -12540,6 +12661,7 @@ export default class TownScene extends Phaser.Scene {
     if (!target) return;
     const dx = target.x - actor.container.x;
     const dy = target.y - actor.container.y;
+    this.setMonsterAnimation(actor, 'walk', this.getMonsterAnimationDirection(dx, dy));
     const distance = Math.hypot(dx, dy);
     const stopRange = actor.state === MONSTER_STATES.CHASING ? actor.stats.attackRange : 8;
     if (distance <= stopRange) {
@@ -12568,7 +12690,7 @@ export default class TownScene extends Phaser.Scene {
       } else return;
     }
     actor.container.setPosition(nextX, nextY).setDepth(nextY + 75);
-    actor.sprite?.setFlipX?.(dx < 0);
+    if (!actor.hasAnimationFrames) actor.sprite?.setFlipX?.(dx < 0);
   }
 
   updateMonsterHealthVisual(actor) {
@@ -12583,6 +12705,7 @@ export default class TownScene extends Phaser.Scene {
     const dealt = Math.max(1, Math.round(damage - (actor.stats.armour || 0)));
     actor.health = Math.max(0, actor.health - dealt);
     actor.lastHitAt = this.worldDangerClockMs;
+    this.setMonsterAnimation(actor, 'hurt', actor.facing);
     this.updateMonsterHealthVisual(actor);
     this.floatText(actor.container.x, actor.container.y - 52, `-${dealt}`, '#ffd0cc');
     actor.sprite?.setTint?.(0xffffff);
@@ -12612,6 +12735,7 @@ export default class TownScene extends Phaser.Scene {
     actor.moveTarget = null;
     actor.nextDecisionAt = Number.POSITIVE_INFINITY;
     actor.intent = 'Dying. The loot table is preparing a statement.';
+    const hasDeathAnimation = this.setMonsterAnimation(actor, 'death', actor.facing);
     this.worldInteractionTargets = this.worldInteractionTargets.filter((target) => target.id !== actor.id);
     actor.healthBar?.setVisible?.(false);
     const lair = this.monsterLairs?.[actor.homeLairId];
@@ -12656,17 +12780,19 @@ export default class TownScene extends Phaser.Scene {
       finishDeath();
       return;
     }
-    this.tweens.add({
+    const finishWithTween = () => this.tweens.add({
       targets: actor.container,
       alpha: 0.18,
-      angle: Phaser.Math.Between(-18, 18),
+      angle: hasDeathAnimation ? 0 : Phaser.Math.Between(-18, 18),
       scaleX: actor.container.scaleX * 0.88,
-      scaleY: actor.container.scaleY * 0.5,
+      scaleY: actor.container.scaleY * (hasDeathAnimation ? 0.88 : 0.5),
       y: deathY + 8,
-      duration: 480,
+      duration: hasDeathAnimation ? 220 : 480,
       ease: 'Quad.easeIn',
       onComplete: finishDeath,
     });
+    if (hasDeathAnimation) this.time.delayedCall(760, finishWithTween);
+    else finishWithTween();
   }
 
   applyBuildingMonsterDamage(actor, target) {
@@ -12682,8 +12808,13 @@ export default class TownScene extends Phaser.Scene {
       place: target.place,
     }, 0);
     const runtime = this.getBuildingRuntime(target.place.id);
-    const damage = Math.max(2, actor.stats.damage - Math.floor(this.getDefenseBonus() / 4));
+    const damage = Math.max(2, Math.round(actor.stats.damage * (actor.monster.behavior?.buildingDamage || 1)) - Math.floor(this.getDefenseBonus() / 4));
     runtime.health = Math.max(0, runtime.health - damage);
+    if (actor.monster.behavior?.serviceDrain) runtime.serviceQuality = Math.max(0, (runtime.serviceQuality || 1) - actor.monster.behavior.serviceDrain);
+    if (actor.monster.behavior?.corruptionAura && this.worldDangerClockMs >= (actor.nextEconomyEffectAt || 0)) {
+      actor.nextEconomyEffectAt = this.worldDangerClockMs + 3800;
+      this.applyDeltas({ corruption: actor.monster.behavior.corruptionAura, trust: -(actor.monster.behavior.trustDamage || 0) });
+    }
     runtime.damaged = runtime.health < runtime.maxHealth * 0.7;
     runtime.heavilyDamaged = runtime.health < runtime.maxHealth * 0.35;
     runtime.repairCost = Math.max(runtime.repairCost || 0, Math.ceil((runtime.maxHealth - runtime.health) * 0.65));
@@ -12757,8 +12888,10 @@ export default class TownScene extends Phaser.Scene {
   applyMonsterAttack(actor, target) {
     if (!target || this.worldDangerClockMs < actor.nextAttackAt) return;
     actor.nextAttackAt = this.worldDangerClockMs + actor.stats.attackCooldownMs;
-    actor.sprite?.setScale?.(actor.sprite.scaleX * 1.08, actor.sprite.scaleY * 0.94);
-    this.time.delayedCall(100, () => actor.sprite?.active && actor.sprite.setScale?.(Math.abs(actor.sprite.scaleX) / 1.08 * Math.sign(actor.sprite.scaleX || 1), actor.sprite.scaleY / 0.94));
+    if (!actor.hasAnimationFrames) {
+      actor.sprite?.setScale?.(actor.sprite.scaleX * 1.08, actor.sprite.scaleY * 0.94);
+      this.time.delayedCall(100, () => actor.sprite?.active && actor.sprite.setScale?.(Math.abs(actor.sprite.scaleX) / 1.08 * Math.sign(actor.sprite.scaleX || 1), actor.sprite.scaleY / 0.94));
+    }
     if (target.kind === 'building') {
       this.applyBuildingMonsterDamage(actor, target);
       return;
@@ -12771,6 +12904,19 @@ export default class TownScene extends Phaser.Scene {
     const armour = target.kind === 'hero' ? this.getHeroEquipmentBonus(unit).armor : 0;
     const damage = Math.max(1, actor.stats.damage - Math.floor(armour / 2));
     unit.stats.health = Math.max(0, unit.stats.health - damage);
+    if (actor.monster.behavior?.moraleDrain && target.kind === 'hero') {
+      unit.stats.morale = Phaser.Math.Clamp((unit.stats.morale || 0) - actor.monster.behavior.moraleDrain, 0, 100);
+    }
+    if (target.kind === 'carrier' && actor.monster.behavior?.cargoTheft && (unit.cargo || unit.assignedCargo)) {
+      const stolen = Math.min(Number(unit.cargo || unit.assignedCargo) || 0, Math.max(1, Math.floor(actor.monster.behavior.cargoTheft)));
+      actor.stolenCargo += stolen;
+      if (Number.isFinite(unit.cargo)) unit.cargo = Math.max(0, unit.cargo - stolen);
+      if (Number.isFinite(unit.assignedCargo)) unit.assignedCargo = Math.max(0, unit.assignedCargo - stolen);
+      actor.state = MONSTER_STATES.FLEEING;
+      actor.targetRef = null;
+      actor.moveTarget = { x: actor.homeX, y: actor.homeY, name: 'home lair' };
+      actor.intent = `Returning to its lair with ${stolen} stolen cargo.`;
+    }
     this.floatText(unit.container.x, unit.container.y - 42, `-${damage}`, '#f0938f');
     unit.sprite?.setTint?.(0xff9b96);
     this.time.delayedCall(130, () => unit.sprite?.active && unit.sprite.clearTint?.());
@@ -13314,6 +13460,7 @@ export default class TownScene extends Phaser.Scene {
         this.decideMonsterAction(actor);
       }
       this.advanceMonsterMovement(actor, deltaSeconds);
+      if (actor.state === MONSTER_STATES.ATTACKING) this.setMonsterAnimation(actor, 'attack', actor.facing);
       if (actor.state === MONSTER_STATES.ATTACKING) this.applyMonsterAttack(actor, this.resolveMonsterTarget(actor));
     }
     this.updateHeroMonsterCombat();
@@ -13356,6 +13503,8 @@ export default class TownScene extends Phaser.Scene {
 
   clearMonsterActor(actor, fade = true) {
     if (!actor) return;
+    actor.animationTimer?.remove?.();
+    actor.ambientTween?.stop?.();
     const lair = this.monsterLairs?.[actor.homeLairId];
     if (lair) lair.activeMonsterIds = (lair.activeMonsterIds || []).filter((id) => id !== actor.id);
     for (const hero of this.heroes || []) {
@@ -13690,7 +13839,7 @@ export default class TownScene extends Phaser.Scene {
     this.stats.monsterAttacks = (this.stats.monsterAttacks || 0) + 1;
     this.monsterState.lastAttackDay = this.day;
     this.monsterState.weekAttackCount = (this.monsterState.weekAttackCount || 0) + 1;
-    const text = `${monster.name} emerged from ${lair.name}. ${monster.flavour}`;
+    const text = `${monster.name} emerged from ${lair.name}. ${getSatireLine('monster', monster.id, 'sighting', { day: this.day, fallback: monster.flavour })}`;
     this.addTownLog(text, 'monster');
     this.addReportLine('monsters', text);
     this.game.events.emit('gwg-event', text);
@@ -13774,12 +13923,18 @@ export default class TownScene extends Phaser.Scene {
     const defenseDistrict = this.getActiveDistrictBonuses().some((bonus) => bonus.id === 'defense') ? 2 : 0;
     const towerSpec = this.getBuildingSpecialization('watchtower');
     const towerSpecBonus = towerSpec?.id === 'patrol_focus' ? 2 : 0;
+    const barracks = this.getPlacedBuildingsByBaseId('guard_barracks')
+      .reduce((sum, place) => sum + this.getPlaceLevel(place), 0);
+    const hunters = this.getPlacedBuildingsByBaseId('monster_hunter_lodge')
+      .reduce((sum, place) => sum + this.getPlaceLevel(place), 0);
     return this.getPlaceLevel(this.buildingById.watchtower) * 3
       + this.getPlaceLevel(this.buildingById.training)
       + this.getPlaceLevel(this.buildingById.arena) * 2
       + Math.floor(this.getPlaceLevel(this.buildingById.blacksmith) / 2)
       + defenseDistrict
-      + towerSpecBonus;
+      + towerSpecBonus
+      + barracks * 2
+      + hunters;
   }
 
   resolveMonsterAttack({ forced = false, chance = 0 } = {}) {
@@ -13797,7 +13952,7 @@ export default class TownScene extends Phaser.Scene {
     const target = this.getMonsterTarget(monster);
     const spawn = this.getMonsterSpawnSpot(target);
     const warning = Phaser.Utils.Array.GetRandom(MONSTER_WARNING_LINES);
-    const attackText = `${warning} ${monster.name} approached ${target.name}. ${monster.flavour}`;
+    const attackText = `${warning} ${monster.name} approached ${target.name}. ${getSatireLine('monster', monster.id, 'attack', { day: this.day, fallback: monster.flavour })}`;
     this.stats.monsterAttacks = (this.stats.monsterAttacks || 0) + 1;
     this.monsterState.lastAttackDay = this.day;
     this.monsterState.weekAttackCount = (this.monsterState.weekAttackCount || 0) + 1;
@@ -15201,7 +15356,9 @@ export default class TownScene extends Phaser.Scene {
   dispatchCarriers(force = false) {
     if (!this.isBuilderCity) return;
     this.carriers = (this.carriers || []).filter((carrier) => carrier.container?.active);
-    const maxCarriers = this.rsp?.compact ? 2 : 4;
+    const depotCapacity = this.getPlacedBuildingsByBaseId('caravan_depot')
+      .reduce((sum, place) => sum + this.getPlaceLevel(place), 0);
+    const maxCarriers = (this.rsp?.compact ? 2 : 4) + depotCapacity * 2;
     const camps = this.cityState.placedBuildings
       .map((placement) => this.buildingById?.[placement.id])
       .filter((place) => place && EXTRACTION_BUILDINGS[getBaseBuildingId(place.baseId || place.id)])
@@ -15966,7 +16123,9 @@ export default class TownScene extends Phaser.Scene {
       return;
     }
     this.carriers = (this.carriers || []).filter((carrier) => carrier.container?.active);
-    const maxCarriers = this.rsp?.compact ? 3 : 6;
+    const depotCapacity = this.getPlacedBuildingsByBaseId('caravan_depot')
+      .reduce((sum, place) => sum + this.getPlaceLevel(place), 0);
+    const maxCarriers = (this.rsp?.compact ? 3 : 6) + depotCapacity * 2;
     for (const placement of this.cityState.placedBuildings) {
       if (this.carriers.length >= maxCarriers) break;
       const place = this.buildingById?.[placement.id];
@@ -16015,6 +16174,54 @@ export default class TownScene extends Phaser.Scene {
     }
     if (missingWeapons || missingArmor) {
       this.addReportLine('warnings', `Hero supply: ${missingWeapons} need weapons, ${missingArmor} veteran-tier heroes need armor.`);
+    }
+    const infirmaries = this.getPlacedBuildingsByBaseId('infirmary')
+      .filter((place) => !this.getBuildingRuntime(place.id).closed && this.getBuildingRoadAccess(place).connected);
+    let treatmentSlots = infirmaries.reduce((sum, place) => sum + 2 + this.getPlaceLevel(place) * 2, 0);
+    for (const hero of this.getActiveHeroes().filter((entry) => this.isHeroInjured(entry))) {
+      if (treatmentSlots <= 0 || (this.townInventory.potions || 0) <= 0) break;
+      this.townInventory.potions -= 1;
+      treatmentSlots -= 1;
+      hero.stats.injuredUntilDay = Math.max(this.day, (hero.stats.injuredUntilDay || this.day) - 1);
+      const infirmary = infirmaries.find((place) => Phaser.Math.Distance.Between(place.x, place.y, hero.container.x, hero.container.y) <= 620) || infirmaries[0];
+      if (infirmary) {
+        const runtime = this.getBuildingRuntime(infirmary.id);
+        runtime.servicesProvided = (runtime.servicesProvided || 0) + 1;
+      }
+    }
+    const appraisers = this.getPlacedBuildingsByBaseId('loot_appraiser')
+      .filter((place) => !this.getBuildingRuntime(place.id).closed && this.getBuildingRoadAccess(place).connected);
+    const appraised = Math.min(appraisers.length, this.townInventory.loot || 0);
+    if (appraised > 0) {
+      this.townInventory.loot -= appraised;
+      this.addTownResource('tradeGoods', appraised);
+      for (const place of appraisers.slice(0, appraised)) {
+        const runtime = this.getBuildingRuntime(place.id);
+        runtime.lootProcessed = (runtime.lootProcessed || 0) + 1;
+        runtime.servicesProvided = (runtime.servicesProvided || 0) + 1;
+      }
+      this.addReportLine('economy', `${appraised} loot lot${appraised === 1 ? '' : 's'} appraised into Trade Goods. Narrative fees were assessed.`);
+    }
+    const hunterStrength = this.getPlacedBuildingsByBaseId('monster_hunter_lodge')
+      .filter((place) => !this.getBuildingRuntime(place.id).closed)
+      .reduce((sum, place) => sum + this.getPlaceLevel(place), 0);
+    if (hunterStrength > 0) {
+      const lair = Object.values(this.monsterLairs || {})
+        .filter((entry) => entry.discovered && !entry.cleared)
+        .sort((a, b) => (b.pressure || 0) - (a.pressure || 0))[0];
+      if (lair) lair.pressure = Math.max(0, (lair.pressure || 0) - Math.min(3, hunterStrength));
+    }
+    const gravekeepers = this.getPlacedBuildingsByBaseId('gravekeeper_hut')
+      .filter((place) => !this.getBuildingRuntime(place.id).closed);
+    if (gravekeepers.length) {
+      const worstArea = Object.entries(this.areaReputation || {})
+        .filter(([, danger]) => Number(danger) > 0)
+        .sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+      if (worstArea) {
+        this.changeAreaReputation(worstArea[0], -Math.min(2, gravekeepers.length), 'Gravekeeper memorial care');
+        const runtime = this.getBuildingRuntime(gravekeepers[0].id);
+        runtime.servicesProvided = (runtime.servicesProvided || 0) + 1;
+      }
     }
   }
 
@@ -16424,7 +16631,7 @@ export default class TownScene extends Phaser.Scene {
         hero.stats.power += 1;
         hero.stats.fame = Phaser.Math.Clamp((hero.stats.fame || 0) + monster.threat * 2, 0, 100);
         this.addHeroHistory(hero, `Cleared ${place.name}.`);
-        const text = `${hero.def.name} cleared the ${place.name}. ${monster.flavour} The area feels safer.`;
+        const text = `${hero.def.name} cleared the ${place.name}. ${getSatireLine('monster', monster.id, 'defeat', { day: this.day, fallback: monster.flavour })} The area feels safer.`;
         this.game.events.emit('gwg-event', text);
         this.addTownLog(text, 'monster');
         this.addReportLine('quests', text);
@@ -16436,7 +16643,7 @@ export default class TownScene extends Phaser.Scene {
         this.applyDeltas(deltas);
         this.floatDeltas(place.x, place.y - 48, deltas);
         this.addHeroHistory(hero, `Was driven off from ${place.name}.`);
-        const text = `${hero.def.name} was driven off from the ${place.name} and limped home. ${monster.flavour}`;
+        const text = `${hero.def.name} was driven off from the ${place.name} and limped home. ${getSatireLine('monster', monster.id, 'victory', { day: this.day, fallback: monster.flavour })}`;
         this.game.events.emit('gwg-event', text);
         this.addTownLog(text, 'monster');
         this.addReportLine('warnings', text);
