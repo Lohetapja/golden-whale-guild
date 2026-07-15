@@ -60,7 +60,7 @@ export function getResponsiveUi() {
     tapThreshold: Math.round(13 * clamp(unit, 1, 2.6)),
     // performance caps: fewer live text objects on phones
     maxIdleBubbles: compact ? 1 : 2,
-    maxImportantBubbles: compact ? 2 : 4,
+    maxImportantBubbles: compact ? 2 : 3,
     maxFloatingTexts: compact ? 6 : 12,
     maxParticleBurst: compact ? 34 : 64,
   };

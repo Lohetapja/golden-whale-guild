@@ -61,6 +61,8 @@ import {
   RNGEESUS_LINES,
   THREAT_REACTIONS,
   WHALE_REACTIONS,
+  WORLD_CHATTER_BY_CONTEXT,
+  WORLD_CHATTER_BY_ROLE,
 } from '../data/dialogue.js';
 import {
   getUpgradeCost,
@@ -239,10 +241,21 @@ const LABEL_FONT_SIZE = LAYOUT_CONSTANTS.LABEL_FONT_SIZE;
 const SMALL_LABEL_FONT_SIZE = LAYOUT_CONSTANTS.SMALL_LABEL_FONT_SIZE;
 const STEP_MS = 950; // pacing of the day-cycle playback
 const MAX_IDLE_BUBBLES = 2;
-const MAX_IMPORTANT_BUBBLES = 4;
+const MAX_IMPORTANT_BUBBLES = 3;
 const BUBBLE_MIN_SPACING = 150;
 const IDLE_BUBBLE_DURATION_MS = 4600;
 const IMPORTANT_BUBBLE_DURATION_MS = 5600;
+const WORLD_SPEECH_DEPTH = 9800;
+const CHATTER_CONFIG = Object.freeze({
+  perNpcCooldownMs: 18000,
+  perLineCooldownMs: 70000,
+  globalAmbientCooldownMs: 5200,
+  recentHistorySize: 18,
+  similarWordRatio: 0.68,
+  maxBubbleWidth: 224,
+  minBubbleWidth: 72,
+  viewMarginPx: 16,
+});
 const MAX_FLOATING_TEXTS = 12;
 const COIN_BURST_COOLDOWN_MS = 450;
 // Save keys, versioning, and persistence now live in ../systems/saveManager.js.
@@ -974,6 +987,13 @@ export default class TownScene extends Phaser.Scene {
     this.refreshAllUpgradeVisuals();
     this.activeBubbles = 0;
     this.importantChatterUntil = 0;
+    this.worldSpeechBubbles = [];
+    this.chatterState = {
+      lastAmbientAt: -CHATTER_CONFIG.globalAmbientCooldownMs,
+      lastBySpeaker: new Map(),
+      lastByLine: new Map(),
+      recentLines: [],
+    };
     this.floaters = [];
     this.lastCoinBurstAt = -COIN_BURST_COOLDOWN_MS;
     this.buildTooltip();
@@ -6501,19 +6521,20 @@ export default class TownScene extends Phaser.Scene {
 
   addPlaceLabel(place, fontSize = LABEL_FONT_SIZE) {
     const priority = this.getPlaceLabelPriority(place);
+    const readableFontSize = Math.max(10, fontSize);
     const label = this.add.text(
       place.x + (place.labelOffsetX || 0),
       place.y + (place.labelOffsetY ?? 4),
       this.getPlaceLabelText(place),
       {
         fontFamily: '"Courier New", monospace',
-        fontSize: `${fontSize}px`,
+        fontSize: `${readableFontSize}px`,
         fontStyle: 'bold',
         color: place.id === 'whale' ? '#ffe08a' : '#fff6dc',
-        stroke: '#0c1118',
-        strokeThickness: 2,
-        backgroundColor: priority <= 2 ? '#0f1521c4' : '#0f152199',
-        padding: { x: priority <= 2 ? 4 : 3, y: 2 },
+        stroke: '#080c12',
+        strokeThickness: 3,
+        backgroundColor: priority <= 2 ? '#0d131ee8' : '#0d131edb',
+        padding: { x: priority <= 2 ? 6 : 5, y: 3 },
         align: 'center',
         wordWrap: { width: place.labelWidth || Math.max(priority <= 2 ? 82 : 74, (place.w || 80) + 20) },
       },
@@ -6961,11 +6982,11 @@ export default class TownScene extends Phaser.Scene {
       if (resourceYield) {
         const badge = this.add.text(place.x, place.y - (place.h || 44) - 14, resourceYield.resource.toUpperCase(), {
           fontFamily: '"Courier New", monospace',
-          fontSize: '9px',
+          fontSize: '10px',
           fontStyle: 'bold',
           color: '#d7f3d0',
           stroke: '#0c1118',
-          strokeThickness: 2,
+          strokeThickness: 3,
           backgroundColor: '#173324dd',
           padding: { x: 4, y: 2 },
         }).setOrigin(0.5, 1).setDepth(depth + 3);
@@ -7103,7 +7124,7 @@ export default class TownScene extends Phaser.Scene {
       quest.posted ? 'POSTED: resolves next cycle' : 'Tap to post bounty',
     ].join('\n'), {
       fontFamily: '"Courier New", monospace',
-      fontSize: '9px',
+      fontSize: '10px',
       fontStyle: 'bold',
       color: quest.posted ? '#fff6dc' : '#243042',
       lineSpacing: 2,
@@ -8809,7 +8830,7 @@ export default class TownScene extends Phaser.Scene {
       fontStyle: 'bold',
       color: '#f6c945',
       stroke: '#0c1118',
-      strokeThickness: 2,
+      strokeThickness: 3,
     }).setDepth(5001);
     this.tooltipText = this.add.text(0, 0, '', {
       fontFamily: '"Courier New", monospace',
@@ -11168,16 +11189,155 @@ export default class TownScene extends Phaser.Scene {
   // --- speech bubbles & floating text --------------------------------------
 
   hasNearbyBubble(hero, minDistance = BUBBLE_MIN_SPACING) {
-    return this.heroes.some((other) => (
-      other !== hero
-      && other.bubble
+    return (this.worldSpeechBubbles || []).some((entry) => (
+      entry.speaker !== hero
+      && entry.container?.active
       && Phaser.Math.Distance.Between(
-        other.container.x,
-        other.container.y,
+        entry.speaker.container.x,
+        entry.speaker.container.y,
         hero.container.x,
         hero.container.y,
       ) < minDistance
     ));
+  }
+
+  getChatterSpeakerKey(speaker) {
+    return speaker?.def?.id || speaker?.id || speaker?.targetEntry?.id || 'unknown-speaker';
+  }
+
+  normalizeChatterLine(line) {
+    return String(line || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  areChatterLinesSimilar(a, b) {
+    const left = new Set(this.normalizeChatterLine(a).split(' ').filter((word) => word.length > 2));
+    const right = new Set(this.normalizeChatterLine(b).split(' ').filter((word) => word.length > 2));
+    if (!left.size || !right.size) return this.normalizeChatterLine(a) === this.normalizeChatterLine(b);
+    let shared = 0;
+    for (const word of left) if (right.has(word)) shared += 1;
+    return shared / Math.min(left.size, right.size) >= CHATTER_CONFIG.similarWordRatio;
+  }
+
+  isChatterLineRecent(line) {
+    const normalized = this.normalizeChatterLine(line);
+    const lastUsed = this.chatterState?.lastByLine?.get(normalized) ?? -Infinity;
+    if (this.time.now - lastUsed < CHATTER_CONFIG.perLineCooldownMs) return true;
+    return (this.chatterState?.recentLines || []).some((recent) => this.areChatterLinesSimilar(line, recent.text));
+  }
+
+  isRecentChatterEcho(line, windowMs = 9000) {
+    return (this.chatterState?.recentLines || []).some((recent) => (
+      this.time.now - recent.at < windowMs && this.areChatterLinesSimilar(line, recent.text)
+    ));
+  }
+
+  canShowAmbientChatter(speaker, line) {
+    if (!speaker?.container?.active || !this.chatterState) return false;
+    const speakerKey = this.getChatterSpeakerKey(speaker);
+    const lastSpeakerAt = this.chatterState.lastBySpeaker.get(speakerKey) ?? -Infinity;
+    if (this.time.now - lastSpeakerAt < CHATTER_CONFIG.perNpcCooldownMs) return false;
+    if (this.time.now - this.chatterState.lastAmbientAt < CHATTER_CONFIG.globalAmbientCooldownMs) return false;
+    return !this.isChatterLineRecent(line);
+  }
+
+  recordChatterLine(speaker, line, ambient = false) {
+    if (!this.chatterState) return;
+    const normalized = this.normalizeChatterLine(line);
+    const record = { text: line, normalized, at: this.time.now };
+    this.chatterState.lastBySpeaker.set(this.getChatterSpeakerKey(speaker), this.time.now);
+    this.chatterState.lastByLine.set(normalized, this.time.now);
+    this.chatterState.recentLines.push(record);
+    this.chatterState.recentLines = this.chatterState.recentLines
+      .filter((entry) => this.time.now - entry.at < CHATTER_CONFIG.perLineCooldownMs)
+      .slice(-CHATTER_CONFIG.recentHistorySize);
+    if (ambient) this.chatterState.lastAmbientAt = this.time.now;
+  }
+
+  getSpeechBubbleScale() {
+    return Phaser.Math.Clamp(1 / Math.max(0.45, this.cameras.main.zoom), 1, 1.65);
+  }
+
+  drawSpeechBubbleFrame(entry) {
+    const { graphics, width, height, speaker, container } = entry;
+    const tailX = Phaser.Math.Clamp(speaker.container.x - container.x, -width / 2 + 12, width / 2 - 12);
+    graphics.clear();
+    graphics.fillStyle(0xfff6dc, 0.98);
+    graphics.fillRoundedRect(-width / 2, -height - 7, width, height, 6);
+    graphics.lineStyle(2, 0x111722, 0.92);
+    graphics.strokeRoundedRect(-width / 2, -height - 7, width, height, 6);
+    graphics.fillStyle(0xfff6dc, 0.98);
+    graphics.fillTriangle(tailX - 5, -7, tailX + 5, -7, tailX, 2);
+    graphics.lineStyle(2, 0x111722, 0.92);
+    graphics.lineBetween(tailX - 5, -7, tailX, 2);
+    graphics.lineBetween(tailX, 2, tailX + 5, -7);
+  }
+
+  getSpeechBubbleBounds(entry, x = entry.container.x, y = entry.container.y) {
+    const scale = entry.container.scaleX || this.getSpeechBubbleScale();
+    return new Phaser.Geom.Rectangle(
+      x - entry.width * scale / 2,
+      y - (entry.height + 7) * scale,
+      entry.width * scale,
+      (entry.height + 10) * scale,
+    );
+  }
+
+  positionSpeechBubble(entry) {
+    if (!entry?.container?.active || !entry.speaker?.container?.active) return;
+    const speaker = entry.speaker;
+    const view = this.getVisibleWorldRect();
+    const scale = this.getSpeechBubbleScale();
+    entry.container.setScale(scale).setDepth(WORLD_SPEECH_DEPTH);
+    const margin = CHATTER_CONFIG.viewMarginPx / Math.max(0.45, this.cameras.main.zoom);
+    const halfWidth = entry.width * scale / 2;
+    const speakerHeight = speaker.spriteHeight || speaker.sprite?.displayHeight || 38;
+    const baseY = speaker.container.y - speakerHeight - 18;
+    const minX = view.left + margin + halfWidth;
+    const maxX = view.right - margin - halfWidth;
+    const desiredX = Phaser.Math.Clamp(speaker.container.x, Math.min(minX, maxX), Math.max(minX, maxX));
+    const minY = view.top + margin + (entry.height + 7) * scale;
+    const maxY = view.bottom - margin;
+    const desiredY = Phaser.Math.Clamp(baseY, Math.min(minY, maxY), Math.max(minY, maxY));
+
+    const offsets = [
+      { x: 0, y: 0 },
+      { x: 0, y: -(entry.height + 16) * scale },
+      { x: (entry.width + 18) * scale, y: 0 },
+      { x: -(entry.width + 18) * scale, y: 0 },
+      { x: (entry.width * 0.72) * scale, y: -(entry.height + 18) * scale },
+      { x: -(entry.width * 0.72) * scale, y: -(entry.height + 18) * scale },
+      { x: 0, y: -(entry.height * 2 + 28) * scale },
+    ];
+    const otherBounds = (this.worldSpeechBubbles || [])
+      .filter((other) => other !== entry && other.container?.active)
+      .map((other) => this.getSpeechBubbleBounds(other));
+    let position = { x: desiredX, y: desiredY };
+    for (const offset of offsets) {
+      const x = Phaser.Math.Clamp(desiredX + offset.x, Math.min(minX, maxX), Math.max(minX, maxX));
+      const y = Phaser.Math.Clamp(desiredY + offset.y, Math.min(minY, maxY), Math.max(minY, maxY));
+      const bounds = this.getSpeechBubbleBounds(entry, x, y);
+      if (!otherBounds.some((other) => Phaser.Geom.Intersects.RectangleToRectangle(bounds, other))) {
+        position = { x, y };
+        break;
+      }
+    }
+    entry.container.setPosition(position.x, position.y);
+    this.drawSpeechBubbleFrame(entry);
+  }
+
+  updateSpeechBubbles() {
+    for (const entry of [...(this.worldSpeechBubbles || [])]) {
+      if (!entry.container?.active || !entry.speaker?.container?.active) {
+        this.clearHeroBubble(entry.speaker);
+      }
+    }
+    this.worldSpeechBubbles = (this.worldSpeechBubbles || []).filter((entry) => entry.container?.active);
+    for (const entry of this.worldSpeechBubbles) this.positionSpeechBubble(entry);
+    this.activeBubbles = this.worldSpeechBubbles.length;
   }
 
   clearHeroBubble(hero, fade = false) {
@@ -11188,7 +11348,8 @@ export default class TownScene extends Phaser.Scene {
       hero.bubbleTimer.remove();
       hero.bubbleTimer = null;
     }
-    this.activeBubbles = Math.max(0, this.activeBubbles - 1);
+    this.worldSpeechBubbles = (this.worldSpeechBubbles || []).filter((entry) => entry.container !== bubble);
+    this.activeBubbles = this.worldSpeechBubbles.length;
 
     if (fade && bubble.active) {
       this.tweens.add({
@@ -11203,64 +11364,68 @@ export default class TownScene extends Phaser.Scene {
   }
 
   clearOldestBubble() {
-    const bubbled = this.heroes
-      .filter((h) => h.bubble)
-      .sort((a, b) => (a.bubbleStartedAt || 0) - (b.bubbleStartedAt || 0));
-    if (bubbled.length > 0) this.clearHeroBubble(bubbled[0]);
+    const oldest = [...(this.worldSpeechBubbles || [])]
+      .sort((a, b) => a.startedAt - b.startedAt)[0];
+    if (oldest) this.clearHeroBubble(oldest.speaker);
   }
 
   say(hero, text, important = false) {
     if (!hero || !text) return;
-    const maxBubbles = important
+    const options = typeof important === 'object' ? important : { important };
+    const isImportant = Boolean(options.important);
+    const ambient = Boolean(options.ambient);
+    if (ambient && !this.canShowAmbientChatter(hero, text)) return;
+    if (!ambient && !options.allowRepeat && this.isRecentChatterEcho(text)) return;
+    const maxBubbles = isImportant
       ? (this.rsp?.maxImportantBubbles ?? MAX_IMPORTANT_BUBBLES)
       : (this.rsp?.maxIdleBubbles ?? MAX_IDLE_BUBBLES);
-    if (!important && this.activeBubbles >= maxBubbles) return;
-    if (!important && this.hasNearbyBubble(hero)) return;
-    if (important && this.activeBubbles >= maxBubbles) this.clearOldestBubble();
-    if (important) this.importantChatterUntil = this.time.now + 3800;
+    if (!isImportant && this.activeBubbles >= maxBubbles) return;
+    if (!isImportant && this.hasNearbyBubble(hero)) return;
+    if (isImportant && this.activeBubbles >= maxBubbles) this.clearOldestBubble();
+    if (isImportant) this.importantChatterUntil = this.time.now + 3800;
 
     this.clearHeroBubble(hero);
     hero.container.setAlpha(1);
-    if (important) this.showHeroLabelBriefly(hero, 3400);
+    if (isImportant && this.heroes.includes(hero)) this.showHeroLabelBriefly(hero, 3400);
 
-    const txt = this.add.text(0, -4, text, {
+    const txt = this.add.text(0, -11, text, {
       fontFamily: '"Courier New", monospace',
-      fontSize: '13px',
+      fontSize: '14px',
       fontStyle: 'bold',
-      color: '#141a24',
-      wordWrap: { width: 190 },
-      lineSpacing: 3,
+      color: '#111722',
+      stroke: '#fffaf0',
+      strokeThickness: 1,
+      wordWrap: { width: CHATTER_CONFIG.maxBubbleWidth - 24, useAdvancedWrap: true },
+      lineSpacing: 4,
+      align: 'center',
     }).setOrigin(0.5, 1);
 
-    const bw = txt.width + 18;
-    const bh = txt.height + 12;
+    const bw = Phaser.Math.Clamp(txt.width + 24, CHATTER_CONFIG.minBubbleWidth, CHATTER_CONFIG.maxBubbleWidth);
+    const bh = txt.height + 18;
     const g = this.add.graphics();
-    g.fillStyle(0xfff6dc, 0.97);
-    g.fillRoundedRect(-bw / 2, -bh - 2, bw, bh, 5);
-    g.fillTriangle(-4, -3, 4, -3, 0, 3); // tail
-    g.lineStyle(2, 0x1d2430, 0.65);
-    g.strokeRoundedRect(-bw / 2, -bh - 2, bw, bh, 5);
-
-    const view = this.getVisibleWorldRect();
-    const left = hero.container.x - bw / 2;
-    const right = hero.container.x + bw / 2;
-    let edgeOffset = 0;
-    if (left < view.left + 12) edgeOffset = view.left + 12 - left;
-    if (right > view.right - 12) edgeOffset = view.right - 12 - right;
-
-    let localY = -64;
-    const top = hero.container.y + localY - bh - 2;
-    if (top < view.top + 52) localY += view.top + 52 - top;
-
-    const bubble = this.add.container(edgeOffset, localY, [g, txt]).setScale(0);
-    hero.container.add(bubble);
+    const bubble = this.add.container(hero.container.x, hero.container.y - 64, [g, txt])
+      .setDepth(WORLD_SPEECH_DEPTH)
+      .setAlpha(0);
     hero.bubble = bubble;
     hero.bubbleStartedAt = this.time.now;
-    this.activeBubbles += 1;
+    const entry = {
+      speaker: hero,
+      container: bubble,
+      graphics: g,
+      text: txt,
+      width: bw,
+      height: bh,
+      priority: Number(options.priority) || (isImportant ? 3 : 1),
+      startedAt: this.time.now,
+    };
+    this.worldSpeechBubbles.push(entry);
+    this.activeBubbles = this.worldSpeechBubbles.length;
+    this.positionSpeechBubble(entry);
+    this.recordChatterLine(hero, text, ambient);
 
-    this.tweens.add({ targets: bubble, scale: 1, duration: 180, ease: 'Back.easeOut' });
+    this.tweens.add({ targets: bubble, alpha: 1, duration: 150, ease: 'Sine.easeOut' });
     hero.bubbleTimer = this.time.delayedCall(
-      important ? IMPORTANT_BUBBLE_DURATION_MS : IDLE_BUBBLE_DURATION_MS,
+      isImportant ? IMPORTANT_BUBBLE_DURATION_MS : IDLE_BUBBLE_DURATION_MS,
       () => this.clearHeroBubble(hero, true),
     );
   }
@@ -11454,11 +11619,11 @@ export default class TownScene extends Phaser.Scene {
     const isRemains = drop.kind === 'remains' || drop.kind === 'grave';
     const label = this.add.text(0, -44, drop.kind === 'grave' ? drop.heroName || 'Grave' : drop.kind === 'remains' ? drop.name : 'Loot', {
       fontFamily: '"Courier New", monospace',
-      fontSize: '9px',
+      fontSize: '10px',
       fontStyle: 'bold',
       color: isRemains ? '#d4dae2' : '#ffe08a',
       stroke: '#0c1118',
-      strokeThickness: 2,
+      strokeThickness: 3,
       backgroundColor: '#0f1521aa',
       padding: { x: 3, y: 1 },
     }).setOrigin(0.5, 1).setAlpha(0);
@@ -11589,7 +11754,7 @@ export default class TownScene extends Phaser.Scene {
       this.addHeroHistory(collector, `Collected ${drop.name} after ${drop.monsterName}.`);
       const killer = drop.killerId ? this.getHeroById(drop.killerId) : null;
       const party = this.getPartyForHero(collector);
-      if (killer && killer !== collector && party?.id === this.getPartyForHero(killer)?.id) {
+      if (killer && killer !== collector && party && party.id === this.getPartyForHero(killer)?.id) {
         if (['equal', 'need'].includes(party.lootPolicy)) {
           this.recordHeroRelationshipEvent(killer, collector, 'loot_shared', { relatedId: drop.id, location: drop.areaId || 'battlefield', reciprocal: true });
         } else if (party.lootPolicy === 'finders') {
@@ -12476,11 +12641,11 @@ export default class TownScene extends Phaser.Scene {
     const healthBar = this.add.rectangle(-17, -49, 34, 3, 0xe74c3c, 0.9).setOrigin(0, 0.5);
     const label = this.add.text(0, -56, monster.name, {
       fontFamily: '"Courier New", monospace',
-      fontSize: '9px',
+      fontSize: '10px',
       fontStyle: 'bold',
       color: '#ffd0cc',
       stroke: '#0c1118',
-      strokeThickness: 2,
+      strokeThickness: 3,
       backgroundColor: '#301820cc',
       padding: { x: 4, y: 1 },
       wordWrap: { width: 90 },
@@ -13288,7 +13453,7 @@ export default class TownScene extends Phaser.Scene {
     const sprite = this.add.image(0, 0, textureKey).setOrigin(0.5, 1);
     sprite.setScale(this.getTextureScaleForHeight(textureKey, 28, 1.2));
     const label = this.add.text(0, 2, 'Emergency Guard', {
-      fontFamily: '"Courier New", monospace', fontSize: '8px', fontStyle: 'bold', color: '#ffd0cc', stroke: '#0c1118', strokeThickness: 2,
+      fontFamily: '"Courier New", monospace', fontSize: '10px', fontStyle: 'bold', color: '#ffd0cc', stroke: '#080c12', strokeThickness: 3,
     }).setOrigin(0.5, 0).setAlpha(0);
     const container = this.add.container(door.x, door.y, [sprite, label]).setDepth(door.y + 4);
     const guard = {
@@ -14224,35 +14389,125 @@ export default class TownScene extends Phaser.Scene {
     const options = (lines || []).filter(Boolean);
     if (options.length === 0) return '';
     hero.recentLines = Array.isArray(hero.recentLines) ? hero.recentLines : [];
-    const fresh = options.filter((line) => !hero.recentLines.includes(line));
+    const fresh = options.filter((line) => (
+      !hero.recentLines.includes(line) && !this.isChatterLineRecent(line)
+    ));
     const line = Phaser.Utils.Array.GetRandom(fresh.length ? fresh : options);
     hero.recentLines.push(line);
     hero.recentLines = hero.recentLines.slice(-6);
     return line;
   }
 
+  getAmbientChatterRole(unit) {
+    if (unit?.monster) return 'monster';
+    if (unit?.serviceRole === 'guard_patrol') return 'guard';
+    if (unit?.serviceRole === 'carrier' || unit?.carrier || unit?.walker) {
+      if (unit.serviceRole === 'quest_clerk') return 'clerk';
+      if (unit.serviceRole === 'trader') return 'merchant';
+      if (unit.serviceRole === 'premium_evangelist') return 'premium';
+      return 'worker';
+    }
+    const personality = String(unit?.def?.personality || '');
+    if (/whale|premium|sponsored|overleveled/i.test(personality)) return 'premium';
+    if (/clerk|intern/i.test(personality)) return 'clerk';
+    if (/merchant|collector/i.test(personality)) return 'merchant';
+    return 'hero';
+  }
+
+  getAmbientChatterContexts(unit) {
+    const contexts = [];
+    const currentAction = String(unit?.currentAction || unit?.intent?.action || '').toLowerCase();
+    const nearbyMonster = (this.activeMonsterActors || []).some((actor) => (
+      actor.container?.active
+      && actor.container.visible
+      && Phaser.Math.Distance.Between(unit.container.x, unit.container.y, actor.container.x, actor.container.y) < 250
+    ));
+    if (nearbyMonster) contexts.push({ id: 'monsterNearby', priority: 5 });
+    if (unit?.stats && this.heroes.includes(unit) && this.isHeroInjured(unit)) contexts.push({ id: 'injured', priority: 4 });
+    if (unit?.cargo || /loot|cargo|carrying|delivery/.test(currentAction)) contexts.push({ id: 'carryingLoot', priority: 4 });
+    if (/explor|scout|fog|lair/.test(currentAction)) contexts.push({ id: 'exploring', priority: 3 });
+    if (unit?.serviceRole === 'guard_patrol' || /patrol|guard|intercept/.test(currentAction)) contexts.push({ id: 'guarding', priority: 3 });
+    if (unit?.walker || /work|cutting|mining|herb|salvage|service/.test(currentAction)) contexts.push({ id: 'working', priority: 2 });
+    if (/walk|going|return|travel|route/.test(currentAction) || unit?.state === 'walking') contexts.push({ id: 'traveling', priority: 2 });
+    if ((this.resources?.morale || 0) < 38) contexts.push({ id: 'lowMorale', priority: 2 });
+    if ((this.resources?.corruption || 0) > 56) contexts.push({ id: 'highCorruption', priority: 2 });
+    const nearPremium = Object.values(this.buildingById || {}).some((place) => (
+      place?.isPlaced
+      && ['whale', 'premium_temple', 'premium_lodge', 'premium_fabricator', 'vip_lounge'].includes(getBaseBuildingId(place.baseId || place.id))
+      && Phaser.Math.Distance.Between(unit.container.x, unit.container.y, place.x, place.y) < 230
+    ));
+    if (nearPremium) contexts.push({ id: 'nearPremium', priority: 2 });
+    return contexts.sort((a, b) => b.priority - a.priority);
+  }
+
+  getAmbientChatterChoice(unit) {
+    const role = this.getAmbientChatterRole(unit);
+    const contexts = this.getAmbientChatterContexts(unit);
+    const bestPriority = contexts[0]?.priority || 1;
+    const contextLines = contexts
+      .filter((context) => context.priority === bestPriority)
+      .flatMap((context) => WORLD_CHATTER_BY_CONTEXT[context.id] || []);
+    const personalityLines = unit?.def?.personality ? (IDLE_QUIPS[unit.def.personality] || []) : [];
+    const personalLines = unit?.def?.idleLines || [];
+    const roleLines = WORLD_CHATTER_BY_ROLE[role] || WORLD_CHATTER_BY_ROLE.civilian;
+    const preferContext = contextLines.length > 0 && Math.random() < 0.72;
+    const pool = preferContext
+      ? contextLines
+      : [...personalityLines, ...personalLines, ...roleLines];
+    const fresh = pool.filter((line) => !this.isChatterLineRecent(line));
+    return {
+      line: Phaser.Utils.Array.GetRandom(fresh),
+      priority: preferContext ? bestPriority : (role === 'hero' || role === 'premium' ? 2 : 1),
+      role,
+    };
+  }
+
+  getAmbientChatterCandidates() {
+    const heroes = (this.heroes || []).filter((hero) => (
+      hero.container?.active
+      && hero.stats?.active
+      && !hero.stats?.deathDay
+      && !['away', 'inside', 'dead'].includes(hero.state)
+      && !hero.bubble
+    ));
+    const workers = [...(this.serviceWalkers || []), ...(this.carriers || [])].filter((unit) => (
+      unit.container?.active && unit.container.visible && !unit.bubble && unit.alertState !== 'SHELTERING'
+    ));
+    const monsters = (this.activeMonsterActors || []).filter((actor) => (
+      actor.container?.active && actor.container.visible && actor.detectedAt && !actor.bubble
+    ));
+    return [
+      ...heroes.map((unit) => ({ unit, weight: 3 })),
+      ...workers.map((unit) => ({ unit, weight: unit.serviceRole === 'guard_patrol' ? 1.4 : 1 })),
+      ...monsters.map((unit) => ({ unit, weight: 0.25 })),
+    ];
+  }
+
+  pickWeightedChatterCandidate(candidates) {
+    const total = candidates.reduce((sum, entry) => sum + entry.weight, 0);
+    let roll = Math.random() * total;
+    for (const entry of candidates) {
+      roll -= entry.weight;
+      if (roll <= 0) return entry.unit;
+    }
+    return candidates[candidates.length - 1]?.unit;
+  }
+
   startIdleChatter() {
     const chatter = () => {
-      const candidates = this.heroes.filter((h) => (
-        (h.state === 'idle' || h.state === 'walking') && !h.bubble
-      ));
+      const candidates = this.getAmbientChatterCandidates();
       if (
         candidates.length > 0
         && !this.cycleRunning
         && this.activeBubbles < (this.rsp?.maxIdleBubbles ?? MAX_IDLE_BUBBLES)
         && this.time.now > this.importantChatterUntil
       ) {
-        const hero = Phaser.Utils.Array.GetRandom(candidates);
-        const lines = [
-          ...(IDLE_QUIPS[hero.def.personality] || []),
-          ...(hero.def.idleLines || []),
-          ...(this.resources.corruption > 45 ? RNGEESUS_LINES : []),
-          ...(this.resources.threat > 55 ? EXPLORATION_LINES : []),
-        ];
-        const line = this.pickHeroLine(hero, lines);
-        if (line) this.say(hero, line);
+        const speaker = this.pickWeightedChatterCandidate(candidates);
+        const choice = this.getAmbientChatterChoice(speaker);
+        if (choice.line) this.say(speaker, choice.line, { ambient: true, priority: choice.priority });
       }
-      this.time.delayedCall(Phaser.Math.Between(8000, 25000), chatter);
+      const densityDelay = Math.min(12000, candidates.length * 850);
+      this.time.delayedCall(Phaser.Math.Between(10500, 22000) + densityDelay, chatter);
     };
     this.time.delayedCall(2600, chatter);
   }
@@ -14285,10 +14540,12 @@ export default class TownScene extends Phaser.Scene {
     if (down) cam.scrollY += speed / cam.zoom;
     if (left || right || up || down) this.clampCameraToWorld();
 
-    // depth-sort heroes by their feet; talking heroes pop above rooftops
+    // Depth-sort actors by their feet. Speech lives in its own world-overlay
+    // layer so a building can never cover the bubble or its pointer.
     for (const hero of this.heroes) {
-      hero.container.setDepth(hero.container.y + (hero.bubble ? 800 : 0));
+      hero.container.setDepth(hero.container.y);
     }
+    this.updateSpeechBubbles();
     this.updateSelectedHeroIntentLine();
     for (const actor of this.activeMonsterActors || []) {
       if (actor?.container?.active) actor.container.setDepth(actor.container.y + 75);
@@ -15324,8 +15581,8 @@ export default class TownScene extends Phaser.Scene {
       sprite.setScale(this.getTextureScaleForHeight(textureKey, 22, 0.8));
       sprite.setTint(config.packageTint);
       const label = this.add.text(12, -20, `${extraction.outputWaiting}`, {
-        fontFamily: '"Courier New", monospace', fontSize: '9px', fontStyle: 'bold', color: '#fff6dc',
-        stroke: '#0c1118', strokeThickness: 2, backgroundColor: '#0f1521dd', padding: { x: 3, y: 1 },
+        fontFamily: '"Courier New", monospace', fontSize: '10px', fontStyle: 'bold', color: '#fff6dc',
+        stroke: '#080c12', strokeThickness: 3, backgroundColor: '#0f1521ee', padding: { x: 4, y: 2 },
       }).setOrigin(0.5);
       const door = this.doorById[place.id] || place;
       const container = this.add.container(door.x + 18, door.y + 3, [sprite, label]).setDepth(door.y + 18);
@@ -16537,11 +16794,11 @@ export default class TownScene extends Phaser.Scene {
     if (!this.textures.exists(config.assetKey) && config.tint) sprite.setTint(config.tint);
     const label = this.add.text(0, 2, config.name, {
       fontFamily: '"Courier New", monospace',
-      fontSize: '8px',
+      fontSize: '10px',
       fontStyle: 'bold',
       color: '#d4dae2',
       stroke: '#0c1118',
-      strokeThickness: 2,
+      strokeThickness: 3,
     }).setOrigin(0.5, 0).setAlpha(0);
     const container = this.add.container(door.x, door.y, [sprite, label]).setDepth(door.y);
 
