@@ -260,6 +260,18 @@ const SHOW_MOVEMENT_MARKERS = false;
 const ROAD_UPGRADE_ORDER = ['dirt', 'stone', 'premium'];
 const NORMAL_GRID_STROKE_ALPHA = 0;
 const BUILD_GRID_STROKE_ALPHA = 0.13;
+// Moving-unit vision is intentionally runtime-only. Revealed tiles already
+// persist through the central save shape; bubble/mask state is rebuilt from
+// live units so saves never contain renderer details.
+const UNIT_VISION_CONFIG = Object.freeze({
+  heroRadiusTiles: 3.4,
+  npcRadiusTiles: 2,
+  guardRadiusTiles: 2.8,
+  scoutRadiusTiles: 4.25,
+  updateIntervalMs: 140,
+  edgeSoftnessTiles: 0.65,
+  edgeAlpha: 0.08,
+});
 const HERO_ANIMATION_STATES = ['idle', 'walk', 'interact', 'carry', 'hurt', 'happy'];
 const HERO_STATE_SUFFIXES = {
   idle: ['idle_default'],
@@ -950,6 +962,7 @@ export default class TownScene extends Phaser.Scene {
 
     this.buildTerrain();
     this.buildGridLayer();
+    this.initializeUnitVision();
     this.buildBuildings();
     this.buildDecorations();
     this.buildExplorationPoints();
@@ -3883,7 +3896,7 @@ export default class TownScene extends Phaser.Scene {
     }
   }
 
-  getActiveVisibilitySet() {
+  getStaticVisibilitySet() {
     const active = new Set();
     if (!this.isBuilderCity || !this.revealedTiles) return active;
     for (const road of this.cityState.roads || []) {
@@ -3904,6 +3917,150 @@ export default class TownScene extends Phaser.Scene {
       );
     }
     return active;
+  }
+
+  getActiveVisibilitySet() {
+    const active = this.getStaticVisibilitySet();
+    for (const key of this.unitVisionTiles || []) active.add(key);
+    return active;
+  }
+
+  initializeUnitVision() {
+    this.unitVisionTiles = new Set();
+    this.unitVisionElapsedMs = UNIT_VISION_CONFIG.updateIntervalMs;
+    this.unitVisionLastCells = new Map();
+    this.unitVisionSerial = 0;
+    if (!this.isBuilderCity || !this.lockedLandGraphics) return;
+
+    // A geometry mask makes the opening follow units smoothly between tile
+    // updates. Tile discovery remains handled by the canonical reveal set.
+    this.unitVisionMaskGraphics = this.make.graphics({ add: false });
+    this.unitVisionFogMask = this.unitVisionMaskGraphics.createGeometryMask();
+    this.unitVisionFogMask.setInvertAlpha(true);
+    this.lockedLandGraphics.setMask(this.unitVisionFogMask);
+    this.unitVisionEdgeGraphics = this.add.graphics().setDepth(61);
+  }
+
+  getUnitVisionId(unit, kind) {
+    if (!unit._unitVisionId) {
+      this.unitVisionSerial += 1;
+      unit._unitVisionId = `${kind}-${unit.def?.id || 'unit'}-${this.unitVisionSerial}`;
+    }
+    return unit._unitVisionId;
+  }
+
+  isScoutVisionUnit(unit) {
+    const identity = [
+      unit?.def?.id,
+      unit?.def?.name,
+      unit?.def?.personality,
+      unit?.currentAction,
+      unit?.intent?.action,
+    ].filter(Boolean).join(' ');
+    return /scout|ranger|explor/i.test(identity);
+  }
+
+  getUnitVisionSources() {
+    if (!this.isBuilderCity) return [];
+    const sources = [];
+    for (const hero of this.heroes || []) {
+      if (!hero?.container?.active || !hero.container.visible || hero.stats?.active === false
+        || hero.stats?.deathDay || ['away', 'inside'].includes(hero.state)) continue;
+      sources.push({
+        id: this.getUnitVisionId(hero, 'hero'),
+        unit: hero,
+        kind: this.isScoutVisionUnit(hero) ? 'scout' : 'hero',
+        radius: this.isScoutVisionUnit(hero)
+          ? UNIT_VISION_CONFIG.scoutRadiusTiles
+          : UNIT_VISION_CONFIG.heroRadiusTiles,
+      });
+    }
+    for (const unit of [...(this.serviceWalkers || []), ...(this.carriers || [])]) {
+      const moving = unit?.state === 'walking' || Boolean(unit?.moveTween?.isPlaying?.());
+      if (!moving || !unit?.container?.active || !unit.container.visible || unit.stats?.active === false) continue;
+      const guard = unit.serviceRole === 'guard_patrol';
+      sources.push({
+        id: this.getUnitVisionId(unit, guard ? 'guard' : 'npc'),
+        unit,
+        kind: guard ? 'guard' : 'npc',
+        radius: guard ? UNIT_VISION_CONFIG.guardRadiusTiles : UNIT_VISION_CONFIG.npcRadiusTiles,
+      });
+    }
+    return sources;
+  }
+
+  drawUnitVisionBubbles(sources) {
+    const mask = this.unitVisionMaskGraphics;
+    const edge = this.unitVisionEdgeGraphics;
+    if (!mask || !edge) return;
+    mask.clear();
+    edge.clear();
+    for (const source of sources) {
+      const { x, y } = source.unit.container;
+      const softness = UNIT_VISION_CONFIG.edgeSoftnessTiles;
+      const radius = source.radius + softness;
+      const width = this.useIsoRendering()
+        ? ISO_TILE_WIDTH * Math.SQRT2 * radius
+        : GRID_CONFIG.tileSize * radius * 2;
+      const height = this.useIsoRendering()
+        ? ISO_TILE_HEIGHT * Math.SQRT2 * radius
+        : GRID_CONFIG.tileSize * radius * 2;
+      mask.fillStyle(0xffffff, 1);
+      mask.fillEllipse(x, y - 6, width, height);
+
+      const color = source.kind === 'guard' ? 0xf2d38a : source.kind === 'npc' ? 0xa8c8c2 : 0xb9df9a;
+      edge.fillStyle(color, 0.018);
+      edge.fillEllipse(x, y - 6, width, height);
+      edge.lineStyle(1, color, UNIT_VISION_CONFIG.edgeAlpha);
+      edge.strokeEllipse(x, y - 6, width, height);
+      edge.lineStyle(1, color, UNIT_VISION_CONFIG.edgeAlpha * 0.45);
+      edge.strokeEllipse(x, y - 6, width * 0.88, height * 0.88);
+    }
+  }
+
+  updateUnitVision(delta = 16) {
+    if (!this.isBuilderCity || !this.revealedTiles) return;
+    const sources = this.getUnitVisionSources();
+    this.drawUnitVisionBubbles(sources);
+    this.unitVisionElapsedMs += delta;
+    if (this.unitVisionElapsedMs < UNIT_VISION_CONFIG.updateIntervalMs) return;
+    this.unitVisionElapsedMs %= UNIT_VISION_CONFIG.updateIntervalMs;
+
+    const active = new Set();
+    const liveIds = new Set();
+    let revealedChanged = false;
+    for (const source of sources) {
+      const cell = this.worldToBuildGrid(source.unit.container.x, source.unit.container.y);
+      if (!isInsideGrid(cell.x, cell.y)) continue;
+      liveIds.add(source.id);
+      const signature = `${cell.x},${cell.y},${source.radius}`;
+      if (this.unitVisionLastCells.get(source.id) !== signature) {
+        this.unitVisionLastCells.set(source.id, signature);
+        const added = revealCircle(this.revealedTiles, cell.x, cell.y, source.radius);
+        for (const spot of added) {
+          const gridCell = this.gridCells.get(gridKey(spot.x, spot.y));
+          if (gridCell) gridCell.unlocked = true;
+        }
+        revealedChanged = revealedChanged || added.length > 0;
+      }
+      this.addVisibilityCircle(active, cell.x, cell.y, source.radius);
+    }
+    for (const id of this.unitVisionLastCells.keys()) {
+      if (!liveIds.has(id)) this.unitVisionLastCells.delete(id);
+    }
+    this.unitVisionTiles = active;
+
+    if (revealedChanged) {
+      this.cityState.revealed = [...this.revealedTiles];
+      this.redrawIsoGroundLayer();
+      this.redrawFog();
+      this.redrawBuildGrid();
+      this.redrawTerrainDetails();
+      this.redrawWildernessDressing();
+    }
+    this.updateExplorationPointVisibility();
+    this.updateAftermathVisibility();
+    this.updateMonsterActorVisibility();
   }
 
   getVisibilityState(x, y, activeSet = null) {
@@ -4370,7 +4527,9 @@ export default class TownScene extends Phaser.Scene {
     g.clear();
     if (!this.isBuilderCity) return;
     if (this.useIsoRendering()) {
-      const activeSet = this.getActiveVisibilitySet();
+      // Moving-unit holes are supplied by the live geometry mask. Keeping the
+      // baked fog static avoids repainting the full map every movement frame.
+      const activeSet = this.getStaticVisibilitySet();
       for (let y = 0; y < GRID_CONFIG.rows; y += 1) {
         for (let x = 0; x < GRID_CONFIG.columns; x += 1) {
           const points = this.getVisualTilePoints(x, y);
@@ -14138,6 +14297,7 @@ export default class TownScene extends Phaser.Scene {
       if (bundle?.container?.active) bundle.container.setDepth(bundle.container.y + 64);
     }
     this.updateWorldDanger(delta);
+    this.updateUnitVision(delta);
     this.monsterVisibilityElapsedMs = (this.monsterVisibilityElapsedMs || 0) + delta;
     if (this.monsterVisibilityElapsedMs >= 400) {
       this.monsterVisibilityElapsedMs = 0;
