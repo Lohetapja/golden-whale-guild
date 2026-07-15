@@ -36,6 +36,7 @@ export function resolveInteractionTarget(targets, worldX, worldY, selection = {}
   const candidates = targets.filter((target) => {
     if (!target.hit?.active || !target.hit.visible) return false;
     if (target.type === 'hero' && target.hero?.container?.visible === false) return false;
+    if (target.containsPoint) return target.containsPoint(worldX, worldY);
     const bounds = getInteractionBounds(target);
     return worldX >= bounds.left
       && worldX <= bounds.right

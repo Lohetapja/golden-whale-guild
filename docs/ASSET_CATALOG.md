@@ -4,16 +4,20 @@ Generated assets are optional and must stay routed through
 `src/data/assetManifest.js`. If a file is missing, the runtime placeholder in
 `src/textures.js` remains the fallback.
 
+Building acceptance, footprints, anchors, and generation prompts are governed
+by `BUILDING_ART_BIBLE.md`. The current pass/fail inventory is maintained in
+`BUILDING_VISUAL_AUDIT.md`.
+
 ## Buildings
 
 | Asset key | File | Where used | Notes |
 | --- | --- | --- | --- |
 | `building_tavern` | `public/assets/buildings/building_tavern.png` | Tavern | PixelLab reference asset |
 | `building_blacksmith` | `public/assets/buildings/building_blacksmith.png` | Blacksmith | PixelLab reference asset |
-| `building_golden_whale` | `public/assets/buildings/building_golden_whale.png` | Golden Whale Milking Station | PixelLab reference asset, still supported by glow/coin overlays |
+| `building_golden_whale` | `public/assets/buildings/building_golden_whale.png` | Golden Whale Milking Station | Unique functional fallback; too bright/icon-like to be a permanent style reference |
 | `building_guild_hall` | `public/assets/buildings/building_guild_hall.png` | Guild Hall | New PixelLab asset |
 | `building_market` | `public/assets/buildings/building_market.png` | Market | New PixelLab asset |
-| `building_training_yard` | `public/assets/buildings/building_training_yard.png` | Training Yard | New PixelLab asset |
+| `building_training_yard` | `public/assets/buildings/building_training_yard.png` | Training Yard | Restored detailed fenced adult-combat yard |
 | `building_dungeon_gate` | `public/assets/buildings/building_dungeon_gate.png` | Dungeon Gate | New PixelLab asset |
 | `building_inn` | `public/assets/buildings/building_inn.png` | Buildable Inn | PixelLab asset, integrated |
 | `building_hero_hostel` | `public/assets/buildings/building_hero_hostel.png` | Buildable Hero Hostel | PixelLab asset, integrated |
@@ -27,10 +31,14 @@ Generated assets are optional and must stay routed through
 | `building_lootbox_kiosk` | `public/assets/buildings/building_lootbox_kiosk.png` | Buildable Lootbox Kiosk | PixelLab asset, integrated (2026-07 pass) |
 | `building_gem_exchange` | `public/assets/buildings/building_gem_exchange.png` | Buildable Gem Exchange | PixelLab asset, integrated (2026-07 pass) |
 | `building_convenience_office` | `public/assets/buildings/building_convenience_office.png` | Buildable Convenience Office | PixelLab asset, integrated (2026-07 pass) |
-| `building_warehouse` | `public/assets/buildings/building_warehouse.png` | Warehouse | Dedicated manifest slot; role-specific fallback is active until the reviewed PixelLab file can be downloaded |
-| `building_storehouse` | `public/assets/buildings/building_storehouse.png` | Storehouse | Dedicated manifest slot; role-specific fallback is active until the reviewed PixelLab file can be downloaded |
-| `building_premium_fabricator` | `public/assets/buildings/building_premium_fabricator.png` | Premium Fabricator | Dedicated manifest slot; premium workshop fallback is active until the reviewed PixelLab file can be downloaded |
-| `building_frontier_outpost` | `public/assets/buildings/building_frontier_outpost.png` | Frontier Outpost | Dedicated manifest slot; frontier fallback is active until the reviewed PixelLab file can be downloaded |
+| `building_warehouse` | `public/assets/buildings/building_warehouse.png` | Warehouse | Dedicated detailed world asset with L2/L3 tiers |
+| `building_storehouse` | `public/assets/buildings/building_storehouse.png` | Storehouse | Dedicated detailed world asset with L2/L3 tiers |
+| `building_premium_fabricator` | `public/assets/buildings/building_premium_fabricator.png` | Premium Fabricator | Dedicated L1-L3 family; borderline excessive premium treatment |
+| `building_frontier_outpost` | `public/assets/buildings/building_frontier_outpost.png` | Frontier Outpost | Dedicated detailed world asset |
+| `building_whale_preview` | `public/assets/buildings/previews/building_whale_preview.png` | Golden Whale catalog preview | Separate preview role; copied from existing readable legacy art |
+| `building_vip_lounge_preview` | `public/assets/buildings/previews/building_vip_lounge_preview.png` | VIP Lounge catalog preview | Separate preview role; world replacement pending download |
+| `building_convenience_office_preview` | `public/assets/buildings/previews/building_convenience_office_preview.png` | Convenience Office catalog preview | Separate preview role; world replacement pending download |
+| `building_gem_exchange_preview` | `public/assets/buildings/previews/building_gem_exchange_preview.png` | Gem Exchange catalog preview | Separate preview role; world replacement pending download |
 
 ### Building Mapping Audit (2026-07 Visual Pass)
 
@@ -43,20 +51,20 @@ Generated assets are optional and must stay routed through
 | `whale` | `building_golden_whale` | `assets/buildings/building_golden_whale.png` | None | Correct unique landmark; owned aura/queue rebuilt |
 | `vip_lounge` | `building_vip_lounge` | `assets/buildings/building_vip_lounge.png` | None | Correct PixelLab asset |
 | `frontier_outpost` | `building_frontier_outpost` | `assets/buildings/building_frontier_outpost.png` | Reused Watchtower | Correct dedicated slot; generated candidate pending local download |
-| `lumber_camp` | `resource_wood_grove` | `assets/objects/resource_wood_grove.png` | Shared with Sawmill | Deliberate fallback, now identified by camp props; dedicated art remains visual debt |
-| `mining_camp` | `resource_iron_outcrop` | `assets/objects/resource_iron_outcrop.png` | None | Deliberate fallback with ore/crate role props |
-| `herbalist_hut` | `resource_herb_patch` | `assets/objects/resource_herb_patch.png` | None | Deliberate fallback with plant/crate role props |
-| `salvage_camp` | `resource_old_ruins` | `assets/objects/resource_old_ruins.png` | Shared with Salvage Yard | Deliberate fallback, now identified by cart/crate role props |
+| `lumber_camp` | `building_lumber_camp` | `assets/buildings/building_lumber_camp.png` | None | Correct dedicated extraction art |
+| `mining_camp` | `building_mining_camp` | `assets/buildings/building_mining_camp.png` | None | Correct dedicated extraction art |
+| `herbalist_hut` | `building_herbalist_hut` | `assets/buildings/building_herbalist_hut.png` | None | Correct dedicated extraction art |
+| `salvage_camp` | `building_salvage_camp` | `assets/buildings/building_salvage_camp.png` | Shared family with Salvage Yard | Correct salvage-operation art; distinct Yard family remains future debt |
+| `sawmill` | `building_sawmill` | `assets/buildings/building_sawmill.png` | Previously used Wood Grove | Correct dedicated sawmill art activated |
+| `salvage_yard` | `building_salvage_camp` | `assets/buildings/building_salvage_camp.png` | Previously used Old Ruins | Functionally appropriate temporary family art; no longer generic ruins |
 | `roadside_ad_board` | `object_notice_board_gold` | `assets/objects/object_notice_board_gold.png` | Previously unused | Existing art activated as a repeatable placed decor building |
-| `notice_board` | `decor_notice_board` | `assets/objects/location_notice_board.png` | None | Correct quest-board asset and behavior |
+| `notice_board` | `object_notice_board_02` | `assets/objects/object_notice_board_02.png` | None | Compact detailed parchment board; Guild Hall remains alternate quest access |
 | `sponsored_quest_board` | `decor_sponsored_quest_board` | `assets/objects/location_sponsored_quest_board.png` | None | Correct sponsored quest-board asset and behavior |
 
-The four missing dedicated building files above have reviewed PixelLab objects:
-Warehouse `eafa5511-44ac-4fa4-87b3-40b9b6008ac3`, Storehouse
-`fea5c1f0-762c-4994-84d6-46af13db9b01`, Premium Fabricator
-`f56e2e45-87d7-46c0-a135-dc8c43f989d4`, and Frontier Outpost
-`b31706d8-db29-42db-b8eb-df5858b1dbe1`. Network download was unavailable in
-this workspace, so no generated result is claimed as a checked-in PNG.
+Warehouse, Storehouse, Premium Fabricator, and Frontier Outpost now have local
+dedicated world files. Premium Fabricator is retained as one coherent L1-L3
+family, but remains a borderline art-bible result and should be regenerated as
+a complete family rather than replacing only its base tier.
 
 ## Special Locations
 

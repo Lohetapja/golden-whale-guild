@@ -193,12 +193,18 @@ import { getResponsiveUi } from '../ui/responsive.js';
 import {
   getIsoDepth,
   getIsoDiamondPoints,
-  getIsoFootprintAnchor,
   getIsoFootprintPolygon,
   getIsoTileCenter,
   isoToGrid,
   USE_ISO_RENDERING,
 } from '../utils/isometric.js';
+import {
+  getBuildingEntranceAnchor,
+  getBuildingFootprintMetrics,
+  getBuildingHitPolygon,
+  getBuildingSpriteScale,
+  getBuildingWorldAnchor,
+} from '../utils/buildingVisuals.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -1351,13 +1357,7 @@ export default class TownScene extends Phaser.Scene {
 
   gridToVisual(gridX, gridY, footprint = { w: 1, h: 1 }) {
     if (!this.useIsoRendering()) return gridToWorld(gridX, gridY, footprint);
-    return getIsoFootprintAnchor(
-      gridX,
-      gridY,
-      footprint.w || 1,
-      footprint.h || 1,
-      ISO_RENDER_OPTIONS,
-    );
+    return getBuildingWorldAnchor({ gridX, gridY, footprint }, ISO_RENDER_OPTIONS);
   }
 
   gridTileVisualCenter(gridX, gridY) {
@@ -6068,6 +6068,9 @@ export default class TownScene extends Phaser.Scene {
       const countLabel = Number.isFinite(maxCount) && maxCount < 99
         ? `${builtCount}/${maxCount}`
         : `${builtCount} built`;
+      const previewKey = this.textures.exists(catalog.previewAssetKey)
+        ? catalog.previewAssetKey
+        : (place?.assetKey || catalog.assetKey);
       return {
         id: catalog.id,
         itemType: 'building',
@@ -6076,7 +6079,7 @@ export default class TownScene extends Phaser.Scene {
         costLabel: `${catalog.cost}g`,
         stateLabel: uniqueBuilt ? 'BUILT' : locked ? 'LOCKED' : affordable ? 'READY' : 'SHORT',
         kind: catalog.kind === 'shady' ? 'shady' : 'fair',
-        preview: this.getAssetPreviewUrl(place?.assetKey || catalog.assetKey),
+        preview: this.getAssetPreviewUrl(previewKey),
         description: catalog.description,
         footprintLabel: `${catalog.footprint.w}x${catalog.footprint.h}`,
         roadLabel: catalog.roadRequired ? 'Adjacent required' : 'Independent',
@@ -6218,6 +6221,15 @@ export default class TownScene extends Phaser.Scene {
 
   getDoorSpotForPlace(place) {
     if (!place) return { id: 'plaza-center', x: PLAZA.x, y: PLAZA.y };
+    if (this.useIsoRendering() && this.buildingById?.[place.id] && Number.isInteger(place.gridX) && Number.isInteger(place.gridY)) {
+      const metrics = getBuildingFootprintMetrics(place, ISO_RENDER_OPTIONS);
+      const entrance = getBuildingEntranceAnchor(metrics);
+      return {
+        id: place.id,
+        x: place.doorX ?? entrance.x,
+        y: place.doorY ?? entrance.y,
+      };
+    }
     const offset = place.doorOffsetY ?? (place.id === 'whale' ? 44 : 18);
     return {
       id: place.id,
@@ -6321,6 +6333,16 @@ export default class TownScene extends Phaser.Scene {
 
   getPlaceSpriteScale(place, textureKey, fallbackScale = 1) {
     if (place.fitToFootprint === false) return fallbackScale;
+    if (this.useIsoRendering() && this.buildingById?.[place.id]) {
+      const source = this.textures.get(textureKey)?.getSourceImage?.();
+      const metrics = getBuildingFootprintMetrics(place, ISO_RENDER_OPTIONS);
+      return getBuildingSpriteScale(
+        source?.width,
+        source?.height,
+        metrics,
+        place.maxVisualScale ?? 1.12,
+      );
+    }
     return this.getTextureScaleForBox(
       textureKey,
       place.w,
@@ -6335,15 +6357,24 @@ export default class TownScene extends Phaser.Scene {
     const isSmallSign = getBaseBuildingId(place.baseId || place.id) === 'roadside_ad_board';
     const visualWidth = img?.displayWidth || place.w || 64;
     const visualHeight = img?.displayHeight || place.h || 52;
-    const width = place.interactionW || Math.max(
+    const metrics = isBuilding && this.useIsoRendering()
+      ? getBuildingFootprintMetrics(place, ISO_RENDER_OPTIONS)
+      : null;
+    const groundPolygon = metrics ? getBuildingHitPolygon(metrics) : null;
+    const hitPolygon = groundPolygon ? new Phaser.Geom.Polygon(groundPolygon) : null;
+    const width = metrics?.projectedWidth * 0.86 || place.interactionW || Math.max(
       isSmallSign ? 34 : isBuilding ? 48 : 34,
       Math.min(place.w || visualWidth, visualWidth) * (isBuilding ? 0.68 : 0.78),
     );
-    const height = place.interactionH || Math.max(
+    const height = metrics
+      ? Math.max(metrics.projectedDepth * 0.78, Math.min(visualHeight * 0.62, metrics.targetHeight * 0.54))
+      : place.interactionH || Math.max(
       isSmallSign ? 28 : isBuilding ? 42 : 30,
       Math.min(place.h || visualHeight, visualHeight) * (isBuilding ? 0.58 : 0.74),
     );
-    const centerY = place.y - (place.h || visualHeight || 52) * (isBuilding ? 0.36 : 0.44) + (place.interactionOffsetY || 0);
+    const centerY = metrics
+      ? place.y - height * 0.48
+      : place.y - (place.h || visualHeight || 52) * (isBuilding ? 0.36 : 0.44) + (place.interactionOffsetY || 0);
     const hit = this.add.rectangle(place.x, centerY, width, height, 0xffffff, 0.001)
       .setOrigin(0.5)
       .setDepth((place.y || 0) + 8)
@@ -6380,6 +6411,18 @@ export default class TownScene extends Phaser.Scene {
       img,
       width,
       height,
+      groundPolygon,
+      containsPoint: metrics ? (worldX, worldY) => {
+        const inGround = Phaser.Geom.Polygon.Contains(hitPolygon, worldX, worldY);
+        const upperLeft = place.x - width * 0.35;
+        const upperTop = place.y - Math.min(visualHeight * 0.82, metrics.targetHeight * 0.78);
+        return inGround || (
+          worldX >= upperLeft
+          && worldX <= upperLeft + width * 0.7
+          && worldY >= upperTop
+          && worldY <= place.y - metrics.projectedDepth * 0.12
+        );
+      } : null,
       getCenter: () => ({ x: place.x, y: centerY }),
       onHoverIn: hoverIn,
       onHoverOut: hoverOut,
@@ -6456,9 +6499,17 @@ export default class TownScene extends Phaser.Scene {
     if (!b?.isPlaced || this.placeSpriteById[b.id]) return;
     this.buildingObjectsById[b.id] = [];
     const catalog = getBuildingCatalogEntry(b.id);
+    const footprint = catalog?.footprint || b.footprint || { w: 1, h: 1 };
+    const visualMetrics = this.useIsoRendering() && Number.isInteger(b.gridX) && Number.isInteger(b.gridY)
+      ? getBuildingFootprintMetrics({ ...b, footprint }, ISO_RENDER_OPTIONS)
+      : null;
+    if (visualMetrics?.anchor) {
+      b.x = visualMetrics.anchor.x;
+      b.y = visualMetrics.anchor.y;
+      b.visualMetrics = visualMetrics;
+    }
     const access = this.getBuildingRoadAccess(b);
     if (this.isBuilderCity && Number.isInteger(b.gridX) && Number.isInteger(b.gridY)) {
-      const footprint = catalog?.footprint || b.footprint || { w: 1, h: 1 };
       const polygon = this.getVisualFootprintPolygon(b.gridX, b.gridY, footprint);
       const foundation = this.add.graphics().setDepth(this.getVisualDepth(b.gridX, b.gridY) + 18);
       const shady = catalog?.kind === 'shady';
@@ -6528,8 +6579,8 @@ export default class TownScene extends Phaser.Scene {
       ? this.getVisualDepth(b.gridX, b.gridY) + 40
       : b.y;
     const shadowWidth = Math.min(
-      Math.max(54, (catalog?.footprint?.w || 2) * GRID_CONFIG.tileSize * 0.72),
-      b.w * 0.86,
+      Math.max(38, (visualMetrics?.projectedWidth || (catalog?.footprint?.w || 2) * GRID_CONFIG.tileSize) * 0.72),
+      visualMetrics?.targetWidth || b.w * 0.86,
     );
     const shadow = this.add.ellipse(b.x, b.y - 8, shadowWidth, 8, 0x10151d, 0.1).setDepth(placeDepth - 2);
     this.buildingObjectsById[b.id].push(shadow);
@@ -6542,6 +6593,7 @@ export default class TownScene extends Phaser.Scene {
     img.setData('baseScaleX', img.scaleX);
     img.setData('baseScaleY', img.scaleY);
     img.setData('hoverScale', baseScale * 1.03);
+    img.setData('footprintKey', visualMetrics?.key || 'legacy');
     this.placeSpriteById[b.id] = img;
     this.buildingObjectsById[b.id].push(img);
 
@@ -6555,16 +6607,6 @@ export default class TownScene extends Phaser.Scene {
     this.getBuildingRuntime(b.id);
     this.refreshBuildingDamageVisual(b);
     this.renderBuildingRoleAttachments(b, placeDepth);
-
-    if (b.id !== 'training') return;
-    const yard = b;
-    const dummyKey = resolveTexture(this, 'object_training_dummy', 'dummy');
-    const targetKey = resolveTexture(this, 'object_target', 'dummy');
-    const dummy = this.add.image(yard.x - 54, yard.y - 5, dummyKey)
-      .setScale(0.72).setOrigin(0.5, 1).setDepth(yard.y - 8);
-    const target = this.add.image(yard.x + 54, yard.y - 1, targetKey)
-      .setScale(0.62).setOrigin(0.5, 1).setDepth(yard.y - 2);
-    this.buildingObjectsById[b.id].push(dummy, target);
   }
 
   renderBuildingRoleAttachments(place, placeDepth) {
@@ -7072,83 +7114,14 @@ export default class TownScene extends Phaser.Scene {
     delete this.upgradeVisualsById?.[place.id];
     if (place?.isPlaced === false) return;
 
-    const level = this.getPlaceLevel(place);
     const sprite = this.placeSpriteById?.[place.id];
     if (sprite) {
       const baseX = sprite.getData('baseScaleX') || 1;
       const baseY = sprite.getData('baseScaleY') || 1;
-      const maxBoost = place.maxUpgradeScaleBoost ?? 0.14;
-      const step = place.upgradeScaleStep ?? 0.035;
-      const scaleBoost = Math.min(maxBoost, Math.max(0, level - 1) * step);
-      const restScaleX = baseX * (1 + scaleBoost);
-      const restScaleY = baseY * (1 + scaleBoost);
-      sprite.setScale(restScaleX, restScaleY);
-      sprite.setData('restScaleX', restScaleX);
-      sprite.setData('restScaleY', restScaleY);
+      sprite.setScale(baseX, baseY);
+      sprite.setData('restScaleX', baseX);
+      sprite.setData('restScaleY', baseY);
     }
-    if (level <= 1) return;
-
-    const w = place.w || 70;
-    const h = place.h || 60;
-    const container = this.add.container(place.x, place.y).setDepth((place.y || 0) + 6);
-    const g = this.add.graphics();
-    container.add(g);
-
-    const addImage = (lx, ly, key, scale = 1, depthOffset = 0) => {
-      if (!this.textures.exists(key)) return;
-      const img = this.add.image(lx, ly, key).setScale(scale).setDepth((place.y || 0) + depthOffset);
-      container.add(img);
-    };
-
-    const addSparkles = (count, color = 0xffe08a) => {
-      g.fillStyle(color, 0.9);
-      for (let i = 0; i < count; i += 1) {
-        const lx = Phaser.Math.Between(-Math.floor(w / 2), Math.floor(w / 2));
-        const ly = Phaser.Math.Between(-h, -20);
-        g.fillRect(lx, ly, 3, 3);
-      }
-    };
-
-    if (place.id === 'tavern') {
-      addImage(-w / 2 - 8, -7, resolveTexture(this, 'prop_barrel', 'barrel'), 0.78);
-      if (level >= 3) addImage(w / 2 + 8, -8, resolveTexture(this, 'prop_lamp', 'lamp'), 0.72);
-      if (level >= 4) addSparkles(4, 0xffd58a);
-    } else if (place.id === 'blacksmith') {
-      addImage(w / 2 + 8, -7, resolveTexture(this, 'object_anvil', 'crate'), 0.68);
-      if (level >= 3) addImage(-w / 2 - 8, -6, resolveTexture(this, 'prop_crate', 'crate'), 0.78);
-      if (level >= 4) addSparkles(5, 0xffa04d);
-    } else if (place.id === 'guildhall') {
-      addImage(w / 2 + 9, -8, resolveTexture(this, 'object_notice_board_02', 'notice_board'), 0.66);
-      if (level >= 4) addImage(-w / 2 - 8, -7, resolveTexture(this, 'prop_signpost', 'signpost'), 0.68);
-    } else if (place.id === 'training') {
-      addImage(-w / 2 - 8, -7, resolveTexture(this, 'object_training_dummy', 'dummy'), 0.7);
-      if (level >= 3) addImage(w / 2 + 8, -7, resolveTexture(this, 'object_target', 'dummy'), 0.62);
-    } else if (place.id === 'market') {
-      addImage(-w / 2 - 7, -7, resolveTexture(this, 'prop_crate', 'crate'), 0.75);
-      addImage(w / 2 + 7, -7, resolveTexture(this, 'prop_barrel', 'barrel'), 0.7);
-      if (level >= 3) addImage(0, -h - 4, resolveTexture(this, 'object_coin_pile', 'ph-icon_coin'), 0.5);
-    } else if (place.id === 'whale') {
-      addImage(-w / 2 - 5, -6, resolveTexture(this, 'object_coin_pile', 'ph-icon_coin'), 0.52);
-      if (level >= 4) addImage(w / 2 + 5, -6, resolveTexture(this, 'object_contract_stack', 'crate'), 0.5);
-      addSparkles(Math.min(8, 2 + level), 0xffe08a);
-    } else if (place.id === 'dungeon') {
-      addImage(-w / 2 - 6, -6, resolveTexture(this, 'object_notice_board_gold', 'signpost'), 0.6);
-      if (level >= 3) addImage(w / 2 + 6, -6, resolveTexture(this, 'object_brazier', 'lamp'), 0.62);
-    } else if (place.id === 'debt_collector_booth') {
-      addImage(w / 2 + 7, -6, resolveTexture(this, 'object_contract_stack', 'crate'), 0.54);
-    } else if (place.id === 'complaint_barrel') {
-      addImage(w / 2 + 5, -5, resolveTexture(this, 'object_notice_board_02', 'notice_board'), 0.46);
-    } else if (place.id === 'notice_board') {
-      addImage(w / 2 + 5, -6, resolveTexture(this, 'object_notice_board_02', 'notice_board'), 0.5);
-      if (level >= 3) addSparkles(3, 0x7fdc93);
-    } else if (level >= 3) {
-      // generic fallback stays subtle: no banner bars or posts (they read as
-      // debug artifacts floating over the taller angled sprites), just a few
-      // celebratory sparkles at high levels
-      addSparkles(3 + level, place.eventPoolCategory?.includes('corruption') ? 0xc99aec : 0x7fdc93);
-    }
-
-    this.upgradeVisualsById[place.id] = container;
   }
 
   // --- fixed inspector data -----------------------------------------------

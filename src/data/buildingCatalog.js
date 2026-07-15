@@ -26,6 +26,7 @@ const core = (
   footprint,
   description,
   assetKey: options.assetKey || `building_${id}`,
+  previewAssetKey: options.previewAssetKey || `building_${id}_preview`,
   roadRequired: options.roadRequired !== false,
   maxCount: options.maxCount ?? 99,
   unlockKey: options.unlockKey || null,

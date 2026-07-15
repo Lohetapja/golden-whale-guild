@@ -2,22 +2,24 @@
 
 ## Target Style
 
-Golden Whale Guild uses cozy top-down / low 2.5D pixel fantasy town art with
-clean outlines, warm materials, readable silhouettes, and a lightly satirical
-premium-economy edge. New assets should match the first PixelLab reference set:
+Golden Whale Guild uses detailed grounded isometric pixel art for world
+buildings and readable low-2.5D pixel art for characters, props, and icons.
+`BUILDING_ART_BIBLE.md` is the permanent authority for building perspective,
+materials, footprint sizing, anchors, premium accents, and PixelLab prompts.
 
-- `building_golden_whale.png`
-- `building_tavern.png`
-- `building_blacksmith.png`
-- `hero_default.png`
-- `icon_coin.png`
+Primary world-building references are `building_hero_hostel.png`,
+`building_watchtower.png`, the detailed Guild Hall, Tavern, and Inn. The Golden
+Whale remains an identity reference, but its current sprite is not a style
+reference because it is brighter and more icon-like than the permanent target.
 
 ## Perspective And Scale
 
-- Use low top-down / 2.5D RPG perspective for buildings, objects, and NPCs.
+- Use detailed isometric 2.5D perspective for world buildings. Props and NPCs
+  use compatible angled top-down views.
 - Standalone buildings, objects, characters, and icons should use transparent
   backgrounds.
-- Buildings should stay readable around 80-170 px wide in-game.
+- Buildings use the footprint target boxes documented in
+  `BUILDING_ART_BIBLE.md`, generally 50-194 px wide in-game.
 - Grid buildings should use clear 1x1, 2x2, 3x2, or 3x3 silhouettes and keep
   their entrance visually near the bottom edge for road access.
 - Small locations and props should stay readable around 32-90 px wide in-game.
@@ -43,20 +45,20 @@ premium-economy edge. New assets should match the first PixelLab reference set:
 
 ## 2026-07 Reference Additions
 
-The July 2026 pass established these as additional style anchors:
+The July 2026 pass established these additional non-building anchors. Building
+acceptance moved to the stricter `BUILDING_ART_BIBLE.md`; Gem Exchange and VIP
+Lounge are specifically not permanent world-building references.
 
-- Buildings: `building_bank_debt_office.png`, `building_gem_exchange.png`,
-  `building_vip_lounge.png` - slightly angled, detailed, grounded 160px
-  silhouettes. New buildings should match this angle and detail level.
+- Detailed world buildings: Hero Hostel, Watchtower, Guild Hall, Tavern, and
+  Inn. These establish construction, material, angle, and pixel density.
 - Road tiles: `tiles/road_dirt.png`, `road_stone.png`, `road_premium.png` -
   48px seamless top-down fills used by the textured road renderer.
 - Items: 64px satirical shop icons in `items/` with a shared warm palette.
 - Monsters: 64px cute-but-dangerous sprites in `monsters/`.
 - UI icons: 40px warm gold/brown icons in `ui/`.
 
-Prompt template that produced consistent results (multi-object shots):
-"<category description>, cozy pixel art, warm palette, transparent
-background, no text. 1). <item> 2). <item> ..." at size 40/64/160.
+Use the shared world-building prompt in `BUILDING_ART_BIBLE.md`. The older
+generic multi-object prompt remains suitable for small props and icons only.
 
 ## Golden Whale Rule
 

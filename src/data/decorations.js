@@ -120,7 +120,7 @@ export const DECORATIONS = [
     y: 350,
     w: 58,
     h: 58,
-    assetKey: 'decor_notice_board',
+    assetKey: 'object_notice_board_02',
     fallbackKey: 'notice_board',
     interactive: true,
     label: true,
