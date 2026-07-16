@@ -41,6 +41,7 @@ const core = (
 
 export const BUILDING_CATALOG = [
   core('guildhall', 'Guild Hall', 'Core Buildings', 420, { w: 3, h: 3 }, 'Posts quests and produces heroic paperwork.', {
+    assetKey: 'building_guild_hall',
     capacity: 6,
     maxCount: 1,
   }),
@@ -49,7 +50,9 @@ export const BUILDING_CATALOG = [
     flavor: 'Heroes can now discover the premium feature called indoors.',
   }),
   core('blacksmith', 'Blacksmith', 'Recovery / Support', 320, { w: 2, h: 2 }, 'Improves honest hero power and forge-related optimism.'),
-  core('training', 'Training Yard', 'Recovery / Support', 360, { w: 3, h: 2 }, 'Turns time and effort into suspiciously modest numbers.'),
+  core('training', 'Training Yard', 'Recovery / Support', 360, { w: 3, h: 2 }, 'Turns time and effort into suspiciously modest numbers.', {
+    assetKey: 'building_training_yard',
+  }),
   core('market', 'Market', 'Economy / Shady', 240, { w: 2, h: 2 }, 'Steady gold with optional dynamic suffering.', {
     kind: 'mixed',
     actions: [
@@ -59,10 +62,12 @@ export const BUILDING_CATALOG = [
     ],
   }),
   core('dungeon', 'Dungeon Gate', 'Defense / Missions', 500, { w: 3, h: 2 }, 'Quest access, threat control, and a door monsters respect selectively.', {
+    assetKey: 'building_dungeon_gate',
     kind: 'mixed',
     maxCount: 1,
   }),
   core('whale', 'Golden Whale Milking Station', 'Premium', 680, { w: 3, h: 3 }, 'Generates gold, corruption, and social collapse.', {
+    assetKey: 'building_golden_whale',
     kind: 'shady',
     maxCount: 1,
     flavor: 'Totally optional. Unless you enjoy winning.',

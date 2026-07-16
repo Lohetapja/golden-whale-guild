@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:save": "node scripts/test-save-system.mjs"
+    "test:save": "node scripts/test-save-system.mjs",
+    "test:buildings": "node scripts/test-building-matrix.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

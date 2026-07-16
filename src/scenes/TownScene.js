@@ -833,6 +833,7 @@ export default class TownScene extends Phaser.Scene {
     }
     this.day = saved?.day || 1;
     this.resources = saved?.resources || { ...BALANCE.startingResources };
+    this.statLedger = Array.isArray(saved?.statLedger) ? saved.statLedger.slice(-120) : [];
     this.upgradeLevels = saved?.upgradeLevels || {};
     this.stats = {
       questsPosted: 0,
@@ -1251,6 +1252,7 @@ export default class TownScene extends Phaser.Scene {
         saveVersion: parsed.saveVersion || 1,
         day: Number(parsed.day) || 1,
         resources: { ...BALANCE.startingResources, ...(parsed.resources || {}) },
+        statLedger: Array.isArray(parsed.statLedger) ? parsed.statLedger.slice(-120) : [],
         upgradeLevels: parsed.upgradeLevels || {},
         availableQuests: Array.isArray(parsed.availableQuests) ? parsed.availableQuests : [],
         postedQuests: Array.isArray(parsed.postedQuests) ? parsed.postedQuests : [],
@@ -2144,6 +2146,7 @@ export default class TownScene extends Phaser.Scene {
       saveVersion: SAVE_VERSION,
       day: this.day,
       resources: { ...this.resources },
+      statLedger: (this.statLedger || []).slice(-120),
       upgradeLevels: { ...this.upgradeLevels },
       availableQuests: this.availableQuests,
       postedQuests: this.postedQuests,
@@ -3392,7 +3395,7 @@ export default class TownScene extends Phaser.Scene {
     pending.ignoredDays = age;
     pending.lastNeglectDay = this.day;
     this.pendingPolicy = pending;
-    this.applyDeltas(deltas);
+    this.applyDeltas(deltas, { source: `Ignored policy: ${pending.title || pending.id || 'pending decision'}` });
     const text = Phaser.Utils.Array.GetRandom(POLICY_NEGLECT_LINES);
     this.game.events.emit('gwg-event', `${text} (${policy.title} still pending.)`);
     this.addTownLog(`${text} Pending: ${policy.title}.`, 'policy');
@@ -3414,7 +3417,7 @@ export default class TownScene extends Phaser.Scene {
       return;
     }
 
-    this.applyDeltas(option.deltas || {});
+    this.applyDeltas(option.deltas || {}, { source: `Policy: ${option.label || option.id || 'choice'}` });
     option.hero?.(this);
     const premiumChoice = /premium|sponsor|sell|whale/i.test(`${option.id} ${option.label}`);
     for (const hero of this.getActiveHeroes()) {
@@ -3530,7 +3533,7 @@ export default class TownScene extends Phaser.Scene {
     if (count > 0 && this.day - count < 4) return false;
     this.crises[type] = this.day;
     this.stats.crisesSurvived = (this.stats.crisesSurvived || 0) + 1;
-    this.applyDeltas(deltas);
+    this.applyDeltas(deltas, { source: `Crisis: ${title || type}` });
     this.addTownLog(`${title}: ${eventText}`, 'crisis');
     this.addReportLine('crises', `${title}: ${eventText} Recovery: ${recovery}`);
     this.game.events.emit('gwg-event', `${title}: ${eventText}`);
@@ -4978,10 +4981,15 @@ export default class TownScene extends Phaser.Scene {
       // polished build-menu preview instead of a flat procedural fill.
       const tw = Math.abs(tile[1].x - tile[3].x);
       const th = Math.abs(tile[2].y - tile[0].y);
-      const img = this.add.image(center.x, center.y, roadTexKey)
+      // Exact tile size: the diamond art must coincide 1:1 with the logical
+      // tile so the road, its hover/selection diamond, and its click target all
+      // reference the same projected tile. (A former +2px anti-seam bloat made
+      // every road overhang its tile by 1px per side and read as misaligned —
+      // iso diamonds tessellate exactly, so no padding is needed.)
+      const img = this.add.image(Math.round(center.x), Math.round(center.y), roadTexKey)
         .setOrigin(0.5, 0.5)
         .setDepth(20.45);
-      img.setDisplaySize(tw + 2, th + 2);
+      img.setDisplaySize(tw, th);
       this.cityRoadImages.push(img);
       // Soft grass/curb only on OPEN edges (no road neighbour on that side).
       // Connected sides stay untouched so the road reads as one path.
@@ -9211,6 +9219,9 @@ export default class TownScene extends Phaser.Scene {
       title: 'Town Ledger',
       subtitle: `Upgrade planning board - ${this.resources.gold}g available`,
       sections: [{
+        title: 'Core Statistics',
+        lines: this.getCoreStatLedgerLines(),
+      }, {
         title: 'Trade-Offs',
         lines: [
           { text: 'Golden Whale: fast gold, corruption, trust damage.', className: 'gwg-whale' },
@@ -9223,6 +9234,25 @@ export default class TownScene extends Phaser.Scene {
       }],
       rows,
     };
+  }
+
+  // Core Statistics ledger: value, tier, and the most recent traced changes per
+  // stat so causality is visible without exposing raw formulas.
+  getCoreStatLedgerLines() {
+    const lines = [];
+    for (const stat of ['trust', 'corruption', 'morale', 'threat']) {
+      const value = Math.round(this.resources[stat]);
+      const tier = this.getStatTier(stat, value);
+      const recent = (this.statLedger || []).filter((entry) => entry.stat === stat).slice(-3).reverse();
+      const changes = recent.length
+        ? recent.map((entry) => `${entry.amount > 0 ? '+' : ''}${entry.amount} ${entry.source} (day ${entry.day})`).join('; ')
+        : 'no recorded changes yet';
+      const className = stat === 'threat' || stat === 'corruption'
+        ? (value >= 60 ? 'gwg-whale' : '')
+        : (value < 40 ? 'gwg-whale' : value >= 60 ? 'gwg-good' : '');
+      lines.push({ text: `${stat.toUpperCase()}: ${value} — ${tier.label}. Recent: ${changes}`, className });
+    }
+    return lines;
   }
 
   openTownLedger() {
@@ -9418,7 +9448,7 @@ export default class TownScene extends Phaser.Scene {
       gold: (shopAction.deltas?.gold || 0) - shopAction.cost,
     };
     runtime.actionDays[actionId] = this.day;
-    this.applyDeltas(deltas);
+    this.applyDeltas(deltas, { source: `${place.name}: ${shopAction.label}` });
     this.getBuildingRuntime(placeId).actionDays[actionId] = this.day;
     const heroResult = this.applyBuildingHeroEffect(shopAction.heroEffect, place);
     if (shopAction.special === 'scoutReveal') this.runPremiumScoutReveal();
@@ -15680,8 +15710,12 @@ export default class TownScene extends Phaser.Scene {
 
   // --- daily simulation ----------------------------------------------------
 
-  applyDeltas(deltas) {
+  // Central mutation point for town resources/stats. `meta.source` makes core
+  // stat changes traceable in the Core Statistics ledger; callers that skip it
+  // are recorded as "town activity" rather than silently untracked.
+  applyDeltas(deltas, meta = null) {
     const R = this.resources;
+    const before = { trust: R.trust, corruption: R.corruption, morale: R.morale, threat: R.threat };
     for (const [key, value] of Object.entries(deltas)) {
       R[key] += value;
       if (key === 'gold' && value > 0 && this.stats) this.stats.totalGoldEarned += value;
@@ -15691,11 +15725,38 @@ export default class TownScene extends Phaser.Scene {
       R[key] = Phaser.Math.Clamp(R[key], 0, 100);
     }
     R.gold = Math.max(0, R.gold);
+    // Record the actually-applied (post-clamp) core-stat changes with a source.
+    if (!this.statLedger) this.statLedger = [];
+    for (const key of ['trust', 'corruption', 'morale', 'threat']) {
+      const applied = Math.round((R[key] - before[key]) * 10) / 10;
+      if (!applied) continue;
+      this.statLedger.push({
+        day: this.day,
+        stat: key,
+        amount: applied,
+        source: meta?.source || 'town activity',
+      });
+    }
+    if (this.statLedger.length > 120) this.statLedger.splice(0, this.statLedger.length - 120);
     this.registry.set('resources', { ...R });
     if (this.activeInspector) this.refreshActivePanel();
     this.checkUnlocks();
     this.publishTownHint();
     if (!this.checkingObjectives) this.checkObjectives();
+  }
+
+  // Threshold bands used by the ledger and warnings. One shared structure so a
+  // one-point change never flips the game silently — tiers are the interface.
+  getStatTier(stat, value = this.resources[stat]) {
+    const bands = {
+      trust: ['Hostile', 'Distrustful', 'Cautious', 'Trusted', 'Respected'],
+      corruption: ['Clean', 'Compromised', 'Corrupt', 'Captured', 'Premium Institution'],
+      morale: ['Broken', 'Low', 'Uneasy', 'Motivated', 'Inspired'],
+      threat: ['Quiet', 'Watched', 'Dangerous', 'Severe', 'Critical'],
+    }[stat];
+    if (!bands) return null;
+    const index = value >= 80 ? 4 : value >= 60 ? 3 : value >= 40 ? 2 : value >= 20 ? 1 : 0;
+    return { index, label: bands[index] };
   }
 
   triggerWhaleReaction() {
