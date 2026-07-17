@@ -54,6 +54,17 @@ for (const b of BUILDING_CATALOG) {
   // Every declared action has id/label/summary and numeric cost + delta object.
   for (const a of (b.actions || [])) {
     check(`${tag} action '${a.id}' shape`, Boolean(a.id && a.label && a.summary) && Number.isFinite(a.cost) && a.deltas && typeof a.deltas === 'object');
+    // consumes (inventory sink) must be a map of positive integers when present
+    if (a.consumes !== undefined) {
+      check(`${tag} action '${a.id}' consumes shape`, a.consumes && typeof a.consumes === 'object'
+        && Object.values(a.consumes).every((n) => Number.isInteger(n) && n > 0));
+    }
+  }
+  // Trade-style actions must actually consume inventory (regression: sell_loot
+  // once printed gold while loot piled up).
+  if (b.id === 'market') {
+    const sell = (b.actions || []).find((a) => a.id === 'sell_loot');
+    check('[market] sell_loot consumes loot', Boolean(sell?.consumes?.loot >= 1));
   }
 }
 

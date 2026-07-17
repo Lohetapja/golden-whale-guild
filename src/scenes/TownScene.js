@@ -834,6 +834,9 @@ export default class TownScene extends Phaser.Scene {
     this.day = saved?.day || 1;
     this.resources = saved?.resources || { ...BALANCE.startingResources };
     this.statLedger = Array.isArray(saved?.statLedger) ? saved.statLedger.slice(-120) : [];
+    // save-shield marker: >0 only when this session genuinely restored a save,
+    // so a fresh boot can never silently autosave over an established town.
+    this._loadedSaveDay = Number(saved?.day) || 0;
     this.upgradeLevels = saved?.upgradeLevels || {};
     this.stats = {
       questsPosted: 0,
@@ -2254,6 +2257,24 @@ export default class TownScene extends Phaser.Scene {
 
   saveGame(showEvent = true) {
     const key = this.saveKey || getActiveSaveKey();
+    // Save shield: a fresh boot (no save was loaded) must never silently
+    // overwrite an established save already sitting on this key. This happens
+    // when the game is opened at a stale URL / second context and autosaves a
+    // day-1 town over a real playthrough. A deliberate reset removes the key
+    // first (safeReset), so this guard never blocks intentional new games.
+    if (!this._loadedSaveDay && this.day <= 2) {
+      try {
+        const existing = JSON.parse(readRawSave(key) || 'null');
+        if (existing && Number(existing.day) > Math.max(3, this.day)) {
+          createBackup(key, 'save-shield');
+          this.game.events.emit('gwg-event', `A day-${existing.day} town already exists in this browser. The fresh town will not overwrite it automatically — use Reset in the Save Manager if you want to start over.`);
+          this.game.events.emit('gwg-save-status', { state: 'shielded', existingDay: existing.day });
+          return false;
+        }
+      } catch {
+        // unreadable existing save: fall through, atomic write handles safety
+      }
+    }
     const result = writeSaveAtomic(key, this.getSavePayload());
     if (result.ok) {
       this.lastSaveAt = Date.now();
@@ -3384,6 +3405,18 @@ export default class TownScene extends Phaser.Scene {
     const age = Math.max(0, this.day - (Number(pending.offeredDay) || this.day));
     if (age < BALANCE.policyNeglectDelay || age % 2 !== 0 || pending.lastNeglectDay === this.day) {
       this.pendingPolicy = pending;
+      return;
+    }
+    // Neglect cap (playtest finding: an unattended town spiralled to Trust 0 /
+    // Corruption 86 purely from compounding policy-neglect drift). After three
+    // penalty ticks the council shelves the policy: one-time cost, no more
+    // bleed, and the story of neglect stays in the ledger instead of the floor.
+    pending.neglectTicks = (pending.neglectTicks || 0) + 1;
+    if (pending.neglectTicks > 3) {
+      this.applyDeltas({ trust: -2 }, { source: `Policy shelved unread: ${policy.title}` });
+      this.addTownLog(`${policy.title} was shelved by a bored council. Democracy took a coffee break.`, 'policy');
+      this.pendingPolicy = null;
+      this.updateTownNotice();
       return;
     }
     const deltas = {
@@ -9442,6 +9475,19 @@ export default class TownScene extends Phaser.Scene {
     if (this.resources.gold < shopAction.cost) {
       this.game.events.emit('gwg-event', `Not enough gold for ${shopAction.label}. The clerk recommends cheaper principles.`);
       return;
+    }
+    // Actions that advertise trading inventory must actually consume it
+    // (playtest finding: "Sell Hero Loot" printed gold while loot piled up).
+    if (shopAction.consumes) {
+      for (const [resId, amount] of Object.entries(shopAction.consumes)) {
+        if ((this.townInventory?.[resId] || 0) < amount) {
+          this.game.events.emit('gwg-event', `${shopAction.label} needs ${amount} ${resId} in town stores. Current stock: ${this.townInventory?.[resId] || 0}.`);
+          return;
+        }
+      }
+      for (const [resId, amount] of Object.entries(shopAction.consumes)) {
+        this.townInventory[resId] -= amount;
+      }
     }
     const deltas = {
       ...(shopAction.deltas || {}),
@@ -15951,7 +15997,7 @@ export default class TownScene extends Phaser.Scene {
 
     if (!hero) {
       const d = { gold: -Math.ceil(quest.cost / 2), threat: quest.difficulty * 2, morale: -2 };
-      this.applyDeltas(d);
+      this.applyDeltas(d, { source: `Quest unstaffed: ${quest.name}` });
       this.floatDeltas(place.x, place.y - (place.h || 58) - 10, d);
       const text = `${quest.name} expired. Nobody volunteered, which is technically feedback.`;
       this.game.events.emit('gwg-event', text);
@@ -16078,7 +16124,7 @@ export default class TownScene extends Phaser.Scene {
       this.stats.questFailures = (this.stats.questFailures || 0) + 1;
     }
 
-    this.applyDeltas(deltas);
+    this.applyDeltas(deltas, { source: `Quest: ${quest.name}` });
     this.floatDeltas(place.x, place.y - (place.h || 58) - 10, deltas);
     this.game.events.emit('gwg-event', text);
     this.addTownLog(text, 'quest');
@@ -16559,6 +16605,9 @@ export default class TownScene extends Phaser.Scene {
   getRoadTransportMultiplier(place) {
     const access = this.getBuildingRoadAccess(place);
     if (!access.connected) return 0.55;
+    // connected can be true without a specific roadCell (e.g. gate/territory
+    // fallbacks); treat that as plain dirt-speed access instead of crashing.
+    if (!access.roadCell) return 1;
     const road = this.getRoadAt(access.roadCell.x, access.roadCell.y);
     return ROAD_TYPES[road?.type]?.speed || 1;
   }
@@ -16590,7 +16639,7 @@ export default class TownScene extends Phaser.Scene {
         `Output waiting: ${extraction.outputWaiting}/${extraction.outputCapacity} ${config.resource}`,
         `Production progress: ${Math.round(extraction.progress * 100)}% - priority ${priority.label}`,
         `Expected package: ${config.baseRate} ${config.resource} before level/road bonuses`,
-        `Route: ${roadAccess.connected ? `${(ROAD_TYPES[this.getRoadAt(roadAccess.roadCell.x, roadAccess.roadCell.y)?.type] || ROAD_TYPES.dirt).name} access` : 'no road'} -> ${storage?.place?.name || 'Guild Hall fallback'}`,
+        `Route: ${roadAccess.connected ? `${(ROAD_TYPES[(roadAccess.roadCell ? this.getRoadAt(roadAccess.roadCell.x, roadAccess.roadCell.y)?.type : null)] || ROAD_TYPES.dirt).name} access` : 'no road'} -> ${storage?.place?.name || 'Guild Hall fallback'}`,
         `Travel: ${storage ? `${Math.ceil(storage.distance)} tiles` : 'no Storehouse route'} - speed x${this.getRoadTransportMultiplier(place)}`,
         { text: `Injury/cargo risk: ${risk}%`, className: risk >= 20 ? 'gwg-bad' : risk >= 12 ? 'gwg-muted' : 'gwg-good' },
       ],
@@ -18799,6 +18848,15 @@ export default class TownScene extends Phaser.Scene {
         }
       }
       this.stats.trustStreak = this.resources.trust > 50 ? this.stats.trustStreak + 1 : 0;
+      // Honest bookkeeping: a day without premium actions slowly airs out the
+      // institution. Gives fair towns a real corruption sink (playtest finding:
+      // quest-borne corruption ratcheted to 97 with no honest counterweight)
+      // while premium play keeps the ratchet.
+      const premiumToday = (this.stats.premiumActions || 0) > (this._premiumActionsAtDawn || 0);
+      this._premiumActionsAtDawn = this.stats.premiumActions || 0;
+      if (!premiumToday && this.resources.corruption > 12) {
+        this.applyDeltas({ corruption: -1 }, { source: 'Honest bookkeeping (no premium sales today)' });
+      }
       this.checkObjectives();
       const warnings = this.getDangerWarnings();
       if (warnings.length > 0) this.stats.warningEvents = (this.stats.warningEvents || 0) + 1;

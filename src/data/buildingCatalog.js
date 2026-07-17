@@ -56,7 +56,7 @@ export const BUILDING_CATALOG = [
   core('market', 'Market', 'Economy / Shady', 240, { w: 2, h: 2 }, 'Steady gold with optional dynamic suffering.', {
     kind: 'mixed',
     actions: [
-      action('sell_loot', 'Sell Hero Loot', '+Gold from surplus loot.', 0, { gold: 110 }, null, 'item_gem_bag'),
+      { ...action('sell_loot', 'Sell Hero Loot', 'Sells 3 stored loot for gold.', 0, { gold: 110 }, null, 'item_gem_bag'), consumes: { loot: 3 } },
       action('buy_supplies', 'Buy Supplies', '+Morale and service quality.', 90, { morale: 2 }, 'quality', 'item_herb_bundle'),
       action('fair_equipment', 'Stock Fair Equipment', '+Trust, honest hero Power.', 140, { trust: 2 }, 'honestPower', 'item_basic_armor'),
     ],
